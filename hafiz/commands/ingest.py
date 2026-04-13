@@ -166,3 +166,21 @@ async def _do_ingest(
         )
     else:
         console.print("[dim]No entities or relations extracted.[/dim]")
+
+
+def run_git_hook_ingest_cmd(*, project: str | None = None) -> None:
+    """Run git-hook-based ingest: only files changed in the latest commit."""
+    from hafiz.core.git_hooks import run_git_hook_ingest
+
+    async def _ingest():
+        try:
+            return await run_git_hook_ingest(".", project=project)
+        finally:
+            await close_engine()
+
+    files_processed, chunks_stored = asyncio.run(_ingest())
+
+    console.print(
+        f"[green]Git hook ingest:[/green] {files_processed} files processed, "
+        f"{chunks_stored} chunks stored."
+    )

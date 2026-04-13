@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Hafiz post-commit hook — re-indexes changed files after each commit.
+#
+# Install by symlinking:
+#   ln -sf "$(which hafiz)/../hafiz/scripts/post-commit" .git/hooks/post-commit
+#
+# Or use:
+#   hafiz hooks install .
+#
+
+set -e
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+
+# Detect project name from hafiz.toml if available
+if command -v hafiz &> /dev/null; then
+    # Run in background so commit isn't blocked
+    nohup hafiz ingest --git-hook > /dev/null 2>&1 &
+fi

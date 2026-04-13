@@ -53,18 +53,67 @@ def init() -> None:
 
 @app.command()
 def ingest(
-    path: str = typer.Argument(..., help="Path to file or directory to index."),
+    path: Optional[str] = typer.Argument(None, help="Path to file or directory to index."),
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Tag chunks with a project name."
     ),
     no_extract: bool = typer.Option(
         False, "--no-extract", help="Skip entity/relationship extraction."
     ),
+    git_hook: bool = typer.Option(
+        False, "--git-hook", help="Index only files changed in the latest commit."
+    ),
 ) -> None:
     """Index files into the Hafiz knowledge base."""
-    from hafiz.commands.ingest import run_ingest
+    if git_hook:
+        from hafiz.commands.ingest import run_git_hook_ingest_cmd
 
-    run_ingest(path, project=project, no_extract=no_extract)
+        run_git_hook_ingest_cmd(project=project)
+    else:
+        if path is None:
+            typer.echo("Error: Missing argument 'PATH'. Use --git-hook or provide a path.")
+            raise typer.Exit(1)
+        from hafiz.commands.ingest import run_ingest
+
+        run_ingest(path, project=project, no_extract=no_extract)
+
+
+# ─── WATCH ──────────────────────────────────────────────────────────
+
+@app.command()
+def watch(
+    path: str = typer.Argument(..., help="Directory to watch for changes."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Tag indexed chunks with a project name."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output events as JSON (for agents)."
+    ),
+) -> None:
+    """Watch a directory and re-index files on change (real-time)."""
+    from hafiz.commands.watch import run_watch
+
+    run_watch(path, project=project, output_json=json_output)
+
+
+# ─── PRUNE ──────────────────────────────────────────────────────────
+
+@app.command()
+def prune(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List stale files without deleting."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Remove chunks for files that no longer exist on disk."""
+    from hafiz.commands.prune import run_prune
+
+    run_prune(project=project, dry_run=dry_run, output_json=json_output)
 
 
 # ─── QUERY ──────────────────────────────────────────────────────────────
@@ -276,3 +325,22 @@ def context(
     from hafiz.commands.context import run_context
 
     run_context(query, project=project, output_json=json_output)
+
+
+# ─── HOOKS ─────────────────────────────────────────────────────────
+
+hooks_app = typer.Typer(name="hooks", help="Git hook management.")
+app.add_typer(hooks_app)
+
+
+@hooks_app.command("install")
+def hooks_install(
+    repo_path: str = typer.Argument(".", help="Path to the git repository."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project name to pass to the hook."
+    ),
+) -> None:
+    """Install the Hafiz post-commit hook into a git repository."""
+    from hafiz.commands.hooks import run_hooks_install
+
+    run_hooks_install(repo_path, project=project)
