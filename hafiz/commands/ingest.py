@@ -1,8 +1,11 @@
-"""hafiz ingest — index files into the chunks table."""
+"""hafiz ingest — index files into the chunks table + optional graph extraction."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import uuid
 from pathlib import Path
 
 from rich.console import Console
@@ -14,26 +17,37 @@ from hafiz.core.database import close_engine
 from hafiz.core.embeddings import embed_texts
 from hafiz.core.store import delete_chunks_for_file, store_chunks
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 # Max batch size for embedding calls
 EMBED_BATCH_SIZE = 64
 
 
-def run_ingest(path: str, *, project: str | None = None) -> None:
+def run_ingest(
+    path: str,
+    *,
+    project: str | None = None,
+    no_extract: bool = False,
+) -> None:
     """Run the ingestion pipeline for a path."""
 
     async def _ingest():
         try:
-            return await _do_ingest(path, project=project)
+            return await _do_ingest(path, project=project, no_extract=no_extract)
         finally:
             await close_engine()
 
     asyncio.run(_ingest())
 
 
-async def _do_ingest(path: str, *, project: str | None = None) -> None:
-    """Async ingestion pipeline: chunk -> embed -> store."""
+async def _do_ingest(
+    path: str,
+    *,
+    project: str | None = None,
+    no_extract: bool = False,
+) -> None:
+    """Async ingestion pipeline: chunk -> embed -> store -> extract."""
     target = Path(path).resolve()
     settings = get_settings()
     ignore_patterns = settings.workspace.ignore
@@ -85,7 +99,9 @@ async def _do_ingest(path: str, *, project: str | None = None) -> None:
             all_embeddings.extend(embeddings)
             progress.update(task, advance=len(batch))
 
-    # Step 4: Store in database
+    # Step 4: Store in database — generate chunk IDs so we can reference them in extraction
+    chunk_ids = [str(uuid.uuid4()) for _ in chunks]
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -99,3 +115,54 @@ async def _do_ingest(path: str, *, project: str | None = None) -> None:
         f"[green]Indexed {stored} chunks[/green] from "
         f"[bold]{len(files_to_reindex)}[/bold] files"
     )
+
+    # Step 5: Graph extraction (optional)
+    if no_extract:
+        return
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        console.print(
+            "[yellow]ANTHROPIC_API_KEY not set — skipping graph extraction.[/yellow]\n"
+            "[dim]Set the key or use --no-extract to silence this warning.[/dim]"
+        )
+        return
+
+    from hafiz.core.extractor import run_extraction, EXTRACTION_BATCH_SIZE
+
+    # Build chunk dicts for the extractor
+    chunk_dicts = [
+        {
+            "content": c.content,
+            "source_file": c.source_file,
+            "language": c.language or "",
+            "chunk_id": cid,
+        }
+        for c, cid in zip(chunks, chunk_ids)
+    ]
+
+    total_batches = (len(chunk_dicts) + EXTRACTION_BATCH_SIZE - 1) // EXTRACTION_BATCH_SIZE
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Extracting entities & relations...", total=len(chunk_dicts))
+
+        def _on_progress(batch_size: int) -> None:
+            progress.update(task, advance=batch_size)
+
+        ent_count, rel_count = await run_extraction(
+            chunk_dicts,
+            project=project,
+            on_progress=_on_progress,
+        )
+
+    if ent_count or rel_count:
+        console.print(
+            f"[green]Extracted {ent_count} entities, {rel_count} relations[/green]"
+        )
+    else:
+        console.print("[dim]No entities or relations extracted.[/dim]")

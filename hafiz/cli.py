@@ -57,11 +57,14 @@ def ingest(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Tag chunks with a project name."
     ),
+    no_extract: bool = typer.Option(
+        False, "--no-extract", help="Skip entity/relationship extraction."
+    ),
 ) -> None:
     """Index files into the Hafiz knowledge base."""
     from hafiz.commands.ingest import run_ingest
 
-    run_ingest(path, project=project)
+    run_ingest(path, project=project, no_extract=no_extract)
 
 
 # ─── QUERY ──────────────────────────────────────────────────────────────
@@ -102,6 +105,20 @@ def status(
     run_status(output_json=json_output)
 
 
+# ─── DOCTOR ────────────────────────────────────────────────────────────
+
+@app.command()
+def doctor(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Run diagnostic checks on the Hafiz installation."""
+    from hafiz.commands.maintenance import run_doctor
+
+    run_doctor(output_json=json_output)
+
+
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 
 config_app = typer.Typer(name="config", help="Configuration management.")
@@ -118,3 +135,57 @@ def config_show(
     from hafiz.commands.maintenance import run_config_show
 
     run_config_show(output_json=json_output)
+
+
+# ─── GRAPH ─────────────────────────────────────────────────────────────
+
+graph_app = typer.Typer(name="graph", help="Explore the knowledge graph.")
+app.add_typer(graph_app)
+
+
+@graph_app.command("show")
+def graph_show(
+    name: str = typer.Argument(..., help="Entity name to look up."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Show an entity and its direct connections."""
+    from hafiz.commands.graph import run_graph_show
+
+    run_graph_show(name, project=project, output_json=json_output)
+
+
+@graph_app.command("deps")
+def graph_deps(
+    name: str = typer.Argument(..., help="Entity name to look up."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Show what an entity depends on (outgoing relations)."""
+    from hafiz.commands.graph import run_graph_deps
+
+    run_graph_deps(name, project=project, output_json=json_output)
+
+
+@graph_app.command("dependents")
+def graph_dependents(
+    name: str = typer.Argument(..., help="Entity name to look up."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Show what depends on an entity (incoming relations)."""
+    from hafiz.commands.graph import run_graph_dependents
+
+    run_graph_dependents(name, project=project, output_json=json_output)
