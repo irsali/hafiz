@@ -189,3 +189,90 @@ def graph_dependents(
     from hafiz.commands.graph import run_graph_dependents
 
     run_graph_dependents(name, project=project, output_json=json_output)
+
+
+# ─── OBSERVE ──────────────────────────────────────────────────────────
+
+@app.command()
+def observe(
+    text: str = typer.Argument(..., help="The observation text to store."),
+    obs_type: str = typer.Option(
+        "fact", "--type", "-t", help="Type: fact, decision, learning, pattern, warning."
+    ),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s", help="Origin (e.g. agent:bilal, user:manual)."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Tag with a project name."
+    ),
+    tags: Optional[str] = typer.Option(
+        None, "--tags", help="Comma-separated tags."
+    ),
+    confidence: float = typer.Option(
+        1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Store a fact, decision, or learning as an observation."""
+    from hafiz.commands.observe import run_observe
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    run_observe(
+        text,
+        obs_type=obs_type,
+        source=source,
+        project=project,
+        tags=tag_list,
+        confidence=confidence,
+        output_json=json_output,
+    )
+
+
+# ─── RECALL ───────────────────────────────────────────────────────────
+
+@app.command()
+def recall(
+    query: str = typer.Argument(..., help="Search query for observations."),
+    obs_type: Optional[str] = typer.Option(
+        None, "--type", "-t", help="Filter by observation type."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    limit: int = typer.Option(
+        10, "--limit", "-l", help="Maximum number of results."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Recall observations by semantic similarity."""
+    from hafiz.commands.observe import run_recall
+
+    run_recall(
+        query,
+        limit=limit,
+        project=project,
+        obs_type=obs_type,
+        output_json=json_output,
+    )
+
+
+# ─── CONTEXT ──────────────────────────────────────────────────────────
+
+@app.command()
+def context(
+    query: str = typer.Argument(..., help="Task description or question."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Synthesize relevant code, graph, and observations for a task."""
+    from hafiz.commands.context import run_context
+
+    run_context(query, project=project, output_json=json_output)
