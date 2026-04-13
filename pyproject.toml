@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hafiz"
+version = "0.1.0"
+description = "A sovereign, CLI-first intelligence layer for your workspace"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Irshad", email = "irshad@example.com" },
+]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "pgvector>=0.3",
+    "llama-index-core>=0.11",
+    "llama-index-embeddings-fastembed>=0.2",
+    "fastembed-gpu>=0.8",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "alembic>=1.13",
+    "tomli>=2.0;python_version<'3.11'",
+    "tomli-w>=1.0",
+    "aiofiles>=24.1",
+]
+
+[project.scripts]
+hafiz = "hafiz.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

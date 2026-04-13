@@ -1,0 +1,16 @@
+[database]
+url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
+
+[embedding]
+model = "nomic-ai/nomic-embed-text-v1.5"
+provider = "fastembed"   # fastembed | openai | ollama
+dimensions = 768
+
+[llm]
+provider = "anthropic"   # anthropic | openai | ollama | lmstudio
+model = "claude-sonnet-4-20250514"
+
+[workspace]
+root = "/home/irshad-workstation/workspace"
+projects = ["hu-manity", "noble-wave", "irshad"]
+ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build", ".tox", ".mypy_cache", ".ruff_cache", "*.pyc", "*.pyo"]
