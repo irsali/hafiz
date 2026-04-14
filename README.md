@@ -203,6 +203,7 @@ hafiz graph dependents AuthController
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
 | `hafiz hooks install [path]` | Install git post-commit hook | `--project/-p` |
+| `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file` |
 
 ### System
 
@@ -291,10 +292,23 @@ Workspace Files
 
 ## Agent Integration
 
-Hafiz is designed as a standalone tool that any AI agent can use via CLI. See:
+Hafiz is designed as a standalone tool that any AI agent can use via CLI. Install hafiz skills into your agent so it knows how to use hafiz automatically:
 
-- **Claude Code**: `CLAUDE.md` in this repo + `/brain-query` slash command
-- **Any agent**: `BRAIN_AGENT_GUIDE.md` -- universal integration guide with a copy-paste system prompt snippet
+```bash
+hafiz agent install claude-code   # Claude Code
+hafiz agent install cursor        # Cursor IDE
+hafiz agent install github-copilot # GitHub Copilot
+```
+
+This writes a skill file to the agent's configuration directory (e.g. `~/.claude/CLAUDE.md` for Claude Code). The skill teaches the agent to use `hafiz context`, `hafiz query`, `hafiz recall`, `hafiz graph`, and `hafiz observe` as part of its workflow.
+
+| Flag | Description |
+|------|-------------|
+| `--local` | Install into the current project instead of globally |
+| `--path <dir>` | Override the destination directory |
+| `--file <name>` | Override the filename |
+
+If the target file already exists and was not installed by hafiz, the command skips it to avoid overwriting your work. Files previously installed by hafiz are updated in place.
 
 All agents should use `--json` for machine-readable output. The recommended workflow:
 
