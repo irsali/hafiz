@@ -13,13 +13,18 @@ Hafiz is a CLI tool that indexes your entire workspace into PostgreSQL + pgvecto
 
 ## Setup
 
-Every command must be run exactly like this:
-
+Install Hafiz and ensure it's on PATH:
 ```bash
-cd /home/irshad-workstation/workspace/irshad/hafiz && source .venv/bin/activate && hafiz <command>
+pip install git+https://github.com/irsali/hafiz.git
 ```
 
-This ensures the config file (`hafiz.toml`) is found and the correct Python venv is active.
+Create a config file at `~/.config/hafiz/hafiz.toml` (or in the current directory).
+See `hafiz.toml.example` for the template.
+
+Every command runs directly:
+```bash
+hafiz <command>
+```
 
 ## Command Reference
 
@@ -48,9 +53,6 @@ Add this to any agent's system prompt or instructions:
 ```
 You have access to a workspace intelligence tool called `hafiz` that indexes the entire
 codebase with semantic search, entity graphs, and an observations store.
-
-IMPORTANT: Every hafiz command must be run as:
-cd /home/irshad-workstation/workspace/irshad/hafiz && source .venv/bin/activate && hafiz <command>
 
 Before starting any task, gather context:
   hafiz context "<task description>" --json
@@ -115,6 +117,6 @@ Workspace Files
 ```
 
 - **Embeddings**: nomic-embed-text-v1.5 via fastembed (local ONNX, no API key)
-- **Database**: PostgreSQL 18 + pgvector (768-dim vectors)
+- **Database**: PostgreSQL + pgvector (768-dim vectors)
 - **LLM**: Anthropic Claude (for entity extraction only)
 - **Tables**: chunks, entities, relations, observations

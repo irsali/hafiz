@@ -5,12 +5,13 @@ A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your
 ## Quick Start
 
 ```bash
-# Install
-pip install -e ".[dev]"
+# Install from GitHub
+pip install git+https://github.com/irsali/hafiz.git
 
 # Create config
-cp hafiz.toml.example hafiz.toml
-# Edit hafiz.toml with your database credentials
+mkdir -p ~/.config/hafiz
+cp hafiz.toml.example ~/.config/hafiz/hafiz.toml
+# Edit ~/.config/hafiz/hafiz.toml with your database credentials and workspace root
 
 # Initialize the database
 hafiz init
@@ -40,10 +41,18 @@ hafiz graph dependents AuthController
 ## Install
 
 ```bash
-# From the project directory
-pipx install -e .
+# From GitHub (recommended)
+pip install git+https://github.com/irsali/hafiz.git
 
-# Or with pip
+# With GPU acceleration (requires CUDA)
+pip install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
+
+# Or clone and install locally
+git clone https://github.com/irsali/hafiz.git
+cd hafiz
+pip install .
+
+# For development
 pip install -e ".[dev]"
 ```
 
@@ -124,9 +133,9 @@ provider = "anthropic"
 model = "claude-sonnet-4-20250514"
 
 [workspace]
-root = "/home/irshad-workstation/workspace"
-projects = ["hu-manity", "noble-wave", "irshad"]
-ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build", ".next", ".cache", "target"]
+root = "/path/to/your/workspace"
+projects = ["my-project"]
+ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
 ```
 
 Environment variables override config values using `HAFIZ_` prefix with double-underscore nesting:
@@ -189,7 +198,6 @@ Workspace Files
 Hafiz is designed as a standalone tool that any AI agent can use via CLI. See:
 
 - **Claude Code**: `CLAUDE.md` in this repo + `/brain-query` slash command
-- **Bilal (OpenClaw)**: `~/.openclaw/skills/hafiz-memory/` skill
 - **Any agent**: `BRAIN_AGENT_GUIDE.md` -- universal integration guide with a copy-paste system prompt snippet
 
 All agents should use `--json` for machine-readable output. The recommended workflow:
@@ -201,6 +209,8 @@ All agents should use `--json` for machine-readable output. The recommended work
 ## Development
 
 ```bash
+git clone https://github.com/irsali/hafiz.git
+cd hafiz
 pip install -e ".[dev]"
 pytest
 ```
@@ -234,8 +244,12 @@ hafiz/
     watcher.py         -- File system watcher
 tests/                 -- pytest test suite
 alembic/               -- Database migrations
-hafiz.toml             -- Active configuration
+hafiz.toml.example     -- Configuration template
 CLAUDE.md              -- Claude Code instructions
 BRAIN_AGENT_GUIDE.md   -- Universal agent guide
 ROADMAP.md             -- Architecture & vision
 ```
+
+## License
+
+MIT

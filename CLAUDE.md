@@ -4,10 +4,12 @@ This project is Hafiz, a CLI-first intelligence layer backed by PostgreSQL + pgv
 
 ## Using Hafiz
 
-All commands require the venv. Run as:
+Hafiz is installed globally. Run from any directory:
 ```bash
-cd /home/irshad-workstation/workspace/irshad/hafiz && source .venv/bin/activate && hafiz <command>
+hafiz <command>
 ```
+
+Configuration is loaded from `hafiz.toml` in the current directory, `~/.config/hafiz/hafiz.toml`, or `/etc/hafiz/hafiz.toml`.
 
 ### Before starting work on any file
 ```bash
@@ -46,4 +48,4 @@ Use `/brain-query <question>` to query Hafiz directly.
 - `hafiz/commands/` -- Command implementations (query, graph, observe, context, ingest, watch, prune, hooks, maintenance)
 - `hafiz/core/` -- Business logic (chunker, config, database, embeddings, extractor, search, store, watcher, observations, context, git_hooks)
 - `tests/` -- pytest suite
-- `hafiz.toml` -- Active configuration
+- `hafiz.toml.example` -- Configuration template

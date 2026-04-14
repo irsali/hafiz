@@ -218,7 +218,7 @@ $ hafiz query "auth system" --json
 > **Philosophy:** Use LlamaIndex for chunking & embeddings, pgvector for storage. We write the CLI and config.
 
 **Tasks:**
-- [ ] Initialize project structure at `/home/irshad-workstation/workspace/irshad/hafiz/`
+- [ ] Initialize project structure
 - [ ] Set up Python project with `pyproject.toml`
   - Dependencies: `typer`, `rich`, `sqlalchemy[asyncio]`, `asyncpg`, `pgvector`, `llama-index-core`, `llama-index-vector-stores-postgres`, `llama-index-embeddings-fastembed`, `pydantic`, `pydantic-settings`, `alembic`
 - [ ] Create dedicated `hafiz` database inside existing postgres container
@@ -237,7 +237,7 @@ $ hafiz query "auth system" --json
   model = "claude-sonnet-4-20250514"
 
   [workspace]
-  root = "/home/irshad-workstation/workspace"
+  root = "/path/to/workspace"
   projects = ["hu-manity", "noble-wave", "irshad"]
   ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
   ```

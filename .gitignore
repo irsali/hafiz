@@ -33,6 +33,10 @@ htmlcov/
 # Config (user-specific)
 hafiz.toml
 
+# Claude Code (keep .claude/commands/ tracked)
+.claude/*
+!.claude/commands/
+
 # OS
 .DS_Store
 Thumbs.db

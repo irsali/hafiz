@@ -11,6 +11,6 @@ provider = "anthropic"   # anthropic | openai | ollama | lmstudio
 model = "claude-sonnet-4-20250514"
 
 [workspace]
-root = "/home/irshad-workstation/workspace"
-projects = ["hu-manity", "noble-wave", "irshad"]
+root = "/path/to/your/workspace"
+projects = ["project-a", "project-b"]
 ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build", ".tox", ".mypy_cache", ".ruff_cache", "*.pyc", "*.pyo"]

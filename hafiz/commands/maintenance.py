@@ -369,7 +369,7 @@ def run_doctor(*, output_json: bool = False) -> None:
             "Embedding model loadable",
             False,
             detail=str(e)[:120],
-            fix="Run: pip install fastembed-gpu",
+            fix="Run: pip install fastembed",
         )
 
     # ── Output ─────────────────────────────────────────────────────────

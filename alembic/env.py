@@ -15,6 +15,13 @@ from hafiz.core.database import Base
 # Alembic Config object
 config = context.config
 
+# Override alembic.ini URL with hafiz config (hafiz.toml / env vars)
+try:
+    from hafiz.core.config import load_settings
+    config.set_main_option("sqlalchemy.url", load_settings().database.url)
+except Exception:
+    pass  # Fall back to alembic.ini value
+
 # Logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
