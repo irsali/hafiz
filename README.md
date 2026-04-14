@@ -202,7 +202,7 @@ hafiz graph dependents AuthController
 | `hafiz ingest <path>` | Index files into the knowledge base | `--project/-p`, `--no-extract`, `--git-hook`, `--json/-j` |
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
-| `hafiz hooks install [path]` | Install git post-commit hook | `--project/-p` |
+| `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file` |
 
 ### System

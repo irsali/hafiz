@@ -391,7 +391,7 @@ def hooks_install(
         None, "--project", "-p", help="Project name to pass to the hook."
     ),
 ) -> None:
-    """Install the Hafiz post-commit hook into a git repository."""
+    """Install Hafiz git hooks (post-commit + post-merge) into a repository."""
     from hafiz.commands.hooks import run_hooks_install
 
     run_hooks_install(repo_path, project=project)
