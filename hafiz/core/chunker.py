@@ -168,16 +168,46 @@ def chunk_file(
     return results
 
 
-def should_ignore(path: Path, ignore_patterns: list[str]) -> bool:
-    """Check if a path matches any ignore pattern."""
-    path_str = str(path)
-    for pattern in ignore_patterns:
-        if pattern.startswith("*."):
-            if path.suffix == pattern[1:]:
-                return True
-        elif pattern in path.parts:
-            return True
-    return True if path.name.startswith(".") and path.is_dir() else False
+def _load_ignore_patterns(directory: Path) -> list[str]:
+    """Load gitignore-style patterns from .gitignore and .hafizignore in a directory."""
+    patterns: list[str] = []
+    for name in (".gitignore", ".hafizignore"):
+        path = directory / name
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    patterns.append(stripped)
+    return patterns
+
+
+def _normalize_pattern(pattern: str, rel_dir: str) -> list[str]:
+    """Convert a subdirectory ignore pattern to root-relative patterns.
+
+    In gitignore, a pattern like ``*.py`` in ``subdir/.gitignore`` matches
+    any ``.py`` file at any depth under ``subdir/``.  We normalize this to
+    root-relative patterns so all rules can live in a single PathSpec where
+    later (deeper) rules correctly override earlier (shallower) ones.
+    """
+    negation = pattern.startswith("!")
+    p = pattern[1:] if negation else pattern
+    prefix = "!" if negation else ""
+
+    if p.startswith("/"):
+        # Anchored to the ignore-file's directory
+        return [f"{prefix}{rel_dir}{p}"]
+
+    if "/" in p:
+        # Contains a path separator — treat as relative to the directory
+        return [f"{prefix}{rel_dir}/{p}"]
+
+    # No slash — matches at any depth under the directory
+    # subdir/**/*.py matches subdir/foo.py AND subdir/a/b/foo.py
+    return [f"{prefix}{rel_dir}/**/{p}"]
 
 
 def walk_and_chunk(
@@ -189,23 +219,68 @@ def walk_and_chunk(
 ) -> list[ChunkResult]:
     """Walk a directory and chunk all recognized files.
 
+    Respects ``.gitignore`` and ``.hafizignore`` at every directory level
+    (including negation patterns like ``!important.log``).  Subdirectory
+    ignore files override parent rules — matching real git semantics.
+    Config-level ``workspace.ignore`` patterns are merged in.
+
     Returns a flat list of ChunkResults.
     """
-    ignore = ignore_patterns or [".git", "node_modules", "__pycache__", ".venv"]
-    results: list[ChunkResult] = []
+    import os
+
+    import pathspec
 
     if root.is_file():
-        return chunk_file(root, relative_to=root.parent, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        return chunk_file(
+            root, relative_to=root.parent, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
 
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        if should_ignore(path, ignore):
-            continue
-        # Skip binary files by checking extension
-        if path.suffix.lower() in LANGUAGE_MAP or path.suffix.lower() in {".txt", ".cfg", ".ini", ".env.example"}:
+    config_ignore = ignore_patterns or [".git", "node_modules", "__pycache__", ".venv"]
+
+    # All patterns collected root-relative.  Ordered shallowest → deepest so
+    # that deeper rules override shallower ones (pathspec last-match-wins).
+    all_patterns: list[str] = list(config_ignore) + _load_ignore_patterns(root)
+    spec = pathspec.PathSpec.from_lines("gitwildmatch", all_patterns)
+
+    results: list[ChunkResult] = []
+
+    for dirpath_str, dirnames, filenames in os.walk(root, topdown=True):
+        dirpath = Path(dirpath_str)
+        rel_dir = dirpath.relative_to(root)
+
+        # Pick up subdirectory ignore patterns and rebuild the spec
+        if dirpath != root:
+            local_patterns = _load_ignore_patterns(dirpath)
+            if local_patterns:
+                rel_str = str(rel_dir)
+                for p in local_patterns:
+                    all_patterns.extend(_normalize_pattern(p, rel_str))
+                spec = pathspec.PathSpec.from_lines("gitwildmatch", all_patterns)
+
+        # Prune ignored directories (modifying dirnames in-place skips them)
+        dirnames[:] = [
+            d
+            for d in sorted(dirnames)
+            if not spec.match_file(str(rel_dir / d) if str(rel_dir) != "." else d)
+        ]
+
+        # Process files
+        for filename in sorted(filenames):
+            rel_path = str(rel_dir / filename) if str(rel_dir) != "." else filename
+
+            if spec.match_file(rel_path):
+                continue
+
+            # Only chunk recognized file types
+            filepath = dirpath / filename
+            if (
+                filepath.suffix.lower() not in LANGUAGE_MAP
+                and filepath.suffix.lower() not in {".txt", ".cfg", ".ini", ".env.example"}
+            ):
+                continue
+
             chunks = chunk_file(
-                path,
+                filepath,
                 relative_to=root,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
