@@ -37,7 +37,7 @@ hafiz observe "<what was decided and why>" --type decision --source agent:claude
 ```bash
 hafiz context "<task description>" --workspace --json
 ```
-Searches all indexed projects at once. Uses `workspace.projects` from hafiz.toml if configured, otherwise discovers from DB.
+Resolves sibling projects from the parent directory of cwd, matches them against indexed project tags (normalized: case-insensitive, ignores spaces/hyphens). Scopes search to those projects only.
 
 ### When exploring dependencies
 ```bash

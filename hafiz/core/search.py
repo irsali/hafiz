@@ -33,7 +33,7 @@ async def vector_search(
     query: str,
     *,
     limit: int = 10,
-    project: str | None = None,
+    project: str | list[str] | None = None,
     chunk_type: str | None = None,
     similarity_threshold: float = 0.0,
 ) -> list[SearchResult]:
@@ -42,7 +42,7 @@ async def vector_search(
     Args:
         query: The search query text.
         limit: Maximum number of results.
-        project: Filter by project name.
+        project: Filter by project name (str), multiple projects (list), or None for all.
         chunk_type: Filter by chunk type (code, doc, note, decision).
         similarity_threshold: Minimum similarity score (0-1).
 
@@ -66,7 +66,9 @@ async def vector_search(
         )
 
         # Apply filters
-        if project:
+        if isinstance(project, list):
+            stmt = stmt.where(Chunk.project.in_(project))
+        elif project:
             stmt = stmt.where(Chunk.project == project)
         if chunk_type:
             stmt = stmt.where(Chunk.chunk_type == chunk_type)

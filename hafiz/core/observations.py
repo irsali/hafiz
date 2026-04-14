@@ -89,7 +89,7 @@ async def search_observations(
     query: str,
     *,
     limit: int = 10,
-    project: str | None = None,
+    project: str | list[str] | None = None,
     obs_type: str | None = None,
     active_only: bool = True,
 ) -> list[ObservationResult]:
@@ -98,7 +98,7 @@ async def search_observations(
     Args:
         query: The search query text.
         limit: Maximum number of results.
-        project: Filter by project name.
+        project: Filter by project name (str), multiple projects (list), or None for all.
         obs_type: Filter by observation type.
         active_only: Only return currently valid observations.
 
@@ -121,7 +121,9 @@ async def search_observations(
             .limit(limit)
         )
 
-        if project:
+        if isinstance(project, list):
+            stmt = stmt.where(Observation.project.in_(project))
+        elif project:
             stmt = stmt.where(Observation.project == project)
         if obs_type:
             stmt = stmt.where(Observation.obs_type == obs_type)

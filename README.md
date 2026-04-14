@@ -164,7 +164,7 @@ hafiz query "how does authentication work?"
 # Full context for a task
 hafiz context "implement rate limiting"
 
-# Cross-project context (all indexed projects)
+# Cross-project context (sibling projects in parent directory)
 hafiz context "implement rate limiting" --workspace
 
 # Store a decision
@@ -347,7 +347,7 @@ If the target file already exists and was not installed by hafiz, the command sk
 
 All agents should use `--json` for machine-readable output. The recommended workflow:
 
-1. `hafiz context "<task>" --json` before starting work (or `--workspace` for multi-project)
+1. `hafiz context "<task>" --json` before starting work (or `--workspace` for sibling projects)
 2. `hafiz query "<question>" --json` during implementation
 3. `hafiz observe "<decision>" --type decision` after making decisions
 4. `hafiz review --json` periodically to check knowledge quality

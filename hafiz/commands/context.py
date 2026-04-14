@@ -28,23 +28,38 @@ def run_context(
     async def _build():
         try:
             if workspace:
-                from hafiz.core.context import build_workspace_context
-                from hafiz.core.config import get_settings
+                from hafiz.core.context import (
+                    build_workspace_context,
+                    resolve_workspace_projects,
+                )
 
-                settings = get_settings()
-                configured_projects = settings.workspace.projects or None
+                projects = await resolve_workspace_projects()
+                if not projects:
+                    console.print(
+                        "[yellow]No workspace-sibling projects found in the index. "
+                        "Falling back to all projects.[/yellow]"
+                    )
+
                 bundle = await build_workspace_context(
                     query,
-                    projects=configured_projects,
+                    projects=projects,
                     limit_chunks=limit_chunks * 2,
                     limit_observations=limit_observations * 2,
+                )
+            elif project:
+                from hafiz.core.context import build_context
+
+                bundle = await build_context(
+                    query,
+                    project=project,
+                    limit_chunks=limit_chunks,
+                    limit_observations=limit_observations,
                 )
             else:
                 from hafiz.core.context import build_context
 
                 bundle = await build_context(
                     query,
-                    project=project,
                     limit_chunks=limit_chunks,
                     limit_observations=limit_observations,
                 )

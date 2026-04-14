@@ -7,6 +7,7 @@ Hafiz knows that's relevant to a task.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -164,53 +165,120 @@ async def build_context(
     )
 
 
-async def _discover_projects() -> list[str]:
-    """Discover all indexed projects from the database."""
+async def _all_indexed_projects() -> set[str]:
+    """Return the set of all project names that have indexed chunks."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await session.execute(
-            select(Chunk.project, func.count())
+            select(Chunk.project)
             .where(Chunk.project.isnot(None))
             .group_by(Chunk.project)
-            .order_by(func.count().desc())
         )
-        return [row[0] for row in result.all()]
+        return {row[0] for row in result.all()}
+
+
+def _normalize(name: str) -> str:
+    """Normalize a name for fuzzy matching: lowercase, strip spaces/hyphens/underscores."""
+    return name.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+
+def _match_dirs_to_projects(dir_names: set[str], indexed: set[str]) -> list[str]:
+    """Match directory names to indexed project names.
+
+    Tries exact match first, then normalized (case-insensitive, ignore
+    spaces/hyphens/underscores) to handle common mismatches like
+    'Admin Portal' dir -> 'AdminPortal' project tag.
+    """
+    matched: set[str] = set()
+
+    # Exact matches
+    matched |= dir_names & indexed
+
+    # Normalized matching for the rest
+    remaining = indexed - matched
+    if remaining:
+        norm_to_project = {_normalize(p): p for p in remaining}
+        for d in dir_names:
+            norm = _normalize(d)
+            if norm in norm_to_project:
+                matched.add(norm_to_project[norm])
+
+    return sorted(matched)
+
+
+async def resolve_workspace_projects(cwd: Path | None = None) -> list[str]:
+    """Resolve workspace-sibling projects from the filesystem.
+
+    Logic:
+    1. Get the parent directory of cwd (the "workspace root").
+    2. List its subdirectories (sibling projects).
+    3. Match directory names against indexed project tags in the DB,
+       using normalized matching (case-insensitive, ignore spaces/hyphens).
+
+    Edge case: if cwd itself has no matching project in the DB but its
+    children do, treat cwd as the workspace root (use children instead
+    of siblings).
+
+    Returns:
+        List of matched project names (DB names, not dir names).
+    """
+    if cwd is None:
+        cwd = Path.cwd()
+
+    indexed = await _all_indexed_projects()
+    if not indexed:
+        return []
+
+    # Try siblings first: parent's children
+    parent = cwd.parent
+    sibling_names = {
+        d.name for d in parent.iterdir() if d.is_dir() and not d.name.startswith(".")
+    }
+    matched = _match_dirs_to_projects(sibling_names, indexed)
+
+    if matched:
+        return matched
+
+    # Fallback: maybe cwd IS the workspace root — check its children
+    child_names = {
+        d.name for d in cwd.iterdir() if d.is_dir() and not d.name.startswith(".")
+    }
+    matched = _match_dirs_to_projects(child_names, indexed)
+
+    return matched
 
 
 async def build_workspace_context(
     query: str,
     *,
-    projects: list[str] | None = None,
+    projects: list[str],
     limit_chunks: int = 10,
     limit_observations: int = 10,
 ) -> ContextBundle:
-    """Build context across all workspace projects.
+    """Build context scoped to workspace-sibling projects.
 
-    Searches chunks and observations without project filters to get the most
-    relevant results regardless of project boundaries. Includes project
-    distribution to show which projects are involved.
+    Searches chunks and observations filtered to the given project list.
+    Includes project distribution to show which projects contributed.
 
     Args:
         query: The task description or question.
-        projects: Explicit project list (from config). If None, discovers from DB.
+        projects: Project names to search across (resolved from filesystem).
         limit_chunks: Max code chunks (higher default for cross-project).
         limit_observations: Max observations (higher default for cross-project).
 
     Returns:
         A ContextBundle with cross-project context and distribution info.
     """
-    # Discover projects if not provided
-    if projects is None:
-        projects = await _discover_projects()
+    # Search across workspace projects
+    chunks = await vector_search(query, limit=limit_chunks, project=projects)
 
-    # Search across all projects (no project filter)
-    chunks = await vector_search(query, limit=limit_chunks)
+    # Graph neighbours from matched chunks
+    entities = await _graph_from_chunks(chunks, project=projects)
 
-    # Graph neighbours from all chunks
-    entities = await _graph_from_chunks(chunks)
-
-    # Observations across all projects
-    observations = await search_observations(query, limit=limit_observations)
+    # Observations across workspace projects
+    observations = await search_observations(
+        query, limit=limit_observations, project=projects
+    )
 
     # Compute project distribution from the returned chunks
     distribution: dict[str, int] = {}
@@ -230,7 +298,7 @@ async def build_workspace_context(
 async def _graph_from_chunks(
     chunks: list[SearchResult],
     *,
-    project: str | None = None,
+    project: str | list[str] | None = None,
 ) -> list[dict]:
     """Find entities whose source_file matches the retrieved chunks, plus connections."""
     source_files = {c.source_file for c in chunks if c.source_file}
@@ -241,7 +309,9 @@ async def _graph_from_chunks(
     async with session_factory() as session:
         # Find entities in those files
         stmt = select(Entity).where(Entity.source_file.in_(source_files))
-        if project:
+        if isinstance(project, list):
+            stmt = stmt.where(Entity.project.in_(project))
+        elif project:
             stmt = stmt.where(Entity.project == project)
 
         result = await session.execute(stmt)

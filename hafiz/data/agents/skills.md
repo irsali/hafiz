@@ -139,6 +139,7 @@ hafiz status --json
 | `hafiz prune` | Remove chunks for deleted files | `--project`, `--dry-run`, `--json` |
 | `hafiz status` | Database statistics and index health | `--json` |
 | `hafiz doctor` | System diagnostics | `--json` |
+| `hafiz review` | Review knowledge quality, suggest improvements | `--project`, `--json` |
 
 ### Type Values
 
