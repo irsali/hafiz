@@ -5,55 +5,167 @@ A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your
 ## Quick Start
 
 ```bash
-# Install from GitHub
-pip install git+https://github.com/irsali/hafiz.git
-
-# Create config
-mkdir -p ~/.config/hafiz
-cp hafiz.toml.example ~/.config/hafiz/hafiz.toml
-# Edit ~/.config/hafiz/hafiz.toml with your database credentials and workspace root
-
-# Initialize the database
+pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"  # or without [gpu]
 hafiz init
-
-# Index a directory
 hafiz ingest ./src/ --project my-project
+hafiz query "how does authentication work?"
+```
 
-# Search
+See the full setup guide below.
+
+## Prerequisites
+
+- **Python 3.12+** -- `python3 --version`
+- **Docker** -- for PostgreSQL + pgvector (or a native PostgreSQL install)
+- **Anthropic API key** (optional) -- for knowledge graph extraction ([console.anthropic.com](https://console.anthropic.com/)). Without it, search and context still work; only `hafiz graph` commands require it.
+- **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify)
+
+## Install
+
+[pipx](https://pipx.pypa.io/) is the recommended way to install Hafiz. It creates an isolated virtual environment and makes the `hafiz` command available globally.
+
+```bash
+# Install pipx if you don't have it
+sudo apt install pipx   # Debian/Ubuntu
+pipx ensurepath          # Add ~/.local/bin to PATH (restart shell after)
+
+# Install Hafiz
+pipx install git+https://github.com/irsali/hafiz.git
+
+# With GPU acceleration (requires CUDA drivers)
+pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
+
+# Upgrade to latest
+pipx upgrade hafiz
+```
+
+<details>
+<summary>Alternative: pip with venv</summary>
+
+```bash
+git clone https://github.com/irsali/hafiz.git
+cd hafiz
+python3 -m venv .venv && source .venv/bin/activate
+pip install .          # or pip install ".[gpu]" for GPU support
+```
+
+</details>
+
+## Setup
+
+### 1. Start PostgreSQL with pgvector
+
+```bash
+docker run -d \
+  --name hafiz-db \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=hafiz \
+  -p 5432:5432 \
+  --restart unless-stopped \
+  pgvector/pgvector:pg17
+```
+
+This starts a PostgreSQL 17 container with the pgvector extension pre-installed. Data persists in the container; add `-v hafiz-pgdata:/var/lib/postgresql/data` if you want a named volume.
+
+<details>
+<summary>Alternative: native PostgreSQL</summary>
+
+If you prefer a system install instead of Docker:
+
+```bash
+# Ubuntu / Debian
+sudo apt install postgresql postgresql-17-pgvector
+sudo systemctl start postgresql && sudo systemctl enable postgresql
+sudo -u postgres psql -c "CREATE DATABASE hafiz;"
+sudo -u postgres psql -d hafiz -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# macOS (Homebrew)
+brew install postgresql@17 pgvector
+brew services start postgresql@17
+createdb hafiz
+psql -d hafiz -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+</details>
+
+### 2. Set your Anthropic API key (optional)
+
+The API key enables knowledge graph extraction during ingestion (`hafiz graph` commands). Without it, chunking, vector search, and context synthesis all work normally -- ingestion will skip graph extraction automatically.
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+Add it to your shell profile (`~/.bashrc`, `~/.zshrc`) to persist across sessions.
+
+> **Note:** Claude Code does *not* pass its own API key to shell commands. If you use Hafiz from Claude Code and want graph extraction, you still need the key exported in your shell profile.
+
+### 3. Create the config file
+
+```bash
+mkdir -p ~/.config/hafiz
+```
+
+Create `~/.config/hafiz/hafiz.toml`:
+
+```toml
+[database]
+url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
+
+[embedding]
+model = "nomic-ai/nomic-embed-text-v1.5"
+provider = "fastembed"
+dimensions = 768
+
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+
+[workspace]
+root = "/path/to/your/workspace"          # <-- change this
+projects = ["my-project"]                 # <-- change this
+ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+```
+
+Update `root` to your workspace directory and `projects` to your project names. Adjust the database URL if you changed the credentials above.
+
+### 4. Initialize the database
+
+```bash
+hafiz init
+```
+
+Creates all tables, indexes, and enables the pgvector extension.
+
+### 5. Verify the setup
+
+```bash
+hafiz doctor
+```
+
+All checks should pass (database connection, pgvector, embeddings, config).
+
+### 6. Index your first project
+
+```bash
+hafiz ingest /path/to/your/project --project my-project
+```
+
+### 7. Try it out
+
+```bash
+# Semantic search
 hafiz query "how does authentication work?"
 
-# Get full context for a task
+# Full context for a task
 hafiz context "implement rate limiting"
 
 # Store a decision
 hafiz observe "JWT preferred over sessions" --type decision
 
-# Check what depends on an entity
+# Explore the knowledge graph
 hafiz graph dependents AuthController
-```
-
-## Prerequisites
-
-- Python 3.12+
-- PostgreSQL with pgvector extension
-- A running PostgreSQL instance (default: `localhost:5432`)
-
-## Install
-
-```bash
-# From GitHub (recommended)
-pip install git+https://github.com/irsali/hafiz.git
-
-# With GPU acceleration (requires CUDA)
-pip install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
-
-# Or clone and install locally
-git clone https://github.com/irsali/hafiz.git
-cd hafiz
-pip install .
-
-# For development
-pip install -e ".[dev]"
 ```
 
 ## Command Reference
@@ -114,31 +226,12 @@ pip install -e ".[dev]"
 
 ## Configuration
 
-Hafiz looks for `hafiz.toml` in:
+Hafiz looks for `hafiz.toml` in order:
 1. Current directory
 2. `~/.config/hafiz/hafiz.toml`
 3. `/etc/hafiz/hafiz.toml`
 
-```toml
-[database]
-url = "postgresql+asyncpg://postgres:password@localhost:5432/hafiz"
-
-[embedding]
-model = "nomic-ai/nomic-embed-text-v1.5"
-provider = "fastembed"
-dimensions = 768
-
-[llm]
-provider = "anthropic"
-model = "claude-sonnet-4-20250514"
-
-[workspace]
-root = "/path/to/your/workspace"
-projects = ["my-project"]
-ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
-```
-
-Environment variables override config values using `HAFIZ_` prefix with double-underscore nesting:
+See [Setup](#setup) for the full config template. Environment variables override config values using the `HAFIZ_` prefix with double-underscore nesting:
 
 ```bash
 export HAFIZ_DATABASE__URL="postgresql+asyncpg://user:pass@host:5432/hafiz"
@@ -211,7 +304,8 @@ All agents should use `--json` for machine-readable output. The recommended work
 ```bash
 git clone https://github.com/irsali/hafiz.git
 cd hafiz
-pip install -e ".[dev]"
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"    # or ".[dev,gpu]" for GPU support
 pytest
 ```
 
