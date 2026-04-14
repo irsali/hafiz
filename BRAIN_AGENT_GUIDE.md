@@ -37,6 +37,10 @@ hafiz <command>
 | `hafiz graph show <name>` | Entity and its connections | `--project`, `--json` |
 | `hafiz graph deps <name>` | What this entity depends on | `--project`, `--json` |
 | `hafiz graph dependents <name>` | What depends on this entity | `--project`, `--json` |
+| `hafiz ingest <path>` | Index files into knowledge base | `--project`, `--no-extract`, `--git-hook`, `--json` |
+| `hafiz chunks export` | Export chunks as JSON | `--project`, `--path`, `--limit`, `--offset` |
+| `hafiz extract import` | Import extraction results | `--file`, `--project` |
+| `hafiz agent install <name>` | Install hafiz skills for an agent | `--local`, `--path`, `--file` |
 | `hafiz status` | Database statistics | `--json` |
 | `hafiz doctor` | System diagnostics | `--json` |
 

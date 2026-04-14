@@ -63,6 +63,9 @@ def ingest(
     git_hook: bool = typer.Option(
         False, "--git-hook", help="Index only files changed in the latest commit."
     ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Emit newline-delimited JSON progress events."
+    ),
 ) -> None:
     """Index files into the Hafiz knowledge base."""
     if git_hook:
@@ -75,7 +78,7 @@ def ingest(
             raise typer.Exit(1)
         from hafiz.commands.ingest import run_ingest
 
-        run_ingest(path, project=project, no_extract=no_extract)
+        run_ingest(path, project=project, no_extract=no_extract, output_json=json_output)
 
 
 # ─── WATCH ──────────────────────────────────────────────────────────

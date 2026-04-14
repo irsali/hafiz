@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 
-from hafiz.core.chunker import walk_and_chunk, chunk_file
+from hafiz.core.chunker import chunk_file, walk_and_chunk
 from hafiz.core.config import get_settings
 from hafiz.core.database import close_engine
 from hafiz.core.embeddings import embed_texts
@@ -24,17 +26,25 @@ console = Console()
 EMBED_BATCH_SIZE = 64
 
 
+def _emit(event: dict) -> None:
+    """Write a JSON event to stdout and flush immediately."""
+    print(json.dumps(event), flush=True)
+
+
 def run_ingest(
     path: str,
     *,
     project: str | None = None,
     no_extract: bool = False,
+    output_json: bool = False,
 ) -> None:
     """Run the ingestion pipeline for a path."""
 
     async def _ingest():
         try:
-            return await _do_ingest(path, project=project, no_extract=no_extract)
+            return await _do_ingest(
+                path, project=project, no_extract=no_extract, output_json=output_json
+            )
         finally:
             await close_engine()
 
@@ -46,6 +56,7 @@ async def _do_ingest(
     *,
     project: str | None = None,
     no_extract: bool = False,
+    output_json: bool = False,
 ) -> None:
     """Async ingestion pipeline: chunk -> embed -> store -> extract."""
     target = Path(path).resolve()
@@ -53,83 +64,146 @@ async def _do_ingest(
     ignore_patterns = settings.workspace.ignore
 
     if not target.exists():
-        console.print(f"[red]Path not found:[/red] {target}")
+        if output_json:
+            _emit({"event": "error", "message": f"Path not found: {target}"})
+        else:
+            console.print(f"[red]Path not found:[/red] {target}")
         raise SystemExit(1)
 
-    # Step 1: Chunk files
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        transient=True,
-        console=console,
-    ) as progress:
-        progress.add_task("Chunking files...", total=None)
-        chunks = walk_and_chunk(
-            target,
-            ignore_patterns=ignore_patterns,
+    # ── Step 1: Chunk files ───────────────────────────────────────────────
+    if output_json:
+        _emit({"event": "chunking", "status": "start", "path": str(target)})
+    else:
+        progress_ctx = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+            console=console,
         )
+        progress_ctx.__enter__()
+        progress_ctx.add_task("Chunking files...", total=None)
+
+    chunks = walk_and_chunk(target, ignore_patterns=ignore_patterns)
+
+    if not output_json:
+        progress_ctx.__exit__(None, None, None)
 
     if not chunks:
-        console.print("[yellow]No content found to index.[/yellow]")
+        if output_json:
+            _emit({"event": "complete", "chunks": 0, "files": 0})
+        else:
+            console.print("[yellow]No content found to index.[/yellow]")
         return
 
-    console.print(f"Found [bold]{len(chunks)}[/bold] chunks from [bold]{target}[/bold]")
-
-    # Step 2: Delete existing chunks for files being re-indexed
     files_to_reindex = {c.source_file for c in chunks}
+
+    if output_json:
+        _emit({
+            "event": "chunking",
+            "status": "done",
+            "chunks": len(chunks),
+            "files": len(files_to_reindex),
+        })
+    else:
+        console.print(f"Found [bold]{len(chunks)}[/bold] chunks from [bold]{target}[/bold]")
+
+    # ── Step 2: Delete existing chunks for re-indexed files ───────────────
     for source_file in files_to_reindex:
         await delete_chunks_for_file(source_file)
 
-    # Step 3: Embed chunks in batches
+    # ── Step 3: Embed chunks in batches ───────────────────────────────────
     all_embeddings: list[list[float]] = []
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Embedding chunks...", total=len(chunks))
+    if output_json:
+        _emit({"event": "embedding", "status": "start", "total": len(chunks)})
+    else:
+        progress_ctx = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        )
+        progress_ctx.__enter__()
+        rich_task = progress_ctx.add_task("Embedding chunks...", total=len(chunks))
 
-        for i in range(0, len(chunks), EMBED_BATCH_SIZE):
-            batch = chunks[i : i + EMBED_BATCH_SIZE]
-            texts = [c.content for c in batch]
-            embeddings = await embed_texts(texts)
-            all_embeddings.extend(embeddings)
-            progress.update(task, advance=len(batch))
+    for i in range(0, len(chunks), EMBED_BATCH_SIZE):
+        batch = chunks[i : i + EMBED_BATCH_SIZE]
+        texts = [c.content for c in batch]
+        embeddings = await embed_texts(texts)
+        all_embeddings.extend(embeddings)
 
-    # Step 4: Store in database — generate chunk IDs so we can reference them in extraction
+        done = min(i + len(batch), len(chunks))
+        if output_json:
+            _emit({"event": "embedding", "status": "progress", "done": done, "total": len(chunks)})
+        else:
+            progress_ctx.update(rich_task, advance=len(batch))
+
+    if not output_json:
+        progress_ctx.__exit__(None, None, None)
+
+    # ── Step 4: Store in database ─────────────────────────────────────────
     chunk_ids = [str(uuid.uuid4()) for _ in chunks]
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        transient=True,
-        console=console,
-    ) as progress:
-        progress.add_task("Storing in database...", total=None)
-        stored = await store_chunks(chunks, all_embeddings, project=project)
+    if output_json:
+        _emit({"event": "storing", "status": "start"})
+    else:
+        progress_ctx = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+            console=console,
+        )
+        progress_ctx.__enter__()
+        progress_ctx.add_task("Storing in database...", total=None)
 
-    console.print(
-        f"[green]Indexed {stored} chunks[/green] from "
-        f"[bold]{len(files_to_reindex)}[/bold] files"
-    )
+    stored = await store_chunks(chunks, all_embeddings, project=project)
 
-    # Step 5: Graph extraction (optional)
+    if output_json:
+        _emit({
+            "event": "storing",
+            "status": "done",
+            "stored": stored,
+            "files": len(files_to_reindex),
+        })
+    else:
+        progress_ctx.__exit__(None, None, None)
+        console.print(
+            f"[green]Indexed {stored} chunks[/green] from "
+            f"[bold]{len(files_to_reindex)}[/bold] files"
+        )
+
+    # ── Step 5: Graph extraction (optional) ───────────────────────────────
     if no_extract:
+        if output_json:
+            _emit({
+                "event": "complete",
+                "chunks": stored,
+                "files": len(files_to_reindex),
+                "entities": 0,
+                "relations": 0,
+            })
         return
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        console.print(
-            "[yellow]ANTHROPIC_API_KEY not set — skipping graph extraction.[/yellow]\n"
-            "[dim]Set the key or use --no-extract to silence this warning.[/dim]"
-        )
+        if output_json:
+            _emit({"event": "extraction", "status": "skipped", "reason": "ANTHROPIC_API_KEY not set"})
+            _emit({
+                "event": "complete",
+                "chunks": stored,
+                "files": len(files_to_reindex),
+                "entities": 0,
+                "relations": 0,
+            })
+        else:
+            console.print(
+                "[yellow]ANTHROPIC_API_KEY not set — skipping graph extraction.[/yellow]\n"
+                "[dim]Set the key or use --no-extract to silence this warning.[/dim]"
+            )
         return
 
-    from hafiz.core.extractor import run_extraction, EXTRACTION_BATCH_SIZE
+    from hafiz.core.extractor import EXTRACTION_BATCH_SIZE, run_extraction
 
-    # Build chunk dicts for the extractor
     chunk_dicts = [
         {
             "content": c.content,
@@ -140,32 +214,60 @@ async def _do_ingest(
         for c, cid in zip(chunks, chunk_ids)
     ]
 
-    total_batches = (len(chunk_dicts) + EXTRACTION_BATCH_SIZE - 1) // EXTRACTION_BATCH_SIZE
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Extracting entities & relations...", total=len(chunk_dicts))
-
-        def _on_progress(batch_size: int) -> None:
-            progress.update(task, advance=batch_size)
-
-        ent_count, rel_count = await run_extraction(
-            chunk_dicts,
-            project=project,
-            on_progress=_on_progress,
-        )
-
-    if ent_count or rel_count:
-        console.print(
-            f"[green]Extracted {ent_count} entities, {rel_count} relations[/green]"
-        )
+    if output_json:
+        _emit({"event": "extraction", "status": "start", "total": len(chunk_dicts)})
     else:
-        console.print("[dim]No entities or relations extracted.[/dim]")
+        progress_ctx = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        )
+        progress_ctx.__enter__()
+        rich_task = progress_ctx.add_task(
+            "Extracting entities & relations...", total=len(chunk_dicts)
+        )
+
+    extracted_so_far = 0
+
+    def _on_progress(batch_size: int) -> None:
+        nonlocal extracted_so_far
+        extracted_so_far += batch_size
+        if output_json:
+            _emit({
+                "event": "extraction",
+                "status": "progress",
+                "done": extracted_so_far,
+                "total": len(chunk_dicts),
+            })
+        else:
+            progress_ctx.update(rich_task, advance=batch_size)
+
+    ent_count, rel_count = await run_extraction(
+        chunk_dicts,
+        project=project,
+        on_progress=_on_progress,
+    )
+
+    if not output_json:
+        progress_ctx.__exit__(None, None, None)
+
+    if output_json:
+        _emit({
+            "event": "complete",
+            "chunks": stored,
+            "files": len(files_to_reindex),
+            "entities": ent_count,
+            "relations": rel_count,
+        })
+    else:
+        if ent_count or rel_count:
+            console.print(
+                f"[green]Extracted {ent_count} entities, {rel_count} relations[/green]"
+            )
+        else:
+            console.print("[dim]No entities or relations extracted.[/dim]")
 
 
 def run_git_hook_ingest_cmd(*, project: str | None = None) -> None:

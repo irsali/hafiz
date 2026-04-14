@@ -199,7 +199,7 @@ hafiz graph dependents AuthController
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz ingest <path>` | Index files into the knowledge base | `--project/-p`, `--no-extract`, `--git-hook` |
+| `hafiz ingest <path>` | Index files into the knowledge base | `--project/-p`, `--no-extract`, `--git-hook`, `--json/-j` |
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
 | `hafiz hooks install [path]` | Install git post-commit hook | `--project/-p` |
@@ -227,6 +227,28 @@ hafiz graph dependents AuthController
 - **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`
 - **Entity types**: `class`, `function`, `module`, `api`, `table`, `concept`
 - **Relation types**: `calls`, `imports`, `inherits`, `depends_on`, `defines`
+
+## Ignore Rules
+
+Hafiz respects `.gitignore` and `.hafizignore` files at every directory level, including negation patterns (`!important.py`) and subdirectory overrides. The `workspace.ignore` list in `hafiz.toml` provides additional patterns.
+
+Ignore precedence (later overrides earlier):
+1. `workspace.ignore` from `hafiz.toml`
+2. Root `.gitignore`
+3. Root `.hafizignore`
+4. Subdirectory `.gitignore` / `.hafizignore` (deeper overrides shallower)
+
+Create a `.hafizignore` file for hafiz-specific exclusions that shouldn't affect git:
+
+```
+# Ignore generated code (not in .gitignore because it's tracked)
+src/generated/
+!src/generated/manifest.json
+
+# Ignore large data files
+*.parquet
+*.arrow
+```
 
 ## Configuration
 
@@ -310,6 +332,15 @@ This writes a skill file to the agent's configuration directory (e.g. `~/.claude
 
 If the target file already exists and was not installed by hafiz, the command skips it to avoid overwriting your work. Files previously installed by hafiz are updated in place.
 
+`hafiz ingest --json` emits newline-delimited JSON progress events, useful for agents and scripts:
+
+```jsonl
+{"event":"chunking","status":"done","chunks":71,"files":38}
+{"event":"embedding","status":"progress","done":64,"total":71}
+{"event":"storing","status":"done","stored":71,"files":38}
+{"event":"complete","chunks":71,"files":38,"entities":0,"relations":0}
+```
+
 All agents should use `--json` for machine-readable output. The recommended workflow:
 
 1. `hafiz context "<task>" --json` before starting work
@@ -332,17 +363,21 @@ pytest
 hafiz/
   cli.py              -- Typer CLI entry point
   commands/            -- Command implementations
+    agent.py           -- hafiz agent install/uninstall/list
+    chunks.py          -- hafiz chunks export
     context.py         -- hafiz context
+    extract.py         -- hafiz extract import
     graph.py           -- hafiz graph show/deps/dependents
     hooks.py           -- hafiz hooks install
-    ingest.py          -- hafiz ingest
+    ingest.py          -- hafiz ingest (with JSON progress)
     maintenance.py     -- hafiz init/status/doctor/config
     observe.py         -- hafiz observe/recall
     prune.py           -- hafiz prune
     query.py           -- hafiz query
     watch.py           -- hafiz watch
   core/                -- Business logic
-    chunker.py         -- File walking & chunking
+    agents.py          -- Agent registry & file operations
+    chunker.py         -- File walking & chunking (.gitignore aware)
     config.py          -- Configuration (TOML + env vars)
     context.py         -- Context synthesis
     database.py        -- SQLAlchemy models
@@ -353,10 +388,12 @@ hafiz/
     search.py          -- Vector similarity search
     store.py           -- Database store operations
     watcher.py         -- File system watcher
+  data/agents/         -- Distributable agent skill files
+    skills.md          -- Universal hafiz skill (installed by hafiz agent install)
 tests/                 -- pytest test suite
 alembic/               -- Database migrations
 hafiz.toml.example     -- Configuration template
-CLAUDE.md              -- Claude Code instructions
+CLAUDE.md              -- Claude Code instructions (project-local)
 BRAIN_AGENT_GUIDE.md   -- Universal agent guide
 ROADMAP.md             -- Architecture & vision
 ```

@@ -42,7 +42,8 @@ hafiz graph show <entity>
 
 ## Project Structure
 - `hafiz/cli.py` -- Typer CLI entry point
-- `hafiz/commands/` -- Command implementations (query, graph, observe, context, ingest, watch, prune, hooks, maintenance)
-- `hafiz/core/` -- Business logic (chunker, config, database, embeddings, extractor, search, store, watcher, observations, context, git_hooks)
+- `hafiz/commands/` -- Command implementations (agent, chunks, extract, query, graph, observe, context, ingest, watch, prune, hooks, maintenance)
+- `hafiz/core/` -- Business logic (agents, chunker, config, database, embeddings, extractor, search, store, watcher, observations, context, git_hooks)
+- `hafiz/data/agents/skills.md` -- Universal agent skill file (installed by `hafiz agent install`)
 - `tests/` -- pytest suite
 - `hafiz.toml.example` -- Configuration template
