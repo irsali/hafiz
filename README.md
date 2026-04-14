@@ -35,8 +35,11 @@ pipx install git+https://github.com/irsali/hafiz.git
 # With GPU acceleration (requires CUDA drivers)
 pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
 
-# Upgrade to latest
+# Upgrade to latest from GitHub
 pipx upgrade hafiz
+
+# Editable install from local clone (changes apply instantly)
+pipx install -e ".[gpu]" --force   # or without [gpu]
 ```
 
 <details>

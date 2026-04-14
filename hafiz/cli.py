@@ -327,6 +327,54 @@ def context(
     run_context(query, project=project, output_json=json_output)
 
 
+# ─── CHUNKS ────────────────────────────────────────────────────────
+
+chunks_app = typer.Typer(name="chunks", help="Manage indexed chunks.")
+app.add_typer(chunks_app)
+
+
+@chunks_app.command("export")
+def chunks_export(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    path: Optional[str] = typer.Option(
+        None, "--path", help="Filter by source-file path prefix."
+    ),
+    limit: int = typer.Option(
+        200, "--limit", "-l", help="Maximum chunks to export."
+    ),
+    offset: int = typer.Option(
+        0, "--offset", help="Skip the first N chunks."
+    ),
+) -> None:
+    """Export indexed chunks as JSON (for agent-driven extraction)."""
+    from hafiz.commands.chunks import run_chunks_export
+
+    run_chunks_export(project=project, path_prefix=path, limit=limit, offset=offset)
+
+
+# ─── EXTRACT ───────────────────────────────────────────────────────
+
+extract_app = typer.Typer(name="extract", help="Entity & relationship extraction.")
+app.add_typer(extract_app)
+
+
+@extract_app.command("import")
+def extract_import_cmd(
+    file: Optional[str] = typer.Option(
+        None, "--file", "-f", help="JSON file (reads stdin if omitted)."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project tag for stored entities."
+    ),
+) -> None:
+    """Import extraction results from JSON (file or stdin)."""
+    from hafiz.commands.extract import run_extract_import
+
+    run_extract_import(file, project=project)
+
+
 # ─── HOOKS ─────────────────────────────────────────────────────────
 
 hooks_app = typer.Typer(name="hooks", help="Git hook management.")
