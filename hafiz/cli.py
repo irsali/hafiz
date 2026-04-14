@@ -320,14 +320,38 @@ def context(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
+    workspace: bool = typer.Option(
+        False, "--workspace", "-w", help="Search across all workspace projects."
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
 ) -> None:
     """Synthesize relevant code, graph, and observations for a task."""
+    if project and workspace:
+        typer.echo("Error: --project and --workspace are mutually exclusive.")
+        raise typer.Exit(1)
+
     from hafiz.commands.context import run_context
 
-    run_context(query, project=project, output_json=json_output)
+    run_context(query, project=project, workspace=workspace, output_json=json_output)
+
+
+# ─── REVIEW ──────────────────────────────────────────────────────────
+
+@app.command()
+def review(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Review a specific project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Review knowledge quality and get improvement suggestions."""
+    from hafiz.commands.review import run_review
+
+    run_review(project=project, output_json=json_output)
 
 
 # ─── CHUNKS ────────────────────────────────────────────────────────

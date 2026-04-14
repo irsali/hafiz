@@ -164,6 +164,9 @@ hafiz query "how does authentication work?"
 # Full context for a task
 hafiz context "implement rate limiting"
 
+# Cross-project context (all indexed projects)
+hafiz context "implement rate limiting" --workspace
+
 # Store a decision
 hafiz observe "JWT preferred over sessions" --type decision
 
@@ -179,7 +182,7 @@ hafiz graph dependents AuthController
 |---------|-------------|-----------|
 | `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--limit/-l`, `--json/-j` |
 | `hafiz recall "<query>"` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--limit/-l`, `--json/-j` |
-| `hafiz context "<task>"` | Synthesize relevant code, graph, and observations for a task | `--project/-p`, `--json/-j` |
+| `hafiz context "<task>"` | Synthesize relevant code, graph, and observations for a task | `--project/-p`, `--workspace/-w`, `--json/-j` |
 
 ### Knowledge Graph
 
@@ -213,6 +216,7 @@ hafiz graph dependents AuthController
 | `hafiz status` | Show database statistics | `--json/-j` |
 | `hafiz config show` | Display current configuration | `--json/-j` |
 | `hafiz doctor` | Run diagnostic checks | `--json/-j` |
+| `hafiz review` | Review knowledge quality and get improvement suggestions | `--project/-p`, `--json/-j` |
 
 ### Common Flags
 
@@ -343,9 +347,10 @@ If the target file already exists and was not installed by hafiz, the command sk
 
 All agents should use `--json` for machine-readable output. The recommended workflow:
 
-1. `hafiz context "<task>" --json` before starting work
+1. `hafiz context "<task>" --json` before starting work (or `--workspace` for multi-project)
 2. `hafiz query "<question>" --json` during implementation
 3. `hafiz observe "<decision>" --type decision` after making decisions
+4. `hafiz review --json` periodically to check knowledge quality
 
 ## Development
 
@@ -374,6 +379,7 @@ hafiz/
     observe.py         -- hafiz observe/recall
     prune.py           -- hafiz prune
     query.py           -- hafiz query
+    review.py          -- hafiz review
     watch.py           -- hafiz watch
   core/                -- Business logic
     agents.py          -- Agent registry & file operations
@@ -385,6 +391,7 @@ hafiz/
     extractor.py       -- LLM entity/relation extraction
     git_hooks.py       -- Git hook utilities
     observations.py    -- Observations store & search
+    review.py          -- Self-review engine (knowledge quality analysis)
     search.py          -- Vector similarity search
     store.py           -- Database store operations
     watcher.py         -- File system watcher

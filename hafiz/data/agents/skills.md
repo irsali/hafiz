@@ -107,7 +107,7 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz context "<task>"` | Full context bundle (chunks + graph + observations) | `--project`, `--json` |
+| `hafiz context "<task>"` | Full context bundle (chunks + graph + observations) | `--project`, `--workspace`, `--json` |
 | `hafiz query "<text>"` | Semantic search over indexed code and docs | `--type`, `--project`, `--limit`, `--json` |
 | `hafiz recall "<query>"` | Search observations only | `--type`, `--project`, `--limit`, `--json` |
 

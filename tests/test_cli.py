@@ -46,3 +46,23 @@ def test_config_show_help():
     result = runner.invoke(app, ["config", "show", "--help"])
     assert result.exit_code == 0
     assert "json" in result.output.lower()
+
+
+def test_context_help():
+    result = runner.invoke(app, ["context", "--help"])
+    assert result.exit_code == 0
+    assert "--workspace" in result.output
+    assert "--project" in result.output
+
+
+def test_context_mutual_exclusion():
+    result = runner.invoke(app, ["context", "test", "--project", "x", "--workspace"])
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
+def test_review_help():
+    result = runner.invoke(app, ["review", "--help"])
+    assert result.exit_code == 0
+    assert "--project" in result.output
+    assert "--json" in result.output

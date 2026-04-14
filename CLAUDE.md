@@ -33,6 +33,12 @@ hafiz recall "<topic>" --type decision --json
 hafiz observe "<what was decided and why>" --type decision --source agent:claude-code
 ```
 
+### For cross-project context in multi-project workspaces
+```bash
+hafiz context "<task description>" --workspace --json
+```
+Searches all indexed projects at once. Uses `workspace.projects` from hafiz.toml if configured, otherwise discovers from DB.
+
 ### When exploring dependencies
 ```bash
 hafiz graph deps <entity>
@@ -40,10 +46,17 @@ hafiz graph dependents <entity>
 hafiz graph show <entity>
 ```
 
+### When reviewing knowledge quality
+```bash
+hafiz review --json
+hafiz review --project <name> --json
+```
+Analyzes observations, graph coverage, staleness, and suggests improvements. This is the self-review mechanism (Layer 2, evolving) — separate from `hafiz agent install` (Layer 1, stable contract).
+
 ## Project Structure
 - `hafiz/cli.py` -- Typer CLI entry point
-- `hafiz/commands/` -- Command implementations (agent, chunks, extract, query, graph, observe, context, ingest, watch, prune, hooks, maintenance)
-- `hafiz/core/` -- Business logic (agents, chunker, config, database, embeddings, extractor, search, store, watcher, observations, context, git_hooks)
+- `hafiz/commands/` -- Command implementations (agent, chunks, extract, query, graph, observe, context, ingest, watch, prune, hooks, maintenance, review)
+- `hafiz/core/` -- Business logic (agents, chunker, config, database, embeddings, extractor, search, store, watcher, observations, context, git_hooks, review)
 - `hafiz/data/agents/skills.md` -- Universal agent skill file (installed by `hafiz agent install`)
 - `tests/` -- pytest suite
 - `hafiz.toml.example` -- Configuration template

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
-from hafiz.core.database import Entity, Relation, get_session_factory
+from hafiz.core.database import Chunk, Entity, Relation, get_session_factory
 from hafiz.core.observations import ObservationResult, search_observations
 from hafiz.core.search import SearchResult, vector_search
 
@@ -24,6 +24,7 @@ class ContextBundle:
     chunks: list[SearchResult] = field(default_factory=list)
     entities: list[dict] = field(default_factory=list)
     observations: list[ObservationResult] = field(default_factory=list)
+    project_distribution: dict[str, int] | None = None
 
     def to_markdown(self) -> str:
         """Render the context bundle as Markdown."""
@@ -59,6 +60,14 @@ class ContextBundle:
         else:
             sections.append("\n_No related entities found._")
 
+        # Project Distribution (workspace mode)
+        if self.project_distribution:
+            sections.append("\n## Project Distribution")
+            for proj, count in sorted(
+                self.project_distribution.items(), key=lambda x: x[1], reverse=True
+            ):
+                sections.append(f"- **{proj}**: {count} chunks")
+
         # Decisions & Facts
         sections.append("\n## Decisions & Facts")
         if self.observations:
@@ -76,7 +85,7 @@ class ContextBundle:
 
     def to_dict(self) -> dict:
         """Serialize the context bundle for JSON output."""
-        return {
+        result = {
             "query": self.query,
             "chunks": [
                 {
@@ -107,6 +116,9 @@ class ContextBundle:
                 for o in self.observations
             ],
         }
+        if self.project_distribution is not None:
+            result["project_distribution"] = self.project_distribution
+        return result
 
 
 async def build_context(
@@ -149,6 +161,69 @@ async def build_context(
         chunks=chunks,
         entities=entities,
         observations=observations,
+    )
+
+
+async def _discover_projects() -> list[str]:
+    """Discover all indexed projects from the database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Chunk.project, func.count())
+            .where(Chunk.project.isnot(None))
+            .group_by(Chunk.project)
+            .order_by(func.count().desc())
+        )
+        return [row[0] for row in result.all()]
+
+
+async def build_workspace_context(
+    query: str,
+    *,
+    projects: list[str] | None = None,
+    limit_chunks: int = 10,
+    limit_observations: int = 10,
+) -> ContextBundle:
+    """Build context across all workspace projects.
+
+    Searches chunks and observations without project filters to get the most
+    relevant results regardless of project boundaries. Includes project
+    distribution to show which projects are involved.
+
+    Args:
+        query: The task description or question.
+        projects: Explicit project list (from config). If None, discovers from DB.
+        limit_chunks: Max code chunks (higher default for cross-project).
+        limit_observations: Max observations (higher default for cross-project).
+
+    Returns:
+        A ContextBundle with cross-project context and distribution info.
+    """
+    # Discover projects if not provided
+    if projects is None:
+        projects = await _discover_projects()
+
+    # Search across all projects (no project filter)
+    chunks = await vector_search(query, limit=limit_chunks)
+
+    # Graph neighbours from all chunks
+    entities = await _graph_from_chunks(chunks)
+
+    # Observations across all projects
+    observations = await search_observations(query, limit=limit_observations)
+
+    # Compute project distribution from the returned chunks
+    distribution: dict[str, int] = {}
+    for c in chunks:
+        proj = c.project or "(untagged)"
+        distribution[proj] = distribution.get(proj, 0) + 1
+
+    return ContextBundle(
+        query=query,
+        chunks=chunks,
+        entities=entities,
+        observations=observations,
+        project_distribution=distribution,
     )
 
 

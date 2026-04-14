@@ -18,6 +18,7 @@ def run_context(
     query: str,
     *,
     project: str | None = None,
+    workspace: bool = False,
     limit_chunks: int = 5,
     limit_observations: int = 5,
     output_json: bool = False,
@@ -26,14 +27,27 @@ def run_context(
 
     async def _build():
         try:
-            from hafiz.core.context import build_context
+            if workspace:
+                from hafiz.core.context import build_workspace_context
+                from hafiz.core.config import get_settings
 
-            bundle = await build_context(
-                query,
-                project=project,
-                limit_chunks=limit_chunks,
-                limit_observations=limit_observations,
-            )
+                settings = get_settings()
+                configured_projects = settings.workspace.projects or None
+                bundle = await build_workspace_context(
+                    query,
+                    projects=configured_projects,
+                    limit_chunks=limit_chunks * 2,
+                    limit_observations=limit_observations * 2,
+                )
+            else:
+                from hafiz.core.context import build_context
+
+                bundle = await build_context(
+                    query,
+                    project=project,
+                    limit_chunks=limit_chunks,
+                    limit_observations=limit_observations,
+                )
             return bundle
         finally:
             await close_engine()
@@ -44,22 +58,28 @@ def run_context(
         console.print_json(json.dumps(bundle.to_dict(), default=str))
         return
 
+    title = f"Context (workspace): {query[:50]}" if workspace else f"Context: {query[:60]}"
     console.print()
     md = Markdown(bundle.to_markdown())
     console.print(
         Panel(
             md,
-            title=f"Context: {query[:60]}",
-            border_style="cyan",
+            title=title,
+            border_style="green" if workspace else "cyan",
             padding=(1, 2),
         )
     )
     console.print()
 
     # Summary line
-    console.print(
+    summary = (
         f"  [dim]Chunks: {len(bundle.chunks)} | "
         f"Entities: {len(bundle.entities)} | "
-        f"Observations: {len(bundle.observations)}[/dim]"
+        f"Observations: {len(bundle.observations)}"
     )
+    if bundle.project_distribution:
+        projects_involved = len(bundle.project_distribution)
+        summary += f" | Projects: {projects_involved}"
+    summary += "[/dim]"
+    console.print(summary)
     console.print()
