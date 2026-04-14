@@ -392,3 +392,62 @@ def hooks_install(
     from hafiz.commands.hooks import run_hooks_install
 
     run_hooks_install(repo_path, project=project)
+
+
+# ─── AGENT ─────────────────────────────────────────────────────────
+
+agent_app = typer.Typer(name="agent", help="Agent integration management.")
+app.add_typer(agent_app)
+
+
+@agent_app.command("install")
+def agent_install(
+    name: Optional[str] = typer.Argument(
+        None, help="Agent name (claude-code, cursor, github-copilot)."
+    ),
+    local: bool = typer.Option(
+        False, "--local", "-l", help="Install in current project instead of globally."
+    ),
+    path: Optional[str] = typer.Option(
+        None, "--path", help="Override destination directory."
+    ),
+    file: Optional[str] = typer.Option(
+        None, "--file", "-f", help="Override destination filename."
+    ),
+) -> None:
+    """Install hafiz skills for an AI coding agent."""
+    from hafiz.commands.agent import run_agent_install
+
+    run_agent_install(name, local=local, path_override=path, file_override=file)
+
+
+@agent_app.command("uninstall")
+def agent_uninstall(
+    name: Optional[str] = typer.Argument(
+        None, help="Agent name to uninstall."
+    ),
+    local: bool = typer.Option(
+        False, "--local", "-l", help="Uninstall from current project."
+    ),
+    path: Optional[str] = typer.Option(
+        None, "--path", help="Override destination directory."
+    ),
+    file: Optional[str] = typer.Option(
+        None, "--file", "-f", help="Override destination filename."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Remove even if not installed by hafiz."
+    ),
+) -> None:
+    """Remove hafiz skills for an AI coding agent."""
+    from hafiz.commands.agent import run_agent_uninstall
+
+    run_agent_uninstall(name, local=local, path_override=path, file_override=file, force=force)
+
+
+@agent_app.command("list")
+def agent_list() -> None:
+    """List available agents and their installation status."""
+    from hafiz.commands.agent import run_agent_list
+
+    run_agent_list()

@@ -40,9 +40,6 @@ hafiz graph dependents <entity>
 hafiz graph show <entity>
 ```
 
-## Custom Command
-Use `/brain-query <question>` to query Hafiz directly.
-
 ## Project Structure
 - `hafiz/cli.py` -- Typer CLI entry point
 - `hafiz/commands/` -- Command implementations (query, graph, observe, context, ingest, watch, prune, hooks, maintenance)
