@@ -1,25 +1,107 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
 # Hafiz — Workspace Intelligence
 
-You have access to `hafiz`, a CLI tool that indexes the entire codebase into
-PostgreSQL + pgvector. It provides semantic code search, an entity/relationship
-graph, and an observations store for decisions and learnings.
+IMPORTANT: You have access to `hafiz`, a CLI tool that indexes the entire
+codebase with semantic search, an entity graph, and an observations store.
+Always use `--json` when parsing output programmatically.
 
-Run from any directory: `hafiz <command>`. Always use `--json` when parsing output.
+## Required Behaviors
 
-## When to Use Hafiz
+You MUST follow these rules in every session:
 
-| Situation | Action |
-|-----------|--------|
-| Before starting ANY task | `hafiz context "<task description>" --json` |
-| Searching for code or answers | `hafiz query "<question>" --json` |
-| Checking past decisions or gotchas | `hafiz recall "<topic>" --type decision --json` |
-| Before refactoring an entity | `hafiz graph dependents <Name> --json` |
-| After making architectural decisions | `hafiz observe "<what and why>" --type decision --source agent:<your-name>` |
-| After discovering gotchas | `hafiz observe "<gotcha>" --type warning --source agent:<your-name>` |
-| User asks to ingest/index code | Follow the **Ingest Workflow** below |
+1. **Before starting ANY coding task**, gather context first:
+   ```bash
+   hafiz context "<task description>" --json
+   ```
 
-## Command Reference
+2. **Before refactoring or modifying a class/function**, check what depends on it:
+   ```bash
+   hafiz graph dependents <EntityName> --json
+   ```
+
+3. **After making an architectural decision**, record it:
+   ```bash
+   hafiz observe "<what was decided and why>" --type decision --source agent:<your-name>
+   ```
+
+4. **After discovering a gotcha or non-obvious behavior**, record it:
+   ```bash
+   hafiz observe "<the gotcha>" --type warning --source agent:<your-name>
+   ```
+
+## Core Commands
+
+| Command | When to use |
+|---------|-------------|
+| `hafiz context "<task>"` | **First thing** — synthesizes code, graph, and past observations |
+| `hafiz query "<text>" --json` | Searching for specific code or answers |
+| `hafiz recall "<topic>" --type decision --json` | Checking past decisions or known gotchas |
+| `hafiz graph deps <name> --json` | Understanding what an entity depends on |
+| `hafiz graph dependents <name> --json` | Assessing impact before changing an entity |
+| `hafiz observe "<text>" --type <type> --source agent:<name>` | Recording decisions, warnings, patterns, learnings |
+
+## Ingest Workflow
+
+When the user asks to ingest, index, or re-index a codebase, you act as the
+extraction engine — no external API key is needed.
+
+**Step 1** — Chunk and embed files:
+```bash
+hafiz ingest <path> --no-extract
+```
+
+**Step 2** — Export chunks for analysis:
+```bash
+hafiz chunks export --limit 200
+```
+If `total` exceeds the batch, repeat with `--offset` to get all chunks.
+
+**Step 3** — Extract entities and relationships from the chunk content.
+Produce a JSON object with this schema:
+
+```json
+{
+  "entities": [
+    {
+      "name": "ExactNameFromCode",
+      "entity_type": "<class|function|module|api_endpoint|database_table|concept|config|service>",
+      "description": "Brief description",
+      "source_file": "/absolute/path/to/file.py",
+      "chunk_id": "uuid-from-chunks-export"
+    }
+  ],
+  "relations": [
+    {
+      "source_name": "Caller",
+      "source_type": "function",
+      "target_name": "Callee",
+      "target_type": "function",
+      "relation_type": "<calls|imports|inherits|depends_on|defines|reads|writes|configures|implements>",
+      "evidence": "actual_code_snippet(proving_this)"
+    }
+  ]
+}
+```
+
+Rules: use exact names from code, provide real code as evidence, do not invent
+entities or relations, set `chunk_id` from the export, one entity per definition.
+
+**Step 4** — Import results:
+```bash
+cat /tmp/hafiz_extraction.json | hafiz extract import
+```
+
+**Step 5** — Verify:
+```bash
+hafiz status --json
+```
+
+---
+
+## Reference
+
+<details>
+<summary>Full command reference and flags</summary>
 
 ### Search & Context
 
@@ -43,8 +125,8 @@ Run from any directory: `hafiz <command>`. Always use `--json` when parsing outp
 |---------|---------|-----------|
 | `hafiz observe "<text>"` | Store a decision, fact, or learning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--json` |
 
-**Observation types** (`--type`): `fact`, `decision`, `learning`, `pattern`, `warning`
-**Source format** (`--source`): `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
+- **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`
+- **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
 
 ### Indexing & Maintenance
 
@@ -58,108 +140,8 @@ Run from any directory: `hafiz <command>`. Always use `--json` when parsing outp
 | `hafiz status` | Database statistics and index health | `--json` |
 | `hafiz doctor` | System diagnostics | `--json` |
 
-### Query Type Values
+### Type Values
 
 - **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`
 
-## Workflows
-
-### Starting a Task
-
-```bash
-hafiz context "<task description>" --json
-hafiz recall "<related topic>" --type decision --json
-```
-
-Read the output, then begin implementation with full context.
-
-### During Implementation
-
-```bash
-hafiz query "<specific question>" --type code --json
-hafiz graph deps <EntityName> --json
-hafiz graph dependents <EntityName> --json    # before refactoring — assess impact
-```
-
-### After Completing Work
-
-```bash
-hafiz observe "<what was decided and why>" --type decision --source agent:<your-name>
-hafiz observe "<gotcha discovered>" --type warning --source agent:<your-name>
-hafiz observe "<useful pattern>" --type pattern --source agent:<your-name>
-```
-
-## Ingest Workflow (Agent-Driven Extraction)
-
-When the user asks to ingest, index, or re-index a codebase, follow these steps.
-You act as the extraction engine — no external API key is needed.
-
-### Step 1 — Chunk & Embed
-
-```bash
-hafiz ingest <path> --no-extract
-```
-
-This chunks files and generates embeddings locally. Report the chunk count.
-
-### Step 2 — Export Chunks
-
-```bash
-hafiz chunks export --limit 200
-```
-
-If `total` in the output exceeds the batch, repeat with `--offset` to get remaining chunks.
-
-### Step 3 — Extract Entities & Relationships
-
-Analyse the exported chunks and produce a JSON object with this schema:
-
-```json
-{
-  "entities": [
-    {
-      "name": "ExactNameFromCode",
-      "entity_type": "<class|function|module|api_endpoint|database_table|concept|config|service>",
-      "description": "Brief description of what this entity does",
-      "source_file": "/absolute/path/to/file.py",
-      "chunk_id": "uuid-from-chunks-export"
-    }
-  ],
-  "relations": [
-    {
-      "source_name": "CallerEntity",
-      "source_type": "function",
-      "target_name": "CalleeEntity",
-      "target_type": "function",
-      "relation_type": "<calls|imports|inherits|depends_on|defines|reads|writes|configures|implements>",
-      "evidence": "the_actual_code_snippet(proving_this)"
-    }
-  ]
-}
-```
-
-**Extraction rules:**
-- Only extract entities that are **defined** or **clearly referenced** in the code
-- Use the **exact name** as it appears in the code (e.g. `MyClass`, `get_user`)
-- For relations, provide the actual code snippet as `evidence`
-- Do not invent entities or relationships not present in the code
-- Set `chunk_id` to the chunk's ID from the export so entities link back to their source
-- One entity per definition — pick the chunk where it is defined
-
-### Step 4 — Import Results
-
-Write the JSON to a temp file and import:
-
-```bash
-cat /tmp/hafiz_extraction.json | hafiz extract import
-```
-
-Report the entity and relation counts.
-
-### Step 5 — Verify
-
-```bash
-hafiz status --json
-```
-
-Confirm entities and relations are populated.
+</details>
