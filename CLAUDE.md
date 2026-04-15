@@ -53,6 +53,10 @@ hafiz review --project <name> --json
 ```
 Analyzes observations, graph coverage, staleness, and suggests improvements. This is the self-review mechanism (Layer 2, evolving) — separate from `hafiz agent install` (Layer 1, stable contract).
 
+## Command Map
+
+See [COMMANDS.md](COMMANDS.md) — the source of truth for all commands, their brain requirements, and agent vs terminal usage. **Update COMMANDS.md whenever commands change.**
+
 ## Project Structure
 - `hafiz/cli.py` -- Typer CLI entry point
 - `hafiz/commands/` -- Command implementations (agent, chunks, extract, query, graph, observe, context, ingest, watch, prune, hooks, maintenance, review)
@@ -60,3 +64,4 @@ Analyzes observations, graph coverage, staleness, and suggests improvements. Thi
 - `hafiz/data/agents/skills.md` -- Universal agent skill file (installed by `hafiz agent install`)
 - `tests/` -- pytest suite
 - `hafiz.toml.example` -- Configuration template
+- `COMMANDS.md` -- Command map (source of truth for all commands, brain requirements, agent vs terminal)
