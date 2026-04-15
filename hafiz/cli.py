@@ -63,6 +63,9 @@ def ingest(
     git_hook: bool = typer.Option(
         False, "--git-hook", help="Index only files changed in the latest commit."
     ),
+    prune: bool = typer.Option(
+        False, "--prune", help="Remove stale chunks before indexing."
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Emit newline-delimited JSON progress events."
     ),
@@ -78,7 +81,7 @@ def ingest(
             raise typer.Exit(1)
         from hafiz.commands.ingest import run_ingest
 
-        run_ingest(path, project=project, no_extract=no_extract, output_json=json_output)
+        run_ingest(path, project=project, no_extract=no_extract, prune=prune, output_json=json_output)
 
 
 # ─── WATCH ──────────────────────────────────────────────────────────

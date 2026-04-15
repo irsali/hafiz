@@ -132,7 +132,7 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz ingest <path>` | Index files (chunk + embed + extract) | `--project`, `--no-extract`, `--git-hook`, `--json` |
+| `hafiz ingest <path>` | Index files (chunk + embed + extract) | `--project`, `--no-extract`, `--git-hook`, `--prune`, `--json` |
 | `hafiz chunks export` | Export indexed chunks as JSON | `--project`, `--path`, `--limit`, `--offset` |
 | `hafiz extract import` | Import entity/relation extraction from JSON | `--file`, `--project` |
 | `hafiz watch <path>` | Watch directory and re-index on change | `--project`, `--json` |

@@ -31,17 +31,43 @@ def _emit(event: dict) -> None:
     print(json.dumps(event), flush=True)
 
 
+async def _do_prune(*, project: str | None = None, output_json: bool = False) -> None:
+    """Run prune before ingest — remove chunks for deleted files."""
+    from hafiz.commands.prune import _do_prune as prune_impl
+
+    result = await prune_impl(project=project, dry_run=False)
+    stale_count = len(result["stale_files"])
+    chunks_deleted = result["chunks_deleted"]
+
+    if output_json:
+        _emit({
+            "event": "prune",
+            "status": "done",
+            "stale_files": stale_count,
+            "chunks_deleted": chunks_deleted,
+        })
+    elif stale_count:
+        console.print(
+            f"[yellow]Pruned {chunks_deleted} chunks from {stale_count} stale files.[/yellow]"
+        )
+    else:
+        console.print("[dim]Prune: no stale files found.[/dim]")
+
+
 def run_ingest(
     path: str,
     *,
     project: str | None = None,
     no_extract: bool = False,
+    prune: bool = False,
     output_json: bool = False,
 ) -> None:
     """Run the ingestion pipeline for a path."""
 
     async def _ingest():
         try:
+            if prune:
+                await _do_prune(project=project, output_json=output_json)
             return await _do_ingest(
                 path, project=project, no_extract=no_extract, output_json=output_json
             )
