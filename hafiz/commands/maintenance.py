@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 
 from rich.console import Console
@@ -233,14 +232,7 @@ def run_doctor(*, output_json: bool = False) -> None:
         fix="Set HAFIZ_DATABASE__URL or update hafiz.toml [database] section.",
     )
 
-    # 3. ANTHROPIC_API_KEY set
-    api_key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    _check(
-        "ANTHROPIC_API_KEY set",
-        api_key_set,
-        detail="set" if api_key_set else "not set",
-        fix="Export ANTHROPIC_API_KEY to enable graph extraction during ingest.",
-    )
+    # 3. (removed — ANTHROPIC_API_KEY no longer needed, extraction is agent-driven)
 
     # Async checks
     async def _async_checks():

@@ -6,10 +6,6 @@ model = "nomic-ai/nomic-embed-text-v1.5"
 provider = "fastembed"   # fastembed | openai | ollama
 dimensions = 768
 
-[llm]
-provider = "anthropic"   # anthropic | openai | ollama | lmstudio
-model = "claude-sonnet-4-20250514"
-
 [workspace]
 root = "/path/to/your/workspace"
 projects = ["project-a", "project-b"]

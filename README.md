@@ -17,7 +17,6 @@ See the full setup guide below.
 
 - **Python 3.12+** -- `python3 --version`
 - **Docker** -- for PostgreSQL + pgvector (or a native PostgreSQL install)
-- **Anthropic API key** (optional) -- for knowledge graph extraction ([console.anthropic.com](https://console.anthropic.com/)). Without it, search and context still work; only `hafiz graph` commands require it.
 - **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify)
 
 ## Install
@@ -92,19 +91,7 @@ psql -d hafiz -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 </details>
 
-### 2. Set your Anthropic API key (optional)
-
-The API key enables knowledge graph extraction during ingestion (`hafiz graph` commands). Without it, chunking, vector search, and context synthesis all work normally -- ingestion will skip graph extraction automatically.
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
-Add it to your shell profile (`~/.bashrc`, `~/.zshrc`) to persist across sessions.
-
-> **Note:** Claude Code does *not* pass its own API key to shell commands. If you use Hafiz from Claude Code and want graph extraction, you still need the key exported in your shell profile.
-
-### 3. Create the config file
+### 2. Create the config file
 
 ```bash
 mkdir -p ~/.config/hafiz
@@ -121,10 +108,6 @@ model = "nomic-ai/nomic-embed-text-v1.5"
 provider = "fastembed"
 dimensions = 768
 
-[llm]
-provider = "anthropic"
-model = "claude-sonnet-4-20250514"
-
 [workspace]
 root = "/path/to/your/workspace"          # <-- change this
 projects = ["my-project"]                 # <-- change this
@@ -133,7 +116,7 @@ ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
 
 Update `root` to your workspace directory and `projects` to your project names. Adjust the database URL if you changed the credentials above.
 
-### 4. Initialize the database
+### 3. Initialize the database
 
 ```bash
 hafiz init
@@ -141,7 +124,7 @@ hafiz init
 
 Creates all tables, indexes, and enables the pgvector extension.
 
-### 5. Verify the setup
+### 4. Verify the setup
 
 ```bash
 hafiz doctor
@@ -149,13 +132,13 @@ hafiz doctor
 
 All checks should pass (database connection, pgvector, embeddings, config).
 
-### 6. Index your first project
+### 5. Index your first project
 
 ```bash
 hafiz ingest /path/to/your/project --project my-project
 ```
 
-### 7. Try it out
+### 6. Try it out
 
 ```bash
 # Semantic search
@@ -280,14 +263,17 @@ Workspace Files
       |
       v
   Embeddings (nomic-embed-text-v1.5 via fastembed, local ONNX)
-      |                                |
-      v                                v
-  Chunks table                  Extractor (Claude LLM)
-  (text + 768-dim vectors)            |
-                                      v
-                              Entities + Relations tables
-                                      |
-      All tables ---------> PostgreSQL + pgvector
+      |
+      v
+  Chunks table (text + 768-dim vectors)
+      |
+      v (agent-driven extraction)
+  chunks export --> Agent (any LLM) --> extract import
+                                            |
+                                            v
+                                  Entities + Relations tables
+                                            |
+      All tables ----------------> PostgreSQL + pgvector
                                       |
                                       v
                               hafiz CLI (Typer + Rich)
@@ -313,7 +299,7 @@ Workspace Files
 | ORM | SQLAlchemy 2.0 (async) |
 | Embeddings | fastembed (nomic-embed-text-v1.5, local ONNX) |
 | Chunking | LlamaIndex SentenceSplitter / CodeSplitter |
-| LLM | Anthropic Claude (entity extraction) |
+| Extraction | Agent-driven (any LLM in session or piped via CLI) |
 | File Watching | watchdog |
 | Migrations | Alembic |
 | Config | Pydantic + TOML |
