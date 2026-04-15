@@ -405,6 +405,21 @@ def extract_import_cmd(
     run_extract_import(file, project=project)
 
 
+@extract_app.command("run")
+def extract_run_cmd(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Extract entities for a specific project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Extract entities from chunks that don't have entities yet (requires ANTHROPIC_API_KEY)."""
+    from hafiz.commands.extract import run_extract_run
+
+    run_extract_run(project=project, output_json=json_output)
+
+
 # ─── HOOKS ─────────────────────────────────────────────────────────
 
 hooks_app = typer.Typer(name="hooks", help="Git hook management.")
