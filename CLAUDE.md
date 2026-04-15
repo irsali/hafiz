@@ -25,7 +25,7 @@ hafiz query "<question>" --type code --project <name> --json
 
 ### When checking past decisions
 ```bash
-hafiz recall "<topic>" --type decision --json
+hafiz query "<topic>" --recall --type decision --json
 ```
 
 ### After making architectural decisions

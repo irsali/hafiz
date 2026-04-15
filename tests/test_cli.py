@@ -35,11 +35,19 @@ def test_query_help():
     result = runner.invoke(app, ["query", "--help"])
     assert result.exit_code == 0
     assert "json" in result.output.lower()
+    assert "--recall" in result.output
+
+
+def test_query_mutual_exclusion():
+    result = runner.invoke(app, ["query", "test", "--project", "x", "--workspace"])
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
 
 
 def test_status_help():
     result = runner.invoke(app, ["status", "--help"])
     assert result.exit_code == 0
+    assert "--diagnose" in result.output
 
 
 def test_config_show_help():
@@ -66,3 +74,34 @@ def test_review_help():
     assert result.exit_code == 0
     assert "--project" in result.output
     assert "--json" in result.output
+
+
+def test_extract_export_help():
+    result = runner.invoke(app, ["extract", "export", "--help"])
+    assert result.exit_code == 0
+    assert "--unextracted" in result.output
+    assert "--project" in result.output
+
+
+def test_extract_import_help():
+    result = runner.invoke(app, ["extract", "import", "--help"])
+    assert result.exit_code == 0
+    assert "--file" in result.output
+
+
+def test_removed_recall_command():
+    """recall is now query --recall, standalone recall should not exist."""
+    result = runner.invoke(app, ["recall", "--help"])
+    assert result.exit_code != 0
+
+
+def test_removed_doctor_command():
+    """doctor is now status --diagnose, standalone doctor should not exist."""
+    result = runner.invoke(app, ["doctor", "--help"])
+    assert result.exit_code != 0
+
+
+def test_removed_chunks_command():
+    """chunks export is now extract export, standalone chunks should not exist."""
+    result = runner.invoke(app, ["chunks", "export", "--help"])
+    assert result.exit_code != 0

@@ -35,7 +35,7 @@ You MUST follow these rules in every session:
 |---------|-------------|
 | `hafiz context "<task>"` | **First thing** — synthesizes code, graph, and past observations |
 | `hafiz query "<text>" --json` | Searching for specific code or answers |
-| `hafiz recall "<topic>" --type decision --json` | Checking past decisions or known gotchas |
+| `hafiz query "<topic>" --recall --type decision --json` | Checking past decisions or known gotchas |
 | `hafiz graph deps <name> --json` | Understanding what an entity depends on |
 | `hafiz graph dependents <name> --json` | Assessing impact before changing an entity |
 | `hafiz observe "<text>" --type <type> --source agent:<name>` | Recording decisions, warnings, patterns, learnings |
@@ -52,7 +52,7 @@ hafiz ingest <path> --project <name>
 
 **Step 2** — Export chunks grouped by file for analysis:
 ```bash
-hafiz chunks export --unextracted --project <name> --limit 200
+hafiz extract export --unextracted --project <name> --limit 200
 ```
 Output is grouped by `source_file` with chunks ordered by line number.
 If `total` exceeds the batch, repeat with `--offset` to get all chunks.
@@ -120,7 +120,7 @@ hafiz status --json
 |---------|---------|-----------|
 | `hafiz context "<task>"` | Full context bundle (chunks + graph + observations) | `--project`, `--workspace`, `--json` |
 | `hafiz query "<text>"` | Semantic search over indexed code and docs | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
-| `hafiz recall "<query>"` | Search observations only | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz query "<text>" --recall` | Search observations (decisions, facts, learnings) | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
 
 ### Knowledge Graph
 
@@ -144,12 +144,11 @@ hafiz status --json
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz ingest <path>` | Index files (chunk + embed + store) | `--project`, `--git-hook`, `--prune`, `--json` |
-| `hafiz chunks export` | Export chunks grouped by file as JSON | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
+| `hafiz extract export` | Export chunks grouped by file as JSON | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
 | `hafiz extract import` | Import entity/relation extraction from JSON | `--file`, `--project` |
 | `hafiz watch <path>` | Watch directory and re-index on change | `--project`, `--json` |
 | `hafiz prune` | Remove chunks for deleted files | `--project`, `--dry-run`, `--json` |
-| `hafiz status` | Database statistics and index health | `--json` |
-| `hafiz doctor` | System diagnostics | `--json` |
+| `hafiz status` | Database statistics and index health | `--json`, `--diagnose` |
 | `hafiz review` | Review knowledge quality, suggest improvements | `--project`, `--json` |
 
 ### Type Values

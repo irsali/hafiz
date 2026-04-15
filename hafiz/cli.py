@@ -134,20 +134,32 @@ def query(
         False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
     ),
     type: Optional[str] = typer.Option(
-        None, "--type", "-t", help="Filter by chunk type (code, doc, note, decision)."
+        None, "--type", "-t", help="Filter by type (chunk: code/doc/note/decision; observation: fact/decision/learning/pattern/warning)."
     ),
     limit: int = typer.Option(
         10, "--limit", "-l", help="Maximum number of results."
     ),
+    recall: bool = typer.Option(
+        False, "--recall", help="Search observations instead of code chunks."
+    ),
 ) -> None:
-    """Search indexed content with vector similarity."""
+    """Search indexed content with vector similarity.
+
+    By default, searches code chunks. Use --recall to search observations
+    (decisions, facts, learnings, patterns, warnings).
+    """
     if project and workspace:
         typer.echo("Error: --project and --workspace are mutually exclusive.")
         raise typer.Exit(1)
 
-    from hafiz.commands.query import _run_query
+    if recall:
+        from hafiz.commands.observe import run_recall
 
-    _run_query(text, limit=limit, project=project, workspace=workspace, chunk_type=type, output_json=json_output)
+        run_recall(text, limit=limit, project=project, workspace=workspace, obs_type=type, output_json=json_output)
+    else:
+        from hafiz.commands.query import _run_query
+
+        _run_query(text, limit=limit, project=project, workspace=workspace, chunk_type=type, output_json=json_output)
 
 
 # ─── STATUS ─────────────────────────────────────────────────────────────
@@ -157,25 +169,22 @@ def status(
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON."
     ),
-) -> None:
-    """Show database statistics and index health."""
-    from hafiz.commands.maintenance import run_status
-
-    run_status(output_json=json_output)
-
-
-# ─── DOCTOR ────────────────────────────────────────────────────────────
-
-@app.command()
-def doctor(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
+    diagnose: bool = typer.Option(
+        False, "--diagnose", help="Run diagnostic checks (config, DB, pgvector, embeddings)."
     ),
 ) -> None:
-    """Run diagnostic checks on the Hafiz installation."""
-    from hafiz.commands.maintenance import run_doctor
+    """Show database statistics and index health.
 
-    run_doctor(output_json=json_output)
+    Use --diagnose to also run full diagnostic checks (replaces 'hafiz doctor').
+    """
+    from hafiz.commands.maintenance import run_status
+
+    if diagnose:
+        from hafiz.commands.maintenance import run_doctor
+
+        run_doctor(output_json=json_output)
+    else:
+        run_status(output_json=json_output)
 
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
@@ -289,44 +298,6 @@ def observe(
     )
 
 
-# ─── RECALL ───────────────────────────────────────────────────────────
-
-@app.command()
-def recall(
-    query: str = typer.Argument(..., help="Search query for observations."),
-    obs_type: Optional[str] = typer.Option(
-        None, "--type", "-t", help="Filter by observation type."
-    ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    workspace: bool = typer.Option(
-        False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
-    ),
-    limit: int = typer.Option(
-        10, "--limit", "-l", help="Maximum number of results."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
-) -> None:
-    """Recall observations by semantic similarity."""
-    if project and workspace:
-        typer.echo("Error: --project and --workspace are mutually exclusive.")
-        raise typer.Exit(1)
-
-    from hafiz.commands.observe import run_recall
-
-    run_recall(
-        query,
-        limit=limit,
-        project=project,
-        workspace=workspace,
-        obs_type=obs_type,
-        output_json=json_output,
-    )
-
-
 # ─── CONTEXT ──────────────────────────────────────────────────────────
 
 @app.command()
@@ -369,14 +340,14 @@ def review(
     run_review(project=project, output_json=json_output)
 
 
-# ─── CHUNKS ────────────────────────────────────────────────────────
+# ─── EXTRACT ───────────────────────────────────────────────────────
 
-chunks_app = typer.Typer(name="chunks", help="Manage indexed chunks.")
-app.add_typer(chunks_app)
+extract_app = typer.Typer(name="extract", help="Entity & relationship extraction.")
+app.add_typer(extract_app)
 
 
-@chunks_app.command("export")
-def chunks_export(
+@extract_app.command("export")
+def extract_export_cmd(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
@@ -397,12 +368,6 @@ def chunks_export(
     from hafiz.commands.chunks import run_chunks_export
 
     run_chunks_export(project=project, path_prefix=path, unextracted=unextracted, limit=limit, offset=offset)
-
-
-# ─── EXTRACT ───────────────────────────────────────────────────────
-
-extract_app = typer.Typer(name="extract", help="Entity & relationship extraction.")
-app.add_typer(extract_app)
 
 
 @extract_app.command("import")

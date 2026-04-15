@@ -127,7 +127,7 @@ Creates all tables, indexes, and enables the pgvector extension.
 ### 4. Verify the setup
 
 ```bash
-hafiz doctor
+hafiz status --diagnose
 ```
 
 All checks should pass (database connection, pgvector, embeddings, config).
@@ -163,8 +163,8 @@ hafiz graph dependents AuthController
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
-| `hafiz recall "<query>"` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
+| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j`, `--recall` |
+| `hafiz query "<text>" --recall` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
 | `hafiz context "<task>"` | Synthesize relevant code, graph, and observations for a task | `--project/-p`, `--workspace/-w`, `--json/-j` |
 
 ### Knowledge Graph
@@ -188,7 +188,7 @@ hafiz graph dependents AuthController
 | `hafiz ingest <path>` | Index files into the knowledge base (chunk + embed + store) | `--project/-p`, `--git-hook`, `--prune`, `--json/-j` |
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
-| `hafiz chunks export` | Export chunks grouped by file as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
+| `hafiz extract export` | Export chunks grouped by file as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
 | `hafiz extract import` | Import extraction results from JSON (file or stdin) | `--file/-f`, `--project/-p` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file` |
@@ -198,9 +198,8 @@ hafiz graph dependents AuthController
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
 | `hafiz init` | Create database tables and pgvector extension | |
-| `hafiz status` | Show database statistics | `--json/-j` |
+| `hafiz status` | Show database statistics | `--json/-j`, `--diagnose` |
 | `hafiz config show` | Display current configuration | `--json/-j` |
-| `hafiz doctor` | Run diagnostic checks | `--json/-j` |
 | `hafiz review` | Review knowledge quality and get improvement suggestions | `--project/-p`, `--json/-j` |
 
 ### Common Flags
@@ -314,7 +313,7 @@ hafiz agent install cursor        # Cursor IDE
 hafiz agent install github-copilot # GitHub Copilot
 ```
 
-This writes a skill file to the agent's configuration directory (e.g. `~/.claude/CLAUDE.md` for Claude Code). The skill teaches the agent to use `hafiz context`, `hafiz query`, `hafiz recall`, `hafiz graph`, and `hafiz observe` as part of its workflow.
+This writes a skill file to the agent's configuration directory (e.g. `~/.claude/CLAUDE.md` for Claude Code). The skill teaches the agent to use `hafiz context`, `hafiz query`, `hafiz graph`, and `hafiz observe` as part of its workflow.
 
 | Flag | Description |
 |------|-------------|
@@ -357,14 +356,14 @@ hafiz/
   cli.py              -- Typer CLI entry point
   commands/            -- Command implementations
     agent.py           -- hafiz agent install/uninstall/list
-    chunks.py          -- hafiz chunks export
     context.py         -- hafiz context
-    extract.py         -- hafiz extract import
+    chunks.py          -- chunk export logic (used by extract export)
+    extract.py         -- hafiz extract export/import
     graph.py           -- hafiz graph show/deps/dependents
     hooks.py           -- hafiz hooks install
     ingest.py          -- hafiz ingest (with JSON progress)
-    maintenance.py     -- hafiz init/status/doctor/config
-    observe.py         -- hafiz observe/recall
+    maintenance.py     -- hafiz init/status/config (status --diagnose for diagnostics)
+    observe.py         -- hafiz observe (recall via query --recall)
     prune.py           -- hafiz prune
     query.py           -- hafiz query
     review.py          -- hafiz review

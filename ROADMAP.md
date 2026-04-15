@@ -161,7 +161,7 @@ hafiz graph path AuthController UserTable             # Shortest path between tw
 # ─── OBSERVATIONS (Agent Memory) ───
 hafiz observe "JWT is preferred over sessions for auth" --type decision --project hu-manity
 hafiz observe "VendorAmount is TEXT, must cast to NUMERIC" --type warning --tags sql,gotcha
-hafiz recall "what do we know about Stripe integration?"  # Search observations only
+hafiz query "what do we know about Stripe integration?" --recall  # Search observations only
 
 # ─── INGESTION ───
 hafiz ingest ./src/                                   # Index a directory
@@ -299,8 +299,8 @@ $ hafiz query "auth system" --json
 - [ ] Implement the Observation system:
   - [ ] `hafiz observe "<text>" --type <type>` — store a fact/decision/lesson
   - [ ] `hafiz observe "<text>" --source agent:claude-code` — tag which agent stored it
-  - [ ] `hafiz recall "<query>"` — semantic search over observations only
-  - [ ] `hafiz recall --type decision --project hu-manity` — filtered recall
+  - [ ] `hafiz query "<query>" --recall` — semantic search over observations only
+  - [ ] `hafiz query --recall --type decision --project hu-manity` — filtered recall
   - [ ] Validity tracking (`valid_from` / `valid_until` for time-bound facts)
   - [ ] Confidence scoring (agent can say "I'm 80% sure about this")
 - [ ] Build the Context Synthesizer:
@@ -426,7 +426,7 @@ hafiz/
 │   │   ├── query.py        # hafiz query
 │   │   ├── graph.py        # hafiz graph
 │   │   ├── ingest.py       # hafiz ingest
-│   │   ├── observe.py      # hafiz observe / recall
+│   │   ├── observe.py      # hafiz observe (recall via query --recall)
 │   │   └── maintenance.py  # hafiz status / prune / export
 │   └── integrations/
 │       ├── __init__.py

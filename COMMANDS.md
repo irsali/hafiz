@@ -17,9 +17,9 @@
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `init` | Create DB tables + pgvector extension | — | same | same |
-| `doctor` | Check DB, pgvector, embeddings, config health | — | `--json` | rich output |
-| `config show` | Display current hafiz.toml settings | — | `--json` | rich output |
 | `status` | Count chunks, entities, relations, observations by project | — | `--json` | rich output |
+| `status --diagnose` | Check DB, pgvector, embeddings, config health | — | `--json` | rich output |
+| `config show` | Display current hafiz.toml settings | — | `--json` | rich output |
 | `hooks install` | Write post-commit + post-merge git hooks into a repo | — | same | same |
 | `agent install` | Write skills.md to agent config directory | — | same | same |
 | `agent uninstall` | Remove skills.md from agent config directory | — | same | same |
@@ -42,21 +42,21 @@ entities and relationships, and imports the results. No external API key needed.
 
 | Step | Command | Brain | What happens |
 |------|---------|:-----:|-------------|
-| 1. Export | `chunks export --unextracted` | — | Exports chunks grouped by file, filtered to files without entities |
+| 1. Export | `extract export --unextracted` | — | Exports chunks grouped by file, filtered to files without entities |
 | 2. Analyze | _(agent reads the output)_ | Agent | **Phase 1:** identify entities per file (file-scoped). **Phase 2:** identify relations across files (project-scoped). |
 | 3. Import | `extract import` | — | Stores the agent-produced entities/relations JSON into the graph |
 | 4. Verify | `status --json` | — | Confirm entity and relation counts |
 
 **Terminal (no agent in session):** pipe through an LLM CLI:
 ```bash
-hafiz chunks export --unextracted --project X | claude -p "extract entities per hafiz schema" | hafiz extract import --project X
+hafiz extract export --unextracted --project X | claude -p "extract entities per hafiz schema" | hafiz extract import --project X
 ```
 
 **Supporting commands:**
 
 | Command | Purpose | Brain | Key Flags |
 |---------|---------|:-----:|-----------|
-| `chunks export` | Export chunks grouped by file as JSON | — | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
+| `extract export` | Export chunks grouped by file as JSON | — | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
 | `extract import` | Store entities/relations from JSON (file or stdin) | — | `--file`, `--project` |
 
 ### Search
@@ -64,10 +64,10 @@ hafiz chunks export --unextracted --project X | claude -p "extract entities per 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `query "<text>"` | Vector similarity search over code chunks | Embed | `--json` | rich output |
-| `recall "<query>"` | Vector similarity search over observations | Embed | `--json` | rich output |
+| `query "<text>" --recall` | Vector similarity search over observations | Embed | `--json` | rich output |
 | `context "<task>"` | Synthesize chunks + graph + observations for a task | Embed | `--json` | rich panel |
 
-**Scoping flags** (available on `context`, `query`, `recall`):
+**Scoping flags** (available on `context`, `query`):
 
 | Flag | Scope | How it works |
 |------|-------|-------------|
@@ -103,9 +103,11 @@ hafiz chunks export --unextracted --project X | claude -p "extract entities per 
 |------|-------------|---------|
 | `--json` / `-j` | Most commands | Machine-readable output for agents |
 | `--project` / `-p` | Most commands | Filter or tag by project name |
-| `--workspace` / `-w` | `context`, `query`, `recall` | Scope to sibling projects in parent directory |
-| `--type` / `-t` | `query`, `recall`, `observe` | Filter by type (chunk type or observation type) |
-| `--limit` / `-l` | `query`, `recall`, `chunks export` | Maximum number of results |
+| `--workspace` / `-w` | `context`, `query` | Scope to sibling projects in parent directory |
+| `--type` / `-t` | `query`, `observe` | Filter by type (chunk type or observation type with --recall) |
+| `--limit` / `-l` | `query`, `extract export` | Maximum number of results |
+| `--recall` | `query` | Search observations instead of code chunks |
+| `--diagnose` | `status` | Run full diagnostic checks (config, DB, pgvector, embeddings) |
 
 ## Architecture Note
 

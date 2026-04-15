@@ -184,7 +184,7 @@ async def run_review(project: str | None = None) -> ReviewReport:
                 severity="suggestion",
                 title=f"{low_conf} low-confidence observations",
                 detail="Observations with confidence < 50% may add noise. Review and either boost or remove.",
-                action="hafiz recall '' --limit 50 --json  # then filter by confidence",
+                action="hafiz query '' --recall --limit 50 --json  # then filter by confidence",
             ))
 
         # Stale observations (older than 90 days)
@@ -206,7 +206,7 @@ async def run_review(project: str | None = None) -> ReviewReport:
                 severity="info",
                 title=f"{stale_obs} observations older than 90 days",
                 detail="Older observations may still be valid, but periodic review keeps knowledge fresh.",
-                action="hafiz recall '' --limit 20 --json  # review and invalidate if outdated",
+                action="hafiz query '' --recall --limit 20 --json  # review and invalidate if outdated",
             ))
 
         # ── Graph checks ───────────────────────────────────────────────
@@ -290,7 +290,7 @@ async def run_review(project: str | None = None) -> ReviewReport:
                     severity="suggestion",
                     title=f"Project '{proj}' has {count} chunks but no entities",
                     detail="Entity extraction hasn't been run for this project. Graph queries won't return results.",
-                    action=f"hafiz chunks export --project {proj} --limit 200  # then extract entities",
+                    action=f"hafiz extract export --project {proj} --limit 200  # then extract entities",
                 ))
 
         # Entity-to-chunk ratio
