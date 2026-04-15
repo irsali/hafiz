@@ -108,8 +108,8 @@ hafiz status --json
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz context "<task>"` | Full context bundle (chunks + graph + observations) | `--project`, `--workspace`, `--json` |
-| `hafiz query "<text>"` | Semantic search over indexed code and docs | `--type`, `--project`, `--limit`, `--json` |
-| `hafiz recall "<query>"` | Search observations only | `--type`, `--project`, `--limit`, `--json` |
+| `hafiz query "<text>"` | Semantic search over indexed code and docs | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz recall "<query>"` | Search observations only | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
 
 ### Knowledge Graph
 
@@ -133,7 +133,7 @@ hafiz status --json
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz ingest <path>` | Index files (chunk + embed + extract) | `--project`, `--no-extract`, `--git-hook`, `--prune`, `--json` |
-| `hafiz chunks export` | Export indexed chunks as JSON | `--project`, `--path`, `--limit`, `--offset` |
+| `hafiz chunks export` | Export indexed chunks as JSON | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
 | `hafiz extract run` | Extract entities from unextracted chunks (needs API key) | `--project`, `--json` |
 | `hafiz extract import` | Import entity/relation extraction from JSON | `--file`, `--project` |
 | `hafiz watch <path>` | Watch directory and re-index on change | `--project`, `--json` |

@@ -81,6 +81,7 @@ def run_recall(
     *,
     limit: int = 10,
     project: str | None = None,
+    workspace: bool = False,
     obs_type: str | None = None,
     output_json: bool = False,
 ) -> None:
@@ -90,10 +91,15 @@ def run_recall(
         try:
             from hafiz.core.observations import search_observations
 
+            search_project: str | list[str] | None = project
+            if workspace:
+                from hafiz.core.context import resolve_workspace_projects
+
+                search_project = await resolve_workspace_projects() or None
             results = await search_observations(
                 query,
                 limit=limit,
-                project=project,
+                project=search_project,
                 obs_type=obs_type,
             )
             return results

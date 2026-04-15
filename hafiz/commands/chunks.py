@@ -13,15 +13,31 @@ from hafiz.core.database import Chunk, Entity, close_engine, get_session_factory
 console = Console()
 
 
+async def _files_with_entities(project: str | None = None) -> set[str]:
+    """Return source files that already have entities extracted."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = select(Entity.source_file).where(Entity.source_file.isnot(None))
+        if project:
+            stmt = stmt.where(Entity.project == project)
+        result = await session.execute(stmt)
+        return {row[0] for row in result.all()}
+
+
 async def _export_chunks(
     *,
     project: str | None = None,
     path_prefix: str | None = None,
+    unextracted: bool = False,
     limit: int = 200,
     offset: int = 0,
 ) -> list[dict]:
     """Export chunks as JSON-serializable dicts."""
     session_factory = get_session_factory()
+
+    extracted_files: set[str] = set()
+    if unextracted:
+        extracted_files = await _files_with_entities(project=project)
 
     async with session_factory() as session:
         stmt = select(Chunk).order_by(Chunk.indexed_at.desc())
@@ -30,6 +46,8 @@ async def _export_chunks(
             stmt = stmt.where(Chunk.project == project)
         if path_prefix:
             stmt = stmt.where(Chunk.source_file.like(f"{path_prefix}%"))
+        if unextracted and extracted_files:
+            stmt = stmt.where(Chunk.source_file.notin_(extracted_files))
 
         stmt = stmt.offset(offset).limit(limit)
         result = await session.execute(stmt)
@@ -53,9 +71,14 @@ async def _count_chunks(
     *,
     project: str | None = None,
     path_prefix: str | None = None,
+    unextracted: bool = False,
 ) -> int:
     """Count total chunks matching the filter."""
     session_factory = get_session_factory()
+
+    extracted_files: set[str] = set()
+    if unextracted:
+        extracted_files = await _files_with_entities(project=project)
 
     async with session_factory() as session:
         stmt = select(func.count(Chunk.id))
@@ -63,6 +86,8 @@ async def _count_chunks(
             stmt = stmt.where(Chunk.project == project)
         if path_prefix:
             stmt = stmt.where(Chunk.source_file.like(f"{path_prefix}%"))
+        if unextracted and extracted_files:
+            stmt = stmt.where(Chunk.source_file.notin_(extracted_files))
         result = await session.execute(stmt)
         return result.scalar() or 0
 
@@ -71,6 +96,7 @@ def run_chunks_export(
     *,
     project: str | None = None,
     path_prefix: str | None = None,
+    unextracted: bool = False,
     limit: int = 200,
     offset: int = 0,
 ) -> None:
@@ -78,10 +104,13 @@ def run_chunks_export(
 
     async def _run():
         try:
-            total = await _count_chunks(project=project, path_prefix=path_prefix)
+            total = await _count_chunks(
+                project=project, path_prefix=path_prefix, unextracted=unextracted,
+            )
             chunks = await _export_chunks(
                 project=project,
                 path_prefix=path_prefix,
+                unextracted=unextracted,
                 limit=limit,
                 offset=offset,
             )
@@ -92,6 +121,8 @@ def run_chunks_export(
                 "count": len(chunks),
                 "chunks": chunks,
             }
+            if unextracted:
+                output["filter"] = "unextracted"
             print(json.dumps(output, indent=2))
         finally:
             await close_engine()

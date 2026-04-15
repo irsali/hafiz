@@ -23,6 +23,7 @@ def _run_query(
     *,
     limit: int,
     project: str | None,
+    workspace: bool = False,
     chunk_type: str | None,
     output_json: bool,
 ) -> None:
@@ -30,10 +31,15 @@ def _run_query(
 
     async def _search():
         try:
+            search_project: str | list[str] | None = project
+            if workspace:
+                from hafiz.core.context import resolve_workspace_projects
+
+                search_project = await resolve_workspace_projects() or None
             results = await vector_search(
                 text,
                 limit=limit,
-                project=project,
+                project=search_project,
                 chunk_type=chunk_type,
             )
             return results

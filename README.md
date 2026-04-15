@@ -180,8 +180,8 @@ hafiz graph dependents AuthController
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--limit/-l`, `--json/-j` |
-| `hafiz recall "<query>"` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--limit/-l`, `--json/-j` |
+| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
+| `hafiz recall "<query>"` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
 | `hafiz context "<task>"` | Synthesize relevant code, graph, and observations for a task | `--project/-p`, `--workspace/-w`, `--json/-j` |
 
 ### Knowledge Graph
@@ -205,6 +205,7 @@ hafiz graph dependents AuthController
 | `hafiz ingest <path>` | Index files into the knowledge base | `--project/-p`, `--no-extract`, `--git-hook`, `--prune`, `--json/-j` |
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
+| `hafiz chunks export` | Export indexed chunks as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
 | `hafiz extract run` | Extract entities from chunks that don't have entities yet | `--project/-p`, `--json/-j` |
 | `hafiz extract import` | Import extraction results from JSON (file or stdin) | `--file/-f`, `--project/-p` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |

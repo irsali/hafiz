@@ -133,6 +133,9 @@ def query(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter results by project."
     ),
+    workspace: bool = typer.Option(
+        False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
+    ),
     type: Optional[str] = typer.Option(
         None, "--type", "-t", help="Filter by chunk type (code, doc, note, decision)."
     ),
@@ -141,9 +144,13 @@ def query(
     ),
 ) -> None:
     """Search indexed content with vector similarity."""
+    if project and workspace:
+        typer.echo("Error: --project and --workspace are mutually exclusive.")
+        raise typer.Exit(1)
+
     from hafiz.commands.query import _run_query
 
-    _run_query(text, limit=limit, project=project, chunk_type=type, output_json=json_output)
+    _run_query(text, limit=limit, project=project, workspace=workspace, chunk_type=type, output_json=json_output)
 
 
 # ─── STATUS ─────────────────────────────────────────────────────────────
@@ -296,6 +303,9 @@ def recall(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
+    workspace: bool = typer.Option(
+        False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
+    ),
     limit: int = typer.Option(
         10, "--limit", "-l", help="Maximum number of results."
     ),
@@ -304,12 +314,17 @@ def recall(
     ),
 ) -> None:
     """Recall observations by semantic similarity."""
+    if project and workspace:
+        typer.echo("Error: --project and --workspace are mutually exclusive.")
+        raise typer.Exit(1)
+
     from hafiz.commands.observe import run_recall
 
     run_recall(
         query,
         limit=limit,
         project=project,
+        workspace=workspace,
         obs_type=obs_type,
         output_json=json_output,
     )
@@ -324,7 +339,7 @@ def context(
         None, "--project", "-p", help="Filter by project."
     ),
     workspace: bool = typer.Option(
-        False, "--workspace", "-w", help="Search across all workspace projects."
+        False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
     ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
@@ -371,6 +386,9 @@ def chunks_export(
     path: Optional[str] = typer.Option(
         None, "--path", help="Filter by source-file path prefix."
     ),
+    unextracted: bool = typer.Option(
+        False, "--unextracted", help="Only export chunks whose files have no entities."
+    ),
     limit: int = typer.Option(
         200, "--limit", "-l", help="Maximum chunks to export."
     ),
@@ -381,7 +399,7 @@ def chunks_export(
     """Export indexed chunks as JSON (for agent-driven extraction)."""
     from hafiz.commands.chunks import run_chunks_export
 
-    run_chunks_export(project=project, path_prefix=path, limit=limit, offset=offset)
+    run_chunks_export(project=project, path_prefix=path, unextracted=unextracted, limit=limit, offset=offset)
 
 
 # ─── EXTRACT ───────────────────────────────────────────────────────
