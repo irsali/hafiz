@@ -1,19 +1,16 @@
-"""LLM-powered entity and relationship extraction from code chunks.
+"""Entity and relationship extraction — data classes and storage.
 
-Uses the Anthropic Python SDK directly with structured output (tool_use)
-to extract entities and relationships from ingested chunks.
+Extraction is agent-driven: the agent reads chunks (via ``hafiz chunks export``),
+identifies entities and relationships, and pipes the result into
+``hafiz extract import``. No external API key is needed — the agent IS the brain.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-
-from hafiz.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +39,6 @@ RELATION_TYPES = [
     "implements",
 ]
 
-EXTRACTION_BATCH_SIZE = 3
-
 # ── Data classes ───────────────────────────────────────────────────────────
 
 
@@ -70,216 +65,6 @@ class ExtractedRelation:
 class ExtractionResult:
     entities: list[ExtractedEntity] = field(default_factory=list)
     relations: list[ExtractedRelation] = field(default_factory=list)
-
-
-# ── Tool schema for Claude structured output ───────────────────────────────
-
-EXTRACTION_TOOL = {
-    "name": "extract_graph",
-    "description": (
-        "Extract entities and relationships from code chunks. "
-        "Identify classes, functions, modules, APIs, database tables, concepts, "
-        "configs, and services — and the relationships between them."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "entities": {
-                "type": "array",
-                "description": "Entities found in the code chunks.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "The entity name (e.g. class name, function name).",
-                        },
-                        "entity_type": {
-                            "type": "string",
-                            "enum": ENTITY_TYPES,
-                            "description": "The type of entity.",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Brief description of what this entity does.",
-                        },
-                        "chunk_index": {
-                            "type": "integer",
-                            "description": "Index of the chunk (0-based) this entity was found in.",
-                        },
-                    },
-                    "required": ["name", "entity_type", "description", "chunk_index"],
-                },
-            },
-            "relations": {
-                "type": "array",
-                "description": "Relationships between entities found in the code.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "source_name": {
-                            "type": "string",
-                            "description": "Name of the source entity.",
-                        },
-                        "source_type": {
-                            "type": "string",
-                            "enum": ENTITY_TYPES,
-                            "description": "Type of the source entity.",
-                        },
-                        "target_name": {
-                            "type": "string",
-                            "description": "Name of the target entity.",
-                        },
-                        "target_type": {
-                            "type": "string",
-                            "enum": ENTITY_TYPES,
-                            "description": "Type of the target entity.",
-                        },
-                        "relation_type": {
-                            "type": "string",
-                            "enum": RELATION_TYPES,
-                            "description": "The type of relationship.",
-                        },
-                        "evidence": {
-                            "type": "string",
-                            "description": "The code snippet or text that proves this relationship.",
-                        },
-                    },
-                    "required": [
-                        "source_name",
-                        "source_type",
-                        "target_name",
-                        "target_type",
-                        "relation_type",
-                        "evidence",
-                    ],
-                },
-            },
-        },
-        "required": ["entities", "relations"],
-    },
-}
-
-
-# ── Extraction prompt ──────────────────────────────────────────────────────
-
-SYSTEM_PROMPT = """\
-You are a code analysis assistant. Your job is to extract entities and \
-relationships from code chunks.
-
-Entity types: class, function, module, api_endpoint, database_table, \
-concept, config, service.
-
-Relation types: calls, imports, inherits, depends_on, defines, reads, \
-writes, configures, implements.
-
-Rules:
-- Only extract entities that are DEFINED or CLEARLY REFERENCED in the code.
-- Use the exact name as it appears in the code (e.g. "MyClass", "get_user").
-- For relations, provide the actual code snippet as evidence.
-- Be precise — do not invent entities or relationships not in the code.
-- If a chunk has no meaningful entities, return empty arrays.\
-"""
-
-
-def _build_user_message(chunks: list[dict]) -> str:
-    """Build the user message for a batch of chunks."""
-    parts = []
-    for i, chunk in enumerate(chunks):
-        source = chunk.get("source_file", "unknown")
-        language = chunk.get("language", "")
-        content = chunk["content"]
-        parts.append(
-            f"--- Chunk {i} (file: {source}, language: {language}) ---\n{content}"
-        )
-    return "\n\n".join(parts)
-
-
-# ── Client ─────────────────────────────────────────────────────────────────
-
-
-def _get_client():
-    """Get the Anthropic client. Returns None if API key is not set."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-
-    import anthropic
-
-    return anthropic.Anthropic(api_key=api_key)
-
-
-# ── Core extraction ────────────────────────────────────────────────────────
-
-
-async def extract_from_chunks(
-    chunks: list[dict],
-) -> ExtractionResult:
-    """Extract entities and relationships from a batch of chunks using Claude.
-
-    Each chunk dict should have: content, source_file, language, chunk_id.
-    Batch size should be <= EXTRACTION_BATCH_SIZE (3).
-
-    Returns ExtractionResult with entities and relations.
-    """
-    client = _get_client()
-    if client is None:
-        logger.warning("ANTHROPIC_API_KEY not set — skipping extraction")
-        return ExtractionResult()
-
-    settings = get_settings()
-    model = settings.llm.model
-
-    user_message = _build_user_message(chunks)
-
-    try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=[EXTRACTION_TOOL],
-            tool_choice={"type": "tool", "name": "extract_graph"},
-            messages=[{"role": "user", "content": user_message}],
-        )
-    except Exception as e:
-        logger.warning("LLM extraction failed: %s", e)
-        return ExtractionResult()
-
-    # Parse the tool_use response
-    result = ExtractionResult()
-
-    for block in response.content:
-        if block.type != "tool_use" or block.name != "extract_graph":
-            continue
-
-        data = block.input
-
-        for ent in data.get("entities", []):
-            chunk_idx = ent.get("chunk_index", 0)
-            source_chunk = chunks[chunk_idx] if chunk_idx < len(chunks) else chunks[0]
-            result.entities.append(
-                ExtractedEntity(
-                    name=ent["name"],
-                    entity_type=ent["entity_type"],
-                    description=ent.get("description", ""),
-                    source_file=source_chunk.get("source_file"),
-                    chunk_id=source_chunk.get("chunk_id"),
-                )
-            )
-
-        for rel in data.get("relations", []):
-            result.relations.append(
-                ExtractedRelation(
-                    source_name=rel["source_name"],
-                    source_type=rel["source_type"],
-                    target_name=rel["target_name"],
-                    target_type=rel["target_type"],
-                    relation_type=rel["relation_type"],
-                    evidence=rel.get("evidence", ""),
-                )
-            )
-
-    return result
 
 
 # ── Database storage ───────────────────────────────────────────────────────
@@ -412,49 +197,3 @@ async def store_extraction(
                 relation_count += 1
 
     return entity_count, relation_count
-
-
-# ── Batch orchestrator ─────────────────────────────────────────────────────
-
-
-async def run_extraction(
-    chunks: list[dict],
-    *,
-    project: str | None = None,
-    on_progress: callable | None = None,
-) -> tuple[int, int]:
-    """Run extraction on a list of chunk dicts, batching by EXTRACTION_BATCH_SIZE.
-
-    Each chunk dict should have: content, source_file, language, chunk_id.
-
-    Args:
-        chunks: List of chunk dicts.
-        project: Project tag for entity storage.
-        on_progress: Optional callback(batch_size) called after each batch.
-
-    Returns (total_entities, total_relations).
-    """
-    if not chunks:
-        return 0, 0
-
-    # Check API key upfront
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        logger.warning("ANTHROPIC_API_KEY not set — skipping graph extraction")
-        return 0, 0
-
-    total_entities = 0
-    total_relations = 0
-
-    for i in range(0, len(chunks), EXTRACTION_BATCH_SIZE):
-        batch = chunks[i : i + EXTRACTION_BATCH_SIZE]
-
-        result = await extract_from_chunks(batch)
-        ent_count, rel_count = await store_extraction(result, project=project)
-
-        total_entities += ent_count
-        total_relations += rel_count
-
-        if on_progress:
-            on_progress(len(batch))
-
-    return total_entities, total_relations

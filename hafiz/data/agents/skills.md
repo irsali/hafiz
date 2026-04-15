@@ -43,20 +43,30 @@ You MUST follow these rules in every session:
 ## Ingest Workflow
 
 When the user asks to ingest, index, or re-index a codebase, you act as the
-extraction engine — no external API key is needed.
+extraction engine — no external API key is needed. You ARE the brain.
 
 **Step 1** — Chunk and embed files:
 ```bash
-hafiz ingest <path> --no-extract
+hafiz ingest <path> --project <name>
 ```
 
-**Step 2** — Export chunks for analysis:
+**Step 2** — Export chunks grouped by file for analysis:
 ```bash
-hafiz chunks export --limit 200
+hafiz chunks export --unextracted --project <name> --limit 200
 ```
+Output is grouped by `source_file` with chunks ordered by line number.
 If `total` exceeds the batch, repeat with `--offset` to get all chunks.
 
-**Step 3** — Extract entities and relationships from the chunk content.
+**Step 3** — Two-phase extraction from the chunk content.
+
+*Phase 1 — Entities (per file):* Read each file's chunks together. Identify
+entities **defined** in that file. Entities are file-scoped — a class, function,
+or config is defined in one file.
+
+*Phase 2 — Relations (cross-file):* With all entities identified, find
+relationships across files. Look at imports, function calls, type references,
+inheritance. Relations are project-scoped — they cross file boundaries.
+
 Produce a JSON object with this schema:
 
 ```json
@@ -85,10 +95,11 @@ Produce a JSON object with this schema:
 
 Rules: use exact names from code, provide real code as evidence, do not invent
 entities or relations, set `chunk_id` from the export, one entity per definition.
+Only declare a relation if you can see both sides (the caller and the callee).
 
 **Step 4** — Import results:
 ```bash
-cat /tmp/hafiz_extraction.json | hafiz extract import
+cat /tmp/hafiz_extraction.json | hafiz extract import --project <name>
 ```
 
 **Step 5** — Verify:
@@ -132,9 +143,8 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz ingest <path>` | Index files (chunk + embed + extract) | `--project`, `--no-extract`, `--git-hook`, `--prune`, `--json` |
-| `hafiz chunks export` | Export indexed chunks as JSON | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
-| `hafiz extract run` | Extract entities from unextracted chunks (needs API key) | `--project`, `--json` |
+| `hafiz ingest <path>` | Index files (chunk + embed + store) | `--project`, `--git-hook`, `--prune`, `--json` |
+| `hafiz chunks export` | Export chunks grouped by file as JSON | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
 | `hafiz extract import` | Import entity/relation extraction from JSON | `--file`, `--project` |
 | `hafiz watch <path>` | Watch directory and re-index on change | `--project`, `--json` |
 | `hafiz prune` | Remove chunks for deleted files | `--project`, `--dry-run`, `--json` |

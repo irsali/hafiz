@@ -8,8 +8,7 @@
 |------|-----------|------|--------|
 | **—** | No model needed, pure DB/filesystem operations | Free | — |
 | **Embed** | fastembed (nomic-embed-text-v1.5), runs locally via ONNX | Free | `[embedding]` in hafiz.toml |
-| **LLM** | Anthropic Claude API (extractor.py hardcoded to Anthropic SDK) | API cost per call | `[llm]` in hafiz.toml, requires `ANTHROPIC_API_KEY` |
-| **Agent** | The LLM already in conversation (Claude Code, Cursor, Copilot) | Already paying for the session | N/A — agent reads CLI output and acts |
+| **Agent** | The LLM in conversation (Claude Code, Cursor, Copilot) or piped via CLI (`claude -p`) | Already paying for the session | N/A — agent reads CLI output and acts |
 
 ## Command Reference
 
@@ -30,37 +29,35 @@
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `ingest <path>` | Chunk files, embed, store, optionally extract entities | Embed + LLM (optional) | `--json` emits NDJSON progress | rich progress bars |
-| `ingest --no-extract` | Chunk files, embed, store (skip entity extraction) | Embed | `--json` | rich progress bars |
+| `ingest <path>` | Chunk files, embed, store in DB | Embed | `--json` emits NDJSON progress | rich progress bars |
 | `ingest --git-hook` | Re-index only files changed in latest commit | Embed | `--json` | rich output |
 | `ingest --prune` | Remove stale chunks first, then ingest | Embed | `--json` | rich output |
 | `watch <path>` | Long-running: detect file changes, re-ingest automatically | Embed | `--json` events | rich output |
 | `prune` | Delete chunks for files that no longer exist on disk, mark entities stale | — | `--json` | rich output |
 
-### Extraction (two paths to entities)
+### Extraction (agent-driven, two-phase)
 
-**Path 1 — Terminal (headless, no agent present):**
+Entity extraction is always agent-driven. The agent reads chunks, identifies
+entities and relationships, and imports the results. No external API key needed.
 
-| Command | Purpose | Brain | Notes |
-|---------|---------|:-----:|-------|
-| `extract run` | Find chunks with no entities, call LLM API, store results | LLM | Requires `ANTHROPIC_API_KEY`. Incremental — only processes what's missing. |
+| Step | Command | Brain | What happens |
+|------|---------|:-----:|-------------|
+| 1. Export | `chunks export --unextracted` | — | Exports chunks grouped by file, filtered to files without entities |
+| 2. Analyze | _(agent reads the output)_ | Agent | **Phase 1:** identify entities per file (file-scoped). **Phase 2:** identify relations across files (project-scoped). |
+| 3. Import | `extract import` | — | Stores the agent-produced entities/relations JSON into the graph |
+| 4. Verify | `status --json` | — | Confirm entity and relation counts |
 
-**Path 2 — Agent (LLM already in conversation):**
-
-| Step | Command | Brain | Notes |
-|------|---------|:-----:|-------|
-| 1. Export | `chunks export --unextracted` | — | Outputs chunks whose source files have no entities |
-| 2. Analyze | Agent reads chunks, produces entities/relations JSON | Agent | The agent IS the brain — no API key needed |
-| 3. Import | `extract import` | — | Stores the agent-produced JSON into the graph |
+**Terminal (no agent in session):** pipe through an LLM CLI:
+```bash
+hafiz chunks export --unextracted --project X | claude -p "extract entities per hafiz schema" | hafiz extract import --project X
+```
 
 **Supporting commands:**
 
-| Command | Purpose | Brain | Agent use | Terminal use |
-|---------|---------|:-----:|-----------|-------------|
-| `chunks export` | Export all indexed chunks as JSON | — | agent reads output | not useful alone |
-| `chunks export --unextracted` | Export only chunks whose files have no entities | — | agent reads output | not useful alone |
-| `extract import` | Store entities/relations from JSON (file or stdin) | — | agent pipes JSON | `--file` for JSON file |
-| `extract run` | Extract entities from unextracted chunks via LLM API | LLM | not needed (agent IS the LLM) | primary use case |
+| Command | Purpose | Brain | Key Flags |
+|---------|---------|:-----:|-----------|
+| `chunks export` | Export chunks grouped by file as JSON | — | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
+| `extract import` | Store entities/relations from JSON (file or stdin) | — | `--file`, `--project` |
 
 ### Search
 

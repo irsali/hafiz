@@ -202,11 +202,10 @@ hafiz graph dependents AuthController
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz ingest <path>` | Index files into the knowledge base | `--project/-p`, `--no-extract`, `--git-hook`, `--prune`, `--json/-j` |
+| `hafiz ingest <path>` | Index files into the knowledge base (chunk + embed + store) | `--project/-p`, `--git-hook`, `--prune`, `--json/-j` |
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
-| `hafiz chunks export` | Export indexed chunks as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
-| `hafiz extract run` | Extract entities from chunks that don't have entities yet | `--project/-p`, `--json/-j` |
+| `hafiz chunks export` | Export chunks grouped by file as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
 | `hafiz extract import` | Import extraction results from JSON (file or stdin) | `--file/-f`, `--project/-p` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file` |
@@ -374,7 +373,7 @@ hafiz/
     agent.py           -- hafiz agent install/uninstall/list
     chunks.py          -- hafiz chunks export
     context.py         -- hafiz context
-    extract.py         -- hafiz extract import/run
+    extract.py         -- hafiz extract import
     graph.py           -- hafiz graph show/deps/dependents
     hooks.py           -- hafiz hooks install
     ingest.py          -- hafiz ingest (with JSON progress)

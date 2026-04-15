@@ -57,9 +57,6 @@ def ingest(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Tag chunks with a project name."
     ),
-    no_extract: bool = typer.Option(
-        False, "--no-extract", help="Skip entity/relationship extraction."
-    ),
     git_hook: bool = typer.Option(
         False, "--git-hook", help="Index only files changed in the latest commit."
     ),
@@ -70,7 +67,7 @@ def ingest(
         False, "--json", "-j", help="Emit newline-delimited JSON progress events."
     ),
 ) -> None:
-    """Index files into the Hafiz knowledge base."""
+    """Index files into the Hafiz knowledge base (chunk + embed + store)."""
     if git_hook:
         from hafiz.commands.ingest import run_git_hook_ingest_cmd
 
@@ -81,7 +78,7 @@ def ingest(
             raise typer.Exit(1)
         from hafiz.commands.ingest import run_ingest
 
-        run_ingest(path, project=project, no_extract=no_extract, prune=prune, output_json=json_output)
+        run_ingest(path, project=project, prune=prune, output_json=json_output)
 
 
 # ─── WATCH ──────────────────────────────────────────────────────────
@@ -421,21 +418,6 @@ def extract_import_cmd(
     from hafiz.commands.extract import run_extract_import
 
     run_extract_import(file, project=project)
-
-
-@extract_app.command("run")
-def extract_run_cmd(
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Extract entities for a specific project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
-) -> None:
-    """Extract entities from chunks that don't have entities yet (requires ANTHROPIC_API_KEY)."""
-    from hafiz.commands.extract import run_extract_run
-
-    run_extract_run(project=project, output_json=json_output)
 
 
 # ─── HOOKS ─────────────────────────────────────────────────────────
