@@ -20,7 +20,7 @@ dependencies = [
     "pgvector>=0.3",
     "llama-index-core>=0.11",
     "llama-index-embeddings-fastembed>=0.2",
-    "fastembed>=0.4",
+    "fastembed>=0.7",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "alembic>=1.13",
@@ -42,6 +42,7 @@ hafiz = "hafiz.cli:app"
 [project.optional-dependencies]
 gpu = [
     "fastembed-gpu>=0.8",
+    "onnxruntime-gpu>=1.20",
 ]
 dev = [
     "pytest>=8.0",
