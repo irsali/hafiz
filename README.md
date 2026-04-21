@@ -157,6 +157,81 @@ hafiz observe "JWT preferred over sessions" --type decision
 hafiz graph dependents AuthController
 ```
 
+## The Capture → Distill Loop
+
+Beyond indexing your codebase, Hafiz is a second brain for the work itself — raw thoughts, transcripts, decisions, and what replaced what. The loop is: **capture raw → review → distill into decisions → supersede when things change**.
+
+### Capture
+
+Start a session to auto-tag everything you record next. Sessions are scoped to your terminal (TTY) so two shells don't clobber each other:
+
+```bash
+hafiz session start "jwt-migration" --task auth --project my-project
+```
+
+Jot raw thoughts as they come (low-bar lane — distill later):
+
+```bash
+hafiz note "Wondering if refresh tokens should live in httponly cookies"
+```
+
+Pipe a long discussion (Claude Code transcript, meeting notes, whiteboard dump) and Hafiz will chunk it by paragraph / turn:
+
+```bash
+cat conversation.md | hafiz capture --title "JWT design meeting"
+```
+
+Every observation auto-captures git context (commit hash, branch, dirty state) so you can later ask "what did I decide on `main` at commit `abc123`?".
+
+### Review
+
+See what you recorded, grouped by day — observations and captures together:
+
+```bash
+hafiz journal --since 7d
+hafiz journal --day yesterday --session jwt-migration
+```
+
+### Distill
+
+Turn raw notes into durable decisions. `hafiz distill` **lists** recent notes and transcripts as promotable candidates — it does not auto-promote and does not call an LLM. The agent or human reads the candidates and decides:
+
+```bash
+hafiz distill --since 7d
+# prints a ready-to-run `hafiz observe ... --derived-from <ids>` scaffold
+```
+
+Promote with `--derived-from` to record lineage (non-destructive):
+
+```bash
+hafiz observe "Use httponly cookies for refresh tokens" \
+  --type decision \
+  --derived-from <note-id>,<note-id>
+```
+
+### Supersede
+
+When a decision changes, don't delete — **supersede**. The old row stays queryable for audit; the new row records the backref:
+
+```bash
+hafiz observe "Use Bearer header, not cookies" \
+  --type decision \
+  --supersedes <old-decision-id>
+```
+
+By default `hafiz query --recall` hides superseded / expired rows. Pass `--include-superseded` to see the full history, dimmed with a `(superseded)` marker.
+
+### Expire
+
+Some learnings become stale by a known date (a version bug, a deadline-bound constraint). Set an explicit lifetime up front:
+
+```bash
+hafiz observe "fastembed 0.3 has a GPU bug" --type warning --expires-in 90d
+hafiz observe "Migration freeze" --type fact --expires 2026-06-01
+```
+
+Recall also shows each row's age (e.g. `3mo ago`) and dims results older than 90 days so fresh decisions win.
+
 ## Command Reference
 
 ### Search & Query
@@ -175,11 +250,30 @@ hafiz graph dependents AuthController
 | `hafiz graph deps <name>` | Show outgoing dependencies (what it needs) | `--project/-p`, `--json/-j` |
 | `hafiz graph dependents <name>` | Show incoming dependencies (what needs it) | `--project/-p`, `--json/-j` |
 
-### Observations
+### Observations & Capture
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz observe "<text>"` | Store a fact, decision, learning, pattern, or warning | `--type/-t`, `--source/-s`, `--project/-p`, `--tags`, `--confidence/-c`, `--json/-j` |
+| `hafiz observe "<text>"` | Store a fact, decision, learning, pattern, warning, or note | `--type/-t`, `--source/-s`, `--project/-p`, `--tags`, `--confidence/-c`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json/-j` |
+| `hafiz note "<text>"` | Shortcut for `observe --type note` — low-bar raw-capture lane | Same as `observe` (minus `--type`) |
+| `hafiz capture [TEXT]` | Ingest a transcript / multi-page dump (stdin, `--file`, or positional TEXT) | `--title`, `--file/-f`, `--source/-s`, `--project/-p`, `--tags`, `--session`, `--task`, `--json/-j` |
+
+### Journal & Distill
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project/-p`, `--workspace/-w`, `--source`, `--type/-t`, `--session`, `--task`, `--limit/-l`, `--json/-j` |
+| `hafiz distill` | Surface recent notes + transcripts as promotable candidates (scanner — no LLM call) | `--since`, `--project/-p`, `--workspace/-w`, `--session`, `--task`, `--no-transcripts`, `--limit/-l`, `--json/-j` |
+
+### Sessions
+
+Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` with a `session_id` and optional `task`. State lives in `~/.cache/hafiz/session-<tty>.json`. Commands still work without a TTY (CI, piped) — writes are just untagged.
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `hafiz session start "<name>"` | Start a session for this terminal | `--task`, `--project/-p`, `--json/-j` |
+| `hafiz session show` | Show the active session | `--json/-j` |
+| `hafiz session end` | Clear the active session | `--json/-j` |
 
 ### Ingestion
 
@@ -211,8 +305,8 @@ hafiz graph dependents AuthController
 
 ### Type Values
 
-- **Query types**: `code`, `doc`, `note`, `decision`
-- **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`
+- **Chunk types** (for `query --type`): `code`, `doc`, `note`, `decision`, `transcript`
+- **Observation types** (for `observe --type`, `journal --type`): `fact`, `decision`, `learning`, `pattern`, `warning`, `note`
 - **Entity types**: `class`, `function`, `module`, `api`, `table`, `concept`
 - **Relation types**: `calls`, `imports`, `inherits`, `depends_on`, `defines`
 
@@ -336,8 +430,9 @@ All agents should use `--json` for machine-readable output. The recommended work
 
 1. `hafiz context "<task>" --json` before starting work (or `--workspace` for sibling projects)
 2. `hafiz query "<question>" --json` during implementation
-3. `hafiz observe "<decision>" --type decision` after making decisions
-4. `hafiz review --json` periodically to check knowledge quality
+3. `hafiz note "<raw thought>"` while working, for anything below decision-grade
+4. `hafiz observe "<decision>" --type decision` after deciding (`--supersedes <old-id>` if replacing a prior decision)
+5. `hafiz journal --since 7d` / `hafiz distill --since 7d` periodically to review and promote raw notes into decisions
 
 ## Development
 
@@ -356,30 +451,40 @@ hafiz/
   cli.py              -- Typer CLI entry point
   commands/            -- Command implementations
     agent.py           -- hafiz agent install/uninstall/list
+    capture.py         -- hafiz capture (transcripts / multi-page dumps)
     context.py         -- hafiz context
     chunks.py          -- chunk export logic (used by extract export)
+    distill.py         -- hafiz distill (promotable-candidate scanner)
     extract.py         -- hafiz extract export/import
     graph.py           -- hafiz graph show/deps/dependents
     hooks.py           -- hafiz hooks install
     ingest.py          -- hafiz ingest (with JSON progress)
+    journal.py         -- hafiz journal (time-bounded digest)
     maintenance.py     -- hafiz init/status/config (status --diagnose for diagnostics)
-    observe.py         -- hafiz observe (recall via query --recall)
+    observe.py         -- hafiz observe / note (recall via query --recall)
     prune.py           -- hafiz prune
     query.py           -- hafiz query
     review.py          -- hafiz review
+    session.py         -- hafiz session start/show/end
     watch.py           -- hafiz watch
   core/                -- Business logic
     agents.py          -- Agent registry & file operations
+    capture.py         -- Transcript splitter + neighbor expansion
     chunker.py         -- File walking & chunking (.gitignore aware)
     config.py          -- Configuration (TOML + env vars)
     context.py         -- Context synthesis
     database.py        -- SQLAlchemy models
+    distill.py         -- Distill-candidate scanner
+    durations.py       -- Human-readable duration parser (30d, 2w, 6m, 1y)
     embeddings.py      -- FastEmbed wrapper
-    extractor.py       -- LLM entity/relation extraction
+    extractor.py       -- Agent-driven entity/relation extraction
+    git_context.py     -- Per-observation git HEAD capture
     git_hooks.py       -- Git hook utilities
-    observations.py    -- Observations store & search
+    journal.py         -- Time-bounded digest assembly
+    observations.py    -- Observations store & search (supersession)
     review.py          -- Self-review engine (knowledge quality analysis)
     search.py          -- Vector similarity search
+    session.py         -- Per-TTY session state
     store.py           -- Database store operations
     watcher.py         -- File system watcher
   data/agents/         -- Distributable agent skill files
@@ -390,6 +495,7 @@ hafiz.toml.example     -- Configuration template
 CLAUDE.md              -- Claude Code instructions (project-local)
 BRAIN_AGENT_GUIDE.md   -- Universal agent guide
 ROADMAP.md             -- Architecture & vision
+COMMANDS.md            -- Authoritative CLI surface + JSON shapes
 ```
 
 ## License

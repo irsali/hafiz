@@ -39,6 +39,41 @@ You MUST follow these rules in every session:
 | `hafiz graph deps <name> --json` | Understanding what an entity depends on |
 | `hafiz graph dependents <name> --json` | Assessing impact before changing an entity |
 | `hafiz observe "<text>" --type <type> --source agent:<name>` | Recording decisions, warnings, patterns, learnings |
+| `hafiz note "<text>" --source agent:<name>` | Capturing a raw thought — anything below decision-grade |
+| `hafiz journal --since 7d --json` | "What did I record recently?" — observations + captures grouped by day |
+| `hafiz distill --since 7d --json` | Promotable candidates: recent notes + transcripts, with a ready observe-scaffold |
+
+## Capture → Distill Workflow
+
+Beyond indexing code, Hafiz is a second brain for your reasoning trail. The loop is:
+
+1. **Capture raw.** As you work, note half-formed thoughts without ceremony:
+   ```bash
+   hafiz note "Wondering if refresh tokens should live in httponly cookies"
+   ```
+   Pipe long discussions (chat transcripts, meeting notes) in whole:
+   ```bash
+   cat conversation.md | hafiz capture --title "JWT design chat"
+   ```
+
+2. **Review.** `hafiz journal --since 7d` shows everything recorded by day — notes + decisions + transcripts + commits.
+
+3. **Distill.** `hafiz distill --since 7d` lists promotable notes and transcripts with a ready-to-run promote command. Hafiz does **not** call an LLM here — you are the distiller. Promote via:
+   ```bash
+   hafiz observe "<distilled decision>" --type decision --derived-from <note-id>,<note-id>
+   ```
+
+4. **Supersede when things change.** Never silently delete — write the new decision with `--supersedes <old-id>` so the old one stays auditable but inactive:
+   ```bash
+   hafiz observe "<new decision>" --type decision --supersedes <old-id>
+   ```
+
+Sessions (optional) group everything you record in a terminal:
+```bash
+hafiz session start "jwt-migration" --task auth --project my-project
+# subsequent observe / note / capture auto-tag with session_id + task
+hafiz journal --session <id>     # pull one thread of work
+```
 
 ## Ingest Workflow
 

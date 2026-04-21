@@ -10,7 +10,9 @@
 
 Every AI agent you use — Claude Code, Cursor, Copilot, Aider, or anything tomorrow — connects to **one shared brain**. No more scattered `.md` files, no more "I forgot what we decided last week." Hafiz is always on, always fresh, and always yours.
 
-> **Status (2026-04-21):** Phases 1–5 shipped. Core CLI surface is stable; the product is dogfooded daily. Validity-tracking CLI, one-time migration scripts, and the REST/MCP surfaces are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
+> **Status (2026-04-21):** Phases 1–5 shipped, plus the temporal/capture/distill layer (journal, note, capture, session, distill, expiry, supersession — see [workitems/done/temporal-session-awareness.md](workitems/done/temporal-session-awareness.md)). Core CLI surface is stable; the product is dogfooded daily. One-time migration scripts are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
+>
+> **Dropped from scope (as of 2026-04-21):** REST API layer and MCP server. Hafiz is intentionally CLI-only; agents integrate via `hafiz` + `--json`. This decision replaces the earlier "future" positioning of those surfaces.
 >
 > This file is the **product vision + future backlog**. It is *not* the development guide — see [CLAUDE.md](CLAUDE.md) for conventions, layout, and how to add a command. [COMMANDS.md](COMMANDS.md) is the source of truth for command shapes and flags.
 
@@ -52,14 +54,12 @@ Every AI agent you use — Claude Code, Cursor, Copilot, Aider, or anything tomo
                     │  + Custom   │  - Context synthesis
                     └──────┬──────┘
                            │
-              ┌────────────┼────────────────┐
-              │            │                │
-        ┌─────▼─────┐ ┌───▼────┐    ┌──────▼──────┐
-        │  CLI Tool │ │  API   │    │  MCP Server │
-        │  `hafiz`  │ │(future)│    │   (future)  │
-        └─────┬─────┘ └────────┘    └─────────────┘
-              │
-     ┌────────┼────────┬──────────┬─────────┐
+                    ┌──────▼──────┐
+                    │  CLI Tool   │
+                    │   `hafiz`   │
+                    └──────┬──────┘
+                           │
+     ┌────────┬────────┬───┴──────┬─────────┐
      │        │        │          │         │
   Claude   Cursor   Copilot    Aider     Future
    Code                                  Agents
@@ -186,11 +186,9 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 
 Items that were scoped in the original roadmap but are **not yet shipped**:
 
-- [ ] **Validity-tracking CLI** — schema has `valid_from` / `valid_until` on observations, but `hafiz observe` has no `--valid-until` flag yet
 - [ ] **One-time migration scripts** — `import_memory.py` (MEMORY.md → observations), `import_knowledgehub.py`, `import_chromadb.py`. No top-level `scripts/` directory exists today.
 - [ ] **ChromaDB hard cutover** — not executed; no ChromaDB dependency to decommission in this repo
 - [ ] **Retention policies** for stale data — `prune` is on-demand only; no age-based policy
-- [ ] **REST API layer (FastAPI)** — deferred; CLI + `--json` is sufficient for current agents
 - [ ] **Test coverage for a second agent** (Aider, Codex) beyond the three currently registered
 
 ---
@@ -200,13 +198,13 @@ Items that were scoped in the original roadmap but are **not yet shipped**:
 Ideas, not committed — explore when the open-work list is clear.
 
 - [ ] **Community Detection** — auto-group related entities into "modules" or "domains"
-- [ ] **Temporal Queries** — "What did the auth module look like 3 months ago?"
 - [ ] **Cross-Project Learning** — "How did we solve rate-limiting in Project A? Apply that to Project B."
-- [ ] **MCP Server** — expose Hafiz as an MCP tool server for native LLM integration
 - [ ] **Dashboard** — simple web UI showing the knowledge graph visually
 - [ ] **Embedding Model Migration** — install-time model choice + `hafiz embeddings migrate` to re-embed corpus when switching models (enforce one model per DB)
 - [ ] **Markdown Dump/Export** — export captures, transcripts, observations, and journal entries as `.md` files for portability, backup, and human review
 - [ ] **DB export/import** — `hafiz export --format json` / `hafiz import` for backup and portability (mentioned in original roadmap; not shipped)
+
+*Temporal Queries* ("what did the auth module look like N months ago?") was in this list; the capture → distill → supersession loop (shipped in the temporal work item) covers the decision/observation side. Code-history queries remain an open direction if ever needed.
 
 ---
 
