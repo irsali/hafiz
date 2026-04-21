@@ -1,7 +1,25 @@
 """SQLAlchemy 2.0 async models and database connection for Hafiz.
 
-Tables: chunks, entities, relations, observations
-Uses pgvector for embedding columns.
+Seven-table model built on identity/body/embedding separation:
+
+  files          - One row per file ever seen (tombstoned via valid_until).
+  units          - Stable identity of an addressable thing (function, heading,
+                   section, whole-file fallback). kind is namespaced
+                   `domain.subtype` (code.function, doc.heading, mail.message,
+                   …) by convention.
+  unit_revisions - Append-only body. At most one current revision per unit
+                   (partial unique on superseded_at IS NULL).
+  embeddings     - 1:N vector search index over revisions. Small units: one
+                   row. Oversized units: many rows with part_index + token
+                   spans, each content-hashed independently.
+  edges          - Append-only relations between units. source ∈ {ast, agent,
+                   user}. target_name kept for unresolved/external refs.
+  annotations    - Decisions / facts / learnings. May link to a unit or float
+                   free. Temporal primitives (valid_from/until, supersedes_id).
+  commits        - Git axis as a first-class citizen. rewritten_at /
+                   rewritten_to track rebase/amend/squash (Phase 5b).
+
+See workitems/active/structural-grounding.md and ROADMAP.md for design.
 """
 
 from __future__ import annotations
@@ -11,11 +29,13 @@ from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
     Integer,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
@@ -30,146 +50,287 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
-# Chunks — raw content, chunked and embedded
+# Commits — git axis
 # ---------------------------------------------------------------------------
 
-class Chunk(Base):
-    __tablename__ = "chunks"
+class Commit(Base):
+    __tablename__ = "commits"
+
+    hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    project: Mapped[str | None] = mapped_column(Text, nullable=True)
+    author: Mapped[str | None] = mapped_column(Text, nullable=True)
+    committed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rewritten_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    rewritten_to: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    __table_args__ = (
+        Index("idx_commits_project", "project"),
+        Index("idx_commits_committed_at", "committed_at"),
+        Index("idx_commits_rewritten_at", "rewritten_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Files — one row per file ever seen
+# ---------------------------------------------------------------------------
+
+class File(Base):
+    __tablename__ = "files"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    project: Mapped[str | None] = mapped_column(Text, nullable=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    units: Mapped[list["Unit"]] = relationship(
+        "Unit", back_populates="file", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project", "path", name="uq_files_project_path"),
+        Index("idx_files_project", "project"),
+        Index("idx_files_path", "path"),
+        Index("idx_files_valid_until", "valid_until"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Units — stable identity
+# ---------------------------------------------------------------------------
+
+class Unit(Base):
+    __tablename__ = "units"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("files.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    identity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    first_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    file: Mapped[File] = relationship("File", back_populates="units")
+    revisions: Mapped[list["UnitRevision"]] = relationship(
+        "UnitRevision", back_populates="unit", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("identity_key", name="uq_units_identity_key"),
+        Index("idx_units_file_id", "file_id"),
+        Index("idx_units_kind", "kind"),
+        Index("idx_units_name", "name"),
+        Index("idx_units_valid_until", "valid_until"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Unit revisions — versioned body (append-only)
+# ---------------------------------------------------------------------------
+
+class UnitRevision(Base):
+    __tablename__ = "unit_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    unit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("units.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding = mapped_column(Vector(768), nullable=True)
-    source_file: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
     line_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     line_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    chunk_type: Mapped[str] = mapped_column(Text, default="code")
-    language: Mapped[str | None] = mapped_column(Text, nullable=True)
-    project: Mapped[str | None] = mapped_column(Text, nullable=True)
-    checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
-    indexed_at: Mapped[datetime] = mapped_column(
+    commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
-    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    task: Mapped[str | None] = mapped_column(Text, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("unit_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
+    unit: Mapped[Unit] = relationship("Unit", back_populates="revisions")
+    embeddings: Mapped[list["Embedding"]] = relationship(
+        "Embedding", back_populates="revision", cascade="all, delete-orphan"
+    )
+
     __table_args__ = (
-        Index("idx_chunks_project", "project"),
-        Index("idx_chunks_source", "source_file"),
-        Index("idx_chunks_checksum", "checksum"),
-        Index("idx_chunks_session", "session_id"),
-        Index("idx_chunks_task", "task"),
+        CheckConstraint(
+            "source IN ('ast', 'parser', 'agent', 'user')",
+            name="ck_unit_revisions_source",
+        ),
+        Index("idx_unit_revisions_unit_id", "unit_id"),
+        Index("idx_unit_revisions_content_hash", "content_hash"),
+        Index("idx_unit_revisions_commit_hash", "commit_hash"),
+        Index(
+            "uq_unit_revisions_current",
+            "unit_id",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL"),
+        ),
     )
 
 
 # ---------------------------------------------------------------------------
-# Entities — the "nouns" of the codebase
+# Embeddings — vector search index over revisions (1:N)
 # ---------------------------------------------------------------------------
 
-class Entity(Base):
-    __tablename__ = "entities"
+class Embedding(Base):
+    __tablename__ = "embeddings"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    project: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_file: Mapped[str | None] = mapped_column(Text, nullable=True)
-    properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    unit_revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("unit_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    part_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(768), nullable=True)
+    token_span_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_span_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
 
-    # Relationships
-    outgoing_relations: Mapped[list[Relation]] = relationship(
-        "Relation", foreign_keys="Relation.source_id", back_populates="source", cascade="all, delete"
-    )
-    incoming_relations: Mapped[list[Relation]] = relationship(
-        "Relation", foreign_keys="Relation.target_id", back_populates="target", cascade="all, delete"
+    revision: Mapped[UnitRevision] = relationship(
+        "UnitRevision", back_populates="embeddings"
     )
 
     __table_args__ = (
-        Index("idx_entities_type", "entity_type"),
-        Index("idx_entities_project", "project"),
+        UniqueConstraint(
+            "unit_revision_id", "part_index", name="uq_embeddings_revision_part"
+        ),
+        Index("idx_embeddings_revision", "unit_revision_id"),
+        Index("idx_embeddings_content_hash", "content_hash"),
     )
 
 
 # ---------------------------------------------------------------------------
-# Relations — the "verbs" between entities
+# Edges — relations between units (append-only)
 # ---------------------------------------------------------------------------
 
-class Relation(Base):
-    __tablename__ = "relations"
+class Edge(Base):
+    __tablename__ = "edges"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    source_id: Mapped[uuid.UUID] = mapped_column(
+    source_unit_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
+        ForeignKey("units.id", ondelete="CASCADE"),
         nullable=False,
     )
-    target_id: Mapped[uuid.UUID] = mapped_column(
+    target_unit_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("units.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    relation_type: Mapped[str] = mapped_column(Text, nullable=False)
-    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    target_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    relation: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
 
-    # Relationships
-    source: Mapped[Entity] = relationship(
-        "Entity", foreign_keys=[source_id], back_populates="outgoing_relations"
+    source_unit: Mapped[Unit] = relationship(
+        "Unit", foreign_keys=[source_unit_id]
     )
-    target: Mapped[Entity] = relationship(
-        "Entity", foreign_keys=[target_id], back_populates="incoming_relations"
+    target_unit: Mapped[Unit | None] = relationship(
+        "Unit", foreign_keys=[target_unit_id]
     )
 
     __table_args__ = (
-        Index("idx_relations_source", "source_id"),
-        Index("idx_relations_target", "target_id"),
+        CheckConstraint(
+            "source IN ('ast', 'agent', 'user')",
+            name="ck_edges_source",
+        ),
+        Index("idx_edges_source", "source_unit_id"),
+        Index("idx_edges_target", "target_unit_id"),
+        Index("idx_edges_target_name", "target_name"),
+        Index("idx_edges_relation", "relation"),
+        Index("idx_edges_commit", "commit_hash"),
     )
 
 
 # ---------------------------------------------------------------------------
-# Observations — high-level decisions, facts, and learnings
+# Annotations — decisions, facts, learnings, patterns, warnings
 # ---------------------------------------------------------------------------
 
-class Observation(Base):
-    __tablename__ = "observations"
+class Annotation(Base):
+    __tablename__ = "annotations"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding = mapped_column(Vector(768), nullable=True)
-    obs_type: Mapped[str] = mapped_column(Text, default="fact")
+    kind: Mapped[str] = mapped_column(Text, default="fact")
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     project: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("units.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     valid_from: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -177,23 +338,66 @@ class Observation(Base):
     valid_until: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    task: Mapped[str | None] = mapped_column(Text, nullable=True)
-    commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("observations.id", ondelete="SET NULL"),
+        ForeignKey("annotations.id", ondelete="SET NULL"),
         nullable=True,
     )
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
+    unit: Mapped[Unit | None] = relationship("Unit", foreign_keys=[unit_id])
+
     __table_args__ = (
-        Index("idx_observations_type", "obs_type"),
-        Index("idx_observations_session", "session_id"),
-        Index("idx_observations_task", "task"),
-        Index("idx_observations_commit", "commit_hash"),
-        Index("idx_observations_supersedes", "supersedes_id"),
+        Index("idx_annotations_kind", "kind"),
+        Index("idx_annotations_unit_id", "unit_id"),
+        Index("idx_annotations_project", "project"),
+        Index("idx_annotations_session", "session_id"),
+        Index("idx_annotations_task", "task"),
+        Index("idx_annotations_commit", "commit_hash"),
+        Index("idx_annotations_supersedes", "supersedes_id"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Transition stubs — Phase 3 removes these
+# ---------------------------------------------------------------------------
+# Several modules (hafiz.core.search / context / capture / journal /
+# graph_analysis / observations / distill / store / extractor, and several
+# commands) still import Chunk / Entity / Relation / Observation at module
+# scope. Migration 0005 dropped those tables; the callers get rewired in
+# Phase 3 of workitems/active/structural-grounding.md.
+#
+# Until then these stubs keep the import chain alive so the CLI loads and
+# unrelated tests run. Any attempt to instantiate or ORM-query them fails
+# loudly — there is no silent compatibility path.
+
+class _RemovedInV5:
+    """Placeholder for a model removed in 0005_structural_grounding."""
+
+    _name = "<unknown>"
+
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            f"{type(self)._name} was removed in migration 0005 "
+            "(structural-grounding). Callers are rewired in Phase 3; "
+            "see workitems/active/structural-grounding.md."
+        )
+
+
+class Chunk(_RemovedInV5):
+    _name = "Chunk"
+
+
+class Entity(_RemovedInV5):
+    _name = "Entity"
+
+
+class Relation(_RemovedInV5):
+    _name = "Relation"
+
+
+class Observation(_RemovedInV5):
+    _name = "Observation"
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +448,11 @@ async def create_tables(url: str | None = None) -> None:
     Alembic is the single source of truth for the schema. On a fresh DB this
     runs every migration in order; on an existing Alembic-tracked DB it applies
     only missing ones.
+
+    IMPORTANT: the `0005_structural_grounding` migration is destructive. It
+    drops the old `chunks` / `entities` / `relations` / `observations` tables
+    and replaces them with the seven-table identity/body/embedding model.
+    Callers should communicate "re-ingest required" to the user on first run.
     """
     import asyncio
 

@@ -26,7 +26,14 @@ def run_init() -> None:
             await create_tables()
             console.print("[green]Database initialized successfully.[/green]")
             console.print("  - pgvector extension enabled")
-            console.print("  - Tables created: chunks, entities, relations, observations")
+            console.print(
+                "  - Tables created: files, units, unit_revisions, "
+                "embeddings, edges, annotations, commits"
+            )
+            console.print(
+                "  [yellow]Note: migration 0005 replaces the old schema. "
+                "Re-ingest is required after upgrade from an older Hafiz.[/yellow]"
+            )
 
             # Check for config file
             config_path = find_config_file()
