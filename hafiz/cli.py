@@ -336,7 +336,10 @@ def graph_stats(
 def observe(
     text: str = typer.Argument(..., help="The observation text to store."),
     obs_type: str = typer.Option(
-        "fact", "--type", "-t", help="Type: fact, decision, learning, pattern, warning."
+        "fact",
+        "--type",
+        "-t",
+        help="Type: fact, decision, learning, pattern, warning, note.",
     ),
     source: Optional[str] = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:bilal, user:manual)."
@@ -349,6 +352,16 @@ def observe(
     ),
     confidence: float = typer.Option(
         1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."
+    ),
+    expires_in: Optional[str] = typer.Option(
+        None,
+        "--expires-in",
+        help="Expire after a duration (e.g. 30d, 2w, 6m, 1y).",
+    ),
+    expires: Optional[str] = typer.Option(
+        None,
+        "--expires",
+        help="Expire at an ISO date/datetime (e.g. 2026-06-01).",
     ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
@@ -365,6 +378,112 @@ def observe(
         project=project,
         tags=tag_list,
         confidence=confidence,
+        expires_in=expires_in,
+        expires=expires,
+        output_json=json_output,
+    )
+
+
+# ─── NOTE ──────────────────────────────────────────────────────────
+
+
+@app.command()
+def note(
+    text: str = typer.Argument(..., help="The note text to store."),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s", help="Origin (e.g. agent:claude-code, user:you)."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Tag with a project name."
+    ),
+    tags: Optional[str] = typer.Option(
+        None, "--tags", help="Comma-separated tags."
+    ),
+    confidence: float = typer.Option(
+        1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."
+    ),
+    expires_in: Optional[str] = typer.Option(
+        None,
+        "--expires-in",
+        help="Expire after a duration (e.g. 30d, 2w, 6m, 1y).",
+    ),
+    expires: Optional[str] = typer.Option(
+        None,
+        "--expires",
+        help="Expire at an ISO date/datetime (e.g. 2026-06-01).",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Capture a raw thought as a note — low-bar lane, distill later."""
+    from hafiz.commands.observe import run_note
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    run_note(
+        text,
+        source=source,
+        project=project,
+        tags=tag_list,
+        confidence=confidence,
+        expires_in=expires_in,
+        expires=expires,
+        output_json=json_output,
+    )
+
+
+# ─── JOURNAL ──────────────────────────────────────────────────────────
+
+
+@app.command()
+def journal(
+    since: Optional[str] = typer.Option(
+        None,
+        "--since",
+        help="Duration window ending now (e.g. 7d, 2w, 6h). Default: 7d.",
+    ),
+    day: Optional[str] = typer.Option(
+        None,
+        "--day",
+        help="Specific UTC day (ISO date, e.g. 2026-04-20). Exclusive with --since.",
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    workspace: bool = typer.Option(
+        False,
+        "--workspace",
+        "-w",
+        help="Scope to sibling projects in parent directory.",
+    ),
+    source: Optional[str] = typer.Option(
+        None, "--source", help="Filter by source (e.g. agent:claude-code)."
+    ),
+    type: Optional[str] = typer.Option(
+        None, "--type", "-t", help="Filter by observation type."
+    ),
+    limit: int = typer.Option(
+        500, "--limit", "-l", help="Maximum entries (default 500)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Time-bounded digest of observations — what you captured recently."""
+    if project and workspace:
+        typer.echo("Error: --project and --workspace are mutually exclusive.")
+        raise typer.Exit(1)
+
+    from hafiz.commands.journal import run_journal
+
+    run_journal(
+        since=since,
+        day=day,
+        project=project,
+        workspace=workspace,
+        source=source,
+        obs_type=type,
+        limit=limit,
         output_json=json_output,
     )
 

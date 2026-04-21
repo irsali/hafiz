@@ -1,17 +1,52 @@
-"""hafiz observe / recall — store and search observations."""
+"""hafiz observe / note / recall — store and search observations."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from hafiz.core.database import close_engine
+from hafiz.core.durations import parse_duration
 
 console = Console()
+
+
+def _compute_valid_until(
+    expires_in: str | None, expires: str | None
+) -> datetime | None:
+    """Resolve --expires-in / --expires into an absolute UTC datetime, or None.
+
+    Mutually exclusive — providing both is a user error.
+    """
+    if expires_in and expires:
+        console.print(
+            "[red]Error:[/red] --expires-in and --expires are mutually exclusive."
+        )
+        raise SystemExit(1)
+    if expires_in:
+        try:
+            return datetime.now(timezone.utc) + parse_duration(expires_in)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(1)
+    if expires:
+        try:
+            parsed = datetime.fromisoformat(expires)
+        except ValueError:
+            console.print(
+                f"[red]Error:[/red] --expires must be an ISO date/datetime "
+                f"(e.g. 2026-06-01), got {expires!r}"
+            )
+            raise SystemExit(1)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    return None
 
 
 def run_observe(
@@ -22,9 +57,12 @@ def run_observe(
     project: str | None = None,
     tags: list[str] | None = None,
     confidence: float = 1.0,
+    expires_in: str | None = None,
+    expires: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Store an observation and print confirmation."""
+    valid_until = _compute_valid_until(expires_in, expires)
 
     async def _store():
         try:
@@ -37,6 +75,7 @@ def run_observe(
                 project=project,
                 tags=tags,
                 confidence=confidence,
+                valid_until=valid_until,
             )
             return obs
         finally:
@@ -74,6 +113,59 @@ def run_observe(
         f"  [bold]Content:[/bold]    {obs.content[:200]}"
     )
     console.print(Panel(info, border_style="cyan"))
+
+
+def run_note(
+    text: str,
+    *,
+    source: str | None = None,
+    project: str | None = None,
+    tags: list[str] | None = None,
+    confidence: float = 1.0,
+    expires_in: str | None = None,
+    expires: str | None = None,
+    output_json: bool = False,
+) -> None:
+    """Store a raw thought as ``obs_type="note"`` — low-bar capture.
+
+    Thin wrapper over :func:`run_observe`; keeps the CLI surface light
+    so ``hafiz note "..."`` does not require choosing a type.
+    """
+    run_observe(
+        text,
+        obs_type="note",
+        source=source,
+        project=project,
+        tags=tags,
+        confidence=confidence,
+        expires_in=expires_in,
+        expires=expires,
+        output_json=output_json,
+    )
+
+
+STALE_DAYS = 90
+
+
+def _age(valid_from: datetime) -> tuple[str, int, bool]:
+    """Return (human label, age in days, stale flag) for a ``valid_from``.
+
+    Stale threshold is :data:`STALE_DAYS` — age beyond that dims the row
+    in recall output so old knowledge doesn't look as authoritative.
+    """
+    now = datetime.now(timezone.utc)
+    days = (now - valid_from.astimezone(timezone.utc)).days
+    if days < 0:
+        return "future", days, False
+    if days == 0:
+        return "today", 0, False
+    if days == 1:
+        return "1d ago", 1, False
+    if days < 30:
+        return f"{days}d ago", days, days > STALE_DAYS
+    if days < 365:
+        return f"{round(days / 30)}mo ago", days, days > STALE_DAYS
+    return f"{round(days / 365)}y ago", days, True
 
 
 def run_recall(
@@ -122,6 +214,8 @@ def run_recall(
                     "confidence": r.confidence,
                     "valid_from": r.valid_from.isoformat(),
                     "valid_until": r.valid_until.isoformat() if r.valid_until else None,
+                    "age_days": _age(r.valid_from)[1],
+                    "stale": _age(r.valid_from)[2],
                     "score": r.score,
                 }
                 for r in results
@@ -143,6 +237,7 @@ def run_recall(
     table.add_column("Type", style="yellow", width=10)
     table.add_column("Content", ratio=3)
     table.add_column("Source", style="dim", width=16)
+    table.add_column("Age", style="dim", width=8)
     table.add_column("Confidence", justify="right", width=10)
     table.add_column("Score", justify="right", width=8)
 
@@ -151,12 +246,15 @@ def run_recall(
         content_preview = r.content[:120]
         if len(r.content) > 120:
             content_preview += "..."
+        age_label, _, stale = _age(r.valid_from)
         table.add_row(
             r.obs_type,
             content_preview,
             r.source or "—",
+            age_label,
             f"{r.confidence:.0%}",
             f"[{score_color}]{r.score:.2%}[/{score_color}]",
+            style="dim" if stale else None,
         )
 
     console.print(table)

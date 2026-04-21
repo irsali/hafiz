@@ -13,6 +13,7 @@ from sqlalchemy import select, func, update
 
 from hafiz.core.database import Observation, get_session_factory
 from hafiz.core.embeddings import embed_query
+from hafiz.core.git_context import current_git_context
 
 
 @dataclass
@@ -62,6 +63,12 @@ async def store_observation(
     """
     embedding = await embed_query(content)
 
+    # Auto-capture git context (commit_hash, branch, is_dirty) unless
+    # the caller already supplied those keys in metadata.
+    merged_metadata = dict(metadata or {})
+    for key, value in current_git_context().items():
+        merged_metadata.setdefault(key, value)
+
     now = datetime.now(timezone.utc)
     obs = Observation(
         id=uuid.uuid4(),
@@ -74,7 +81,7 @@ async def store_observation(
         confidence=confidence,
         valid_from=valid_from or now,
         valid_until=valid_until,
-        metadata_=metadata or {},
+        metadata_=merged_metadata,
     )
 
     session_factory = get_session_factory()

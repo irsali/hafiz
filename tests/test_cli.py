@@ -105,3 +105,65 @@ def test_removed_chunks_command():
     """chunks export is now extract export, standalone chunks should not exist."""
     result = runner.invoke(app, ["chunks", "export", "--help"])
     assert result.exit_code != 0
+
+
+def test_observe_help_has_expiry_flags():
+    result = runner.invoke(app, ["observe", "--help"])
+    assert result.exit_code == 0
+    assert "--expires-in" in result.output
+    assert "--expires" in result.output
+
+
+def test_note_help():
+    result = runner.invoke(app, ["note", "--help"])
+    assert result.exit_code == 0
+    assert "raw thought" in result.output.lower() or "note" in result.output.lower()
+    assert "--expires-in" in result.output
+
+
+def test_journal_help():
+    result = runner.invoke(app, ["journal", "--help"])
+    assert result.exit_code == 0
+    assert "--since" in result.output
+    assert "--day" in result.output
+    assert "--json" in result.output
+
+
+def test_journal_since_and_day_mutually_exclusive():
+    result = runner.invoke(
+        app, ["journal", "--since", "7d", "--day", "2026-04-20"]
+    )
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
+def test_journal_project_and_workspace_mutually_exclusive():
+    result = runner.invoke(
+        app, ["journal", "--project", "x", "--workspace"]
+    )
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
+def test_observe_rejects_both_expiry_flags():
+    result = runner.invoke(
+        app,
+        [
+            "observe",
+            "test",
+            "--expires-in",
+            "30d",
+            "--expires",
+            "2026-06-01",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
+def test_observe_rejects_garbage_duration():
+    result = runner.invoke(
+        app, ["observe", "test", "--expires-in", "banana"]
+    )
+    assert result.exit_code == 1
+    assert "duration" in result.output.lower()

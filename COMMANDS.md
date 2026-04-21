@@ -89,7 +89,22 @@ hafiz extract export --unextracted --project X | claude -p "extract entities per
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `observe "<text>"` | Embed and store a fact, decision, learning, pattern, or warning | Embed | `--json` | rich panel |
+| `observe "<text>"` | Embed and store a fact, decision, learning, pattern, warning, or note | Embed | `--json` | rich panel |
+| `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane | Embed | `--json` | rich panel |
+| `journal` | Time-bounded digest of observations, grouped by day | — | `--json` | rich tables |
+
+- **Observation types:** `fact`, `decision`, `learning`, `pattern`, `warning`, `note`.
+- **Auto-captured git context:** every observation records `metadata.commit_hash`, `metadata.branch`, and `metadata.is_dirty` when stored from inside a git repo (graceful no-op elsewhere).
+- **Expiration flags** (on `observe` / `note`, mutually exclusive): `--expires-in <30d|2w|6m|1y>` or `--expires <ISO-date>`. Sets `valid_until`; `query --recall` hides expired rows by default.
+- **Staleness hint:** `query --recall` surfaces the age of each row (e.g. `3mo ago`) and dims results older than 90 days.
+
+### Journal
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `journal` | "What did I record recently?" — time-bounded view over observations | — | `--json` | rich tables per day |
+
+**Scoping flags:** `--since <duration>` (default `7d`), or `--day <ISO-date>` (mutually exclusive). Also `--project` / `--workspace`, `--source`, `--type`, `--limit`.
 
 ### Review
 
@@ -103,10 +118,15 @@ hafiz extract export --unextracted --project X | claude -p "extract entities per
 |------|-------------|---------|
 | `--json` / `-j` | Most commands | Machine-readable output for agents |
 | `--project` / `-p` | Most commands | Filter or tag by project name |
-| `--workspace` / `-w` | `context`, `query` | Scope to sibling projects in parent directory |
-| `--type` / `-t` | `query`, `observe` | Filter by type (chunk type or observation type with --recall) |
-| `--limit` / `-l` | `query`, `extract export` | Maximum number of results |
+| `--workspace` / `-w` | `context`, `query`, `journal` | Scope to sibling projects in parent directory |
+| `--type` / `-t` | `query`, `observe`, `journal` | Filter by type (chunk type or observation type with --recall) |
+| `--limit` / `-l` | `query`, `extract export`, `journal` | Maximum number of results |
 | `--recall` | `query` | Search observations instead of code chunks |
+| `--since` | `journal` | Duration window ending now (default `7d`). Accepts `30d`, `2w`, `6h`, `3m`, `1y` |
+| `--day` | `journal` | Specific UTC day (ISO date). Exclusive with `--since` |
+| `--expires-in` | `observe`, `note` | Expire after duration (e.g. `30d`). Exclusive with `--expires` |
+| `--expires` | `observe`, `note` | Expire at ISO date/datetime. Exclusive with `--expires-in` |
+| `--source` | `observe`, `note`, `journal` | Origin tag (e.g. `agent:claude-code`, `user:<name>`) |
 | `--diagnose` | `status` | Run full diagnostic checks (config, DB, pgvector, embeddings) |
 
 ## Architecture Note

@@ -134,10 +134,15 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz observe "<text>"` | Store a decision, fact, or learning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--json` |
+| `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--json` |
+| `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--json` |
+| `hafiz journal` | Time-bounded digest of observations, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--limit`, `--json` |
 
-- **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`
+- **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`, `note`
 - **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
+- **Expiration** (on `observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01` (ISO). Sets `valid_until`; expired rows are hidden from `query --recall` by default.
+- **Auto-captured**: `metadata.commit_hash`, `metadata.branch`, `metadata.is_dirty` when the write happens inside a git repo.
+- **Staleness**: `query --recall` shows age (`3mo ago`) and dims rows older than 90d — prefer recent decisions over old ones.
 
 ### Indexing & Maintenance
 
