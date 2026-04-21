@@ -38,24 +38,21 @@ def run_agent_install(
     display_name = agent.display_name if agent else (name or "custom agent")
     console.print(f"Installing hafiz skills for [bold]{display_name}[/bold]...")
 
-    # Load and optionally transform content
     content = load_skills_content()
-    if agent and agent.wrapper:
-        content = agent.wrapper(content)
-
-    status = install_file(target, content)
+    wrapper = agent.wrapper if agent else None
+    status = install_file(target, content, wrapper=wrapper)
 
     icons = {
         "created": "[green]+[/green]",
         "updated": "[yellow]~[/yellow]",
-        "skipped": "[dim]-[/dim]",
+        "appended": "[cyan]»[/cyan]",
     }
     console.print(f"  {icons.get(status, '?')} {target}  [dim]({status})[/dim]")
 
-    if status == "skipped":
+    if status == "appended":
         console.print(
-            "\n[yellow]File exists and was not installed by hafiz — skipping to avoid overwrite.[/yellow]"
-            "\nDelete it manually or use a different --file name."
+            f"\n[green]Done.[/green] Hafiz block appended to your existing {target.name}; "
+            "your instructions are preserved."
         )
     else:
         console.print(f"\n[green]Done.[/green] {display_name} is configured to use hafiz.")
@@ -92,8 +89,8 @@ def run_agent_uninstall(
 
     if status == "skipped":
         console.print(
-            "\n[yellow]File was not installed by hafiz — skipping.[/yellow]"
-            "\nUse --force to remove it anyway."
+            "\n[yellow]No hafiz-managed region found in this file — skipping.[/yellow]"
+            "\nUse --force to delete the file anyway."
         )
     elif status == "removed":
         console.print(f"\n[green]Done.[/green] Hafiz skills removed for {display_name}.")

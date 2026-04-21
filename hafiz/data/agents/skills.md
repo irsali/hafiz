@@ -156,3 +156,5 @@ hafiz status --json
 - **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`
 
 </details>
+
+<!-- /Installed by hafiz — do not edit above this block; re-run `hafiz agent install` to update -->

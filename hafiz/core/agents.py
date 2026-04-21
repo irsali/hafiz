@@ -12,8 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-# Marker to identify files installed by hafiz (checked in first 200 chars)
-MARKER = "Installed by hafiz"
+# Markers bracketing hafiz-managed content inside an instruction file.
+# The region between them is owned by hafiz; everything outside belongs to the user.
+START_MARKER = "<!-- Installed by hafiz — workspace intelligence layer -->"
+END_MARKER = (
+    "<!-- /Installed by hafiz — do not edit above this block; "
+    "re-run `hafiz agent install` to update -->"
+)
 
 # Default filename when no agent name and no --file provided
 DEFAULT_FILENAME = "skills.md"
@@ -83,13 +88,34 @@ def load_skills_content() -> str:
     return ref.read_text(encoding="utf-8")
 
 
+def find_hafiz_region(text: str) -> tuple[int, int] | None:
+    """Locate the hafiz-managed region in *text*.
+
+    Returns (start, end) character indices such that ``text[start:end]`` covers
+    the region from the line containing START_MARKER through the line
+    containing END_MARKER (including its trailing newline if present).
+    Returns None if the paired region is not found.
+    """
+    start_idx = text.find(START_MARKER)
+    if start_idx == -1:
+        return None
+    line_start = text.rfind("\n", 0, start_idx) + 1  # 0 when no prior newline
+
+    end_idx = text.find(END_MARKER, start_idx + len(START_MARKER))
+    if end_idx == -1:
+        return None
+    trailing_nl = text.find("\n", end_idx + len(END_MARKER))
+    line_end = len(text) if trailing_nl == -1 else trailing_nl + 1
+
+    return line_start, line_end
+
+
 def is_hafiz_managed(path: Path) -> bool:
-    """Check if a file was installed by hafiz (marker in first 200 chars)."""
+    """Check whether *path* contains a paired hafiz-managed region."""
     if not path.exists():
         return False
     try:
-        content = path.read_text(encoding="utf-8")
-        return MARKER in content[:200]
+        return find_hafiz_region(path.read_text(encoding="utf-8")) is not None
     except (OSError, UnicodeDecodeError):
         return False
 
@@ -147,32 +173,77 @@ def resolve_target(
     return target, agent
 
 
-def install_file(target: Path, content: str) -> str:
-    """Write content to target path. Returns status: 'created', 'updated', 'skipped'."""
+def install_file(
+    target: Path,
+    content: str,
+    *,
+    wrapper: Callable[[str], str] | None = None,
+) -> str:
+    """Install hafiz skills into *target*, preserving any user-owned content.
+
+    - Fresh file: write ``wrapper(content)`` if a wrapper is provided, else *content*.
+    - File with a paired hafiz region: splice *content* in place, leaving
+      everything outside the markers untouched.
+    - File without markers: append *content* after the user's existing content.
+
+    Returns one of: ``'created'``, ``'updated'``, ``'appended'``.
+    """
     target = target.resolve()
 
-    if target.exists():
-        if is_hafiz_managed(target):
-            target.write_text(content, encoding="utf-8")
-            return "updated"
-        else:
-            return "skipped"
-    else:
+    if not target.exists():
+        file_content = wrapper(content) if wrapper else content
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_text(file_content, encoding="utf-8")
         return "created"
+
+    existing = target.read_text(encoding="utf-8")
+    region = find_hafiz_region(existing)
+
+    if region is not None:
+        start, end = region
+        new_text = existing[:start] + content + existing[end:]
+        target.write_text(new_text, encoding="utf-8")
+        return "updated"
+
+    # User-owned file — append the hafiz block after their content with a blank line.
+    prefix = existing.rstrip("\n") + "\n\n"
+    target.write_text(prefix + content, encoding="utf-8")
+    return "appended"
 
 
 def uninstall_file(target: Path, *, force: bool = False) -> str:
-    """Remove a hafiz-managed file. Returns status: 'removed', 'skipped', 'not_found'."""
+    """Remove the hafiz-managed region from *target*, preserving user content.
+
+    - Paired region present: splice it out. Delete the file only if nothing
+      non-whitespace remains.
+    - No region and ``force=False``: skipped.
+    - No region and ``force=True``: delete the whole file.
+
+    Returns one of: ``'removed'``, ``'skipped'``, ``'not_found'``.
+    """
     target = target.resolve()
 
     if not target.exists():
         return "not_found"
 
-    if force or is_hafiz_managed(target):
+    existing = target.read_text(encoding="utf-8")
+    region = find_hafiz_region(existing)
+
+    if region is not None:
+        start, end = region
+        remaining = existing[:start] + existing[end:]
+        if remaining.strip():
+            target.write_text(remaining.rstrip("\n") + "\n", encoding="utf-8")
+        else:
+            target.unlink()
+            try:
+                target.parent.rmdir()
+            except OSError:
+                pass
+        return "removed"
+
+    if force:
         target.unlink()
-        # Clean up empty parent dirs (but don't remove cwd or home)
         try:
             target.parent.rmdir()
         except OSError:
