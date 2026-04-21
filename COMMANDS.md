@@ -92,11 +92,14 @@ hafiz extract export --unextracted --project X | claude -p "extract entities per
 | `observe "<text>"` | Embed and store a fact, decision, learning, pattern, warning, or note | Embed | `--json` | rich panel |
 | `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane | Embed | `--json` | rich panel |
 | `journal` | Time-bounded digest of observations, grouped by day | — | `--json` | rich tables |
+| `distill` | Surface recent notes + transcripts as promotable candidates (scanner, not promoter) | — | `--json` | rich tables + scaffold |
 
 - **Observation types:** `fact`, `decision`, `learning`, `pattern`, `warning`, `note`.
-- **Auto-captured git context:** every observation records `metadata.commit_hash`, `metadata.branch`, and `metadata.is_dirty` when stored from inside a git repo (graceful no-op elsewhere).
+- **Auto-captured git context:** `commit_hash` lives on the column (`observations.commit_hash`); `branch` and `is_dirty` stay in `metadata` JSONB. Captured when stored inside a git repo; no-op elsewhere.
 - **Expiration flags** (on `observe` / `note`, mutually exclusive): `--expires-in <30d|2w|6m|1y>` or `--expires <ISO-date>`. Sets `valid_until`; `query --recall` hides expired rows by default.
 - **Staleness hint:** `query --recall` surfaces the age of each row (e.g. `3mo ago`) and dims results older than 90 days.
+- **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive (`valid_until=now`) and records the link in the new row's `supersedes_id` column. Nothing is deleted. Recall hides superseded rows by default; pass `--include-superseded` to see them, dimmed with a `(superseded)` marker.
+- **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` stores `metadata.derived_from` on the new row. Used by `distill` promotions to record which raw notes / transcripts a decision was drawn from. Does **not** supersede the sources.
 
 ### Journal
 
@@ -123,6 +126,22 @@ Per day the output shows two tables when relevant: observations first (cyan bord
 **Retrieval:**
 - `query` finds transcript chunks like any other chunk.
 - `context` expands retrieved transcript chunks with ±1 turn neighbors so the agent sees surrounding dialogue, not an orphan line. Neighbors are marked `is_neighbor: true` in JSON and carry the parent's score for ranking stability.
+
+### Distill
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `distill` | List recent active notes + transcripts in a time window; suggest a promotion scaffold | — | `--json` | rich tables |
+
+`distill` is a **scanner**, not a promoter. Hafiz does not call an LLM — the agent or user reads the candidates and decides what (if anything) becomes a `decision` / `learning` / `pattern`. Promote via:
+
+```bash
+hafiz observe '<distilled text>' --type decision --derived-from <id1>,<id2>,...
+```
+
+**Flags:** `--since <duration>` (default `7d`), `--project` / `--workspace`, `--session`, `--task`, `--no-transcripts`, `--limit`, `--json`.
+
+The JSON shape exposes `notes`, `transcripts`, and a `promotion_hint` field with a ready-to-run `hafiz observe` command using the first five candidate ids.
 
 ### Sessions
 
@@ -164,8 +183,11 @@ Per-TTY named threads of work that auto-tag subsequent `observe` / `note` / `cap
 | `--expires-in` | `observe`, `note` | Expire after duration (e.g. `30d`). Exclusive with `--expires` |
 | `--expires` | `observe`, `note` | Expire at ISO date/datetime. Exclusive with `--expires-in` |
 | `--source` | `observe`, `note`, `journal` | Origin tag (e.g. `agent:claude-code`, `user:<name>`) |
-| `--session` | `observe`, `note`, `capture`, `journal` | Explicit session id — overrides active `hafiz session` for write commands; filter for `journal` |
-| `--task` | `observe`, `note`, `capture`, `journal` | Explicit task label — same override / filter semantics as `--session` |
+| `--session` | `observe`, `note`, `capture`, `journal`, `distill` | Explicit session id — overrides active `hafiz session` for writes; filter for reads |
+| `--task` | `observe`, `note`, `capture`, `journal`, `distill` | Explicit task label — same override / filter semantics as `--session` |
+| `--supersedes` | `observe`, `note` | UUID of observation being replaced; marks target inactive atomically |
+| `--derived-from` | `observe`, `note` | Comma-separated UUIDs this row was distilled from (stored in `metadata`) |
+| `--include-superseded` | `query --recall` | Also return superseded / expired rows, dimmed in output |
 | `--diagnose` | `status` | Run full diagnostic checks (config, DB, pgvector, embeddings) |
 
 ## Architecture Note

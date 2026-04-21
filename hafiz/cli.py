@@ -142,6 +142,11 @@ def query(
     recall: bool = typer.Option(
         False, "--recall", help="Search observations instead of code chunks."
     ),
+    include_superseded: bool = typer.Option(
+        False,
+        "--include-superseded",
+        help="(with --recall) Also return superseded/expired observations, dimmed.",
+    ),
 ) -> None:
     """Search indexed content with vector similarity.
 
@@ -155,7 +160,15 @@ def query(
     if recall:
         from hafiz.commands.observe import run_recall
 
-        run_recall(text, limit=limit, project=project, workspace=workspace, obs_type=type, output_json=json_output)
+        run_recall(
+            text,
+            limit=limit,
+            project=project,
+            workspace=workspace,
+            obs_type=type,
+            include_superseded=include_superseded,
+            output_json=json_output,
+        )
     else:
         from hafiz.commands.query import _run_query
 
@@ -425,6 +438,16 @@ def observe(
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
+    supersedes: Optional[str] = typer.Option(
+        None,
+        "--supersedes",
+        help="UUID of an observation this one replaces — marks the old row inactive atomically.",
+    ),
+    derived_from: Optional[str] = typer.Option(
+        None,
+        "--derived-from",
+        help="Comma-separated UUIDs this observation was distilled from (lineage, stored in metadata).",
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -444,6 +467,8 @@ def observe(
         expires=expires,
         session=session,
         task=task,
+        supersedes=supersedes,
+        derived_from=derived_from,
         output_json=json_output,
     )
 
@@ -540,6 +565,16 @@ def note(
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
+    supersedes: Optional[str] = typer.Option(
+        None,
+        "--supersedes",
+        help="UUID of a note this one replaces.",
+    ),
+    derived_from: Optional[str] = typer.Option(
+        None,
+        "--derived-from",
+        help="Comma-separated UUIDs this note was distilled from.",
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -558,6 +593,8 @@ def note(
         expires=expires,
         session=session,
         task=task,
+        supersedes=supersedes,
+        derived_from=derived_from,
         output_json=json_output,
     )
 
@@ -621,6 +658,66 @@ def journal(
         obs_type=type,
         session_id=session,
         task=task,
+        limit=limit,
+        output_json=json_output,
+    )
+
+
+# ─── DISTILL ──────────────────────────────────────────────────────────
+
+
+@app.command()
+def distill(
+    since: Optional[str] = typer.Option(
+        None,
+        "--since",
+        help="Duration window (e.g. 7d, 2w, 6h). Default: 7d.",
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    workspace: bool = typer.Option(
+        False,
+        "--workspace",
+        "-w",
+        help="Scope to sibling projects in parent directory.",
+    ),
+    session: Optional[str] = typer.Option(
+        None, "--session", help="Filter by session id."
+    ),
+    task: Optional[str] = typer.Option(
+        None, "--task", help="Filter by task label."
+    ),
+    no_transcripts: bool = typer.Option(
+        False,
+        "--no-transcripts",
+        help="Only surface notes; skip transcript candidates.",
+    ),
+    limit: int = typer.Option(
+        200, "--limit", "-l", help="Maximum notes (default 200)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Surface recent notes + transcripts as promotable candidates.
+
+    Distill is a SCANNER, not a promoter. Read the candidates, then
+    promote via `hafiz observe '<distilled>' --type decision --derived-from <ids>`.
+    """
+    if project and workspace:
+        typer.echo("Error: --project and --workspace are mutually exclusive.")
+        raise typer.Exit(1)
+
+    from hafiz.commands.distill import run_distill
+
+    run_distill(
+        since=since,
+        project=project,
+        workspace=workspace,
+        session_id=session,
+        task=task,
+        include_transcripts=not no_transcripts,
         limit=limit,
         output_json=json_output,
     )

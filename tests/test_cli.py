@@ -255,3 +255,56 @@ def test_journal_help_has_session_and_task_filters():
     assert result.exit_code == 0
     assert "--session" in result.output
     assert "--task" in result.output
+
+
+def test_observe_help_has_supersedes_and_derived_from():
+    result = runner.invoke(app, ["observe", "--help"])
+    assert result.exit_code == 0
+    assert "--supersedes" in result.output
+    assert "--derived-from" in result.output
+
+
+def test_note_help_has_supersedes_and_derived_from():
+    result = runner.invoke(app, ["note", "--help"])
+    assert result.exit_code == 0
+    assert "--supersedes" in result.output
+    assert "--derived-from" in result.output
+
+
+def test_query_help_has_include_superseded():
+    result = runner.invoke(app, ["query", "--help"])
+    assert result.exit_code == 0
+    assert "--include-superseded" in result.output
+
+
+def test_observe_rejects_bad_supersedes_uuid():
+    result = runner.invoke(
+        app, ["observe", "test", "--supersedes", "not-a-uuid"]
+    )
+    assert result.exit_code == 1
+    assert "uuid" in result.output.lower()
+
+
+def test_observe_rejects_bad_derived_from_uuid():
+    result = runner.invoke(
+        app, ["observe", "test", "--derived-from", "abc,not-a-uuid,def"]
+    )
+    assert result.exit_code == 1
+    assert "uuid" in result.output.lower()
+
+
+def test_distill_help():
+    result = runner.invoke(app, ["distill", "--help"])
+    assert result.exit_code == 0
+    assert "--since" in result.output
+    assert "--no-transcripts" in result.output
+    assert "--session" in result.output
+    assert "--task" in result.output
+
+
+def test_distill_project_and_workspace_mutually_exclusive():
+    result = runner.invoke(
+        app, ["distill", "--project", "x", "--workspace"]
+    )
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output

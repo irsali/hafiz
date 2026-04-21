@@ -46,6 +46,8 @@ async def store_observation(
     session_id: str | None = None,
     task: str | None = None,
     commit_hash: str | None = None,
+    supersedes_id: str | None = None,
+    derived_from: list[str] | None = None,
     metadata: dict | None = None,
 ) -> Observation:
     """Store a new observation with its embedding.
@@ -65,6 +67,14 @@ async def store_observation(
             caller did not pre-populate ``metadata["commit_hash"]``, it's
             auto-captured from the current cwd via
             :func:`hafiz.core.git_context.current_git_context`.
+        supersedes_id: UUID of an observation this one replaces. Atomically
+            sets that row's ``valid_until = now`` and records the link on the
+            new row's ``supersedes_id`` column. Raises ``ValueError`` if the
+            target does not exist. Supersession is non-destructive — the old
+            row stays queryable via ``--include-superseded``.
+        derived_from: Source observation ids this row was distilled from.
+            Stored in ``metadata.derived_from`` as a list of UUID strings —
+            lineage, not replacement (use ``supersedes_id`` for that).
         metadata: Arbitrary JSONB metadata. Any ``commit_hash`` key is
             promoted into the dedicated column and stripped from the dict.
 
@@ -90,8 +100,12 @@ async def store_observation(
         if key not in merged_metadata and key in git_ctx:
             merged_metadata[key] = git_ctx[key]
 
+    # derived_from is lineage, not replacement — store in JSONB.
+    if derived_from:
+        merged_metadata["derived_from"] = list(derived_from)
+
     now = datetime.now(timezone.utc)
-    obs = Observation(
+    new_obs = Observation(
         id=uuid.uuid4(),
         content=content,
         embedding=embedding,
@@ -105,15 +119,26 @@ async def store_observation(
         session_id=session_id,
         task=task,
         commit_hash=resolved_commit_hash,
+        supersedes_id=uuid.UUID(supersedes_id) if supersedes_id else None,
         metadata_=merged_metadata,
     )
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        session.add(obs)
+        # Atomic: if this write supersedes a prior row, invalidate it in the
+        # same transaction so readers never see both as active simultaneously.
+        if supersedes_id:
+            target = await session.get(Observation, uuid.UUID(supersedes_id))
+            if target is None:
+                raise ValueError(
+                    f"Cannot supersede {supersedes_id!r}: observation not found."
+                )
+            if target.valid_until is None or target.valid_until > now:
+                target.valid_until = now
+        session.add(new_obs)
         await session.commit()
-        await session.refresh(obs)
-        return obs
+        await session.refresh(new_obs)
+        return new_obs
 
 
 async def search_observations(

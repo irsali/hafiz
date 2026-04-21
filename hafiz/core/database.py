@@ -180,6 +180,11 @@ class Observation(Base):
     session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     task: Mapped[str | None] = mapped_column(Text, nullable=True)
     commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("observations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
     __table_args__ = (
@@ -187,6 +192,7 @@ class Observation(Base):
         Index("idx_observations_session", "session_id"),
         Index("idx_observations_task", "task"),
         Index("idx_observations_commit", "commit_hash"),
+        Index("idx_observations_supersedes", "supersedes_id"),
     )
 
 

@@ -146,7 +146,7 @@ async def build_journal(
         for o in rows
     ]
 
-    captures = await _fetch_captures(
+    captures = await fetch_captures(
         start=start,
         end=end,
         project=project,
@@ -163,7 +163,7 @@ async def build_journal(
     )
 
 
-async def _fetch_captures(
+async def fetch_captures(
     *,
     start: datetime,
     end: datetime,

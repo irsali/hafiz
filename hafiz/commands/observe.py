@@ -50,6 +50,25 @@ def _compute_valid_until(
     return None
 
 
+def _parse_uuid_list(raw: str | None) -> list[str] | None:
+    """Parse a comma-separated UUID list; error cleanly on bad input."""
+    if not raw:
+        return None
+    import uuid as _uuid
+
+    ids: list[str] = []
+    for part in raw.split(","):
+        s = part.strip()
+        if not s:
+            continue
+        try:
+            ids.append(str(_uuid.UUID(s)))
+        except ValueError:
+            console.print(f"[red]Error:[/red] not a valid UUID: {s!r}")
+            raise SystemExit(1)
+    return ids or None
+
+
 def run_observe(
     text: str,
     *,
@@ -62,6 +81,8 @@ def run_observe(
     expires: str | None = None,
     session: str | None = None,
     task: str | None = None,
+    supersedes: str | None = None,
+    derived_from: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Store an observation and print confirmation."""
@@ -69,6 +90,17 @@ def run_observe(
     resolved_session_id, resolved_task = resolve_session_tag(
         session_override=session, task_override=task
     )
+    derived_ids = _parse_uuid_list(derived_from)
+
+    # Validate supersedes as a UUID up-front so we fail before embedding.
+    if supersedes:
+        import uuid as _uuid
+
+        try:
+            _uuid.UUID(supersedes)
+        except ValueError:
+            console.print(f"[red]Error:[/red] --supersedes not a valid UUID: {supersedes!r}")
+            raise SystemExit(1)
 
     async def _store():
         try:
@@ -84,12 +116,18 @@ def run_observe(
                 valid_until=valid_until,
                 session_id=resolved_session_id,
                 task=resolved_task,
+                supersedes_id=supersedes,
+                derived_from=derived_ids,
             )
             return obs
         finally:
             await close_engine()
 
-    obs = asyncio.run(_store())
+    try:
+        obs = asyncio.run(_store())
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
 
     if output_json:
         data = {
@@ -107,6 +145,8 @@ def run_observe(
                 "session_id": obs.session_id,
                 "task": obs.task,
                 "commit_hash": obs.commit_hash,
+                "supersedes_id": str(obs.supersedes_id) if obs.supersedes_id else None,
+                "derived_from": (obs.metadata_ or {}).get("derived_from"),
             },
         }
         console.print_json(json.dumps(data))
@@ -144,6 +184,8 @@ def run_note(
     expires: str | None = None,
     session: str | None = None,
     task: str | None = None,
+    supersedes: str | None = None,
+    derived_from: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Store a raw thought as ``obs_type="note"`` — low-bar capture.
@@ -162,6 +204,8 @@ def run_note(
         expires=expires,
         session=session,
         task=task,
+        supersedes=supersedes,
+        derived_from=derived_from,
         output_json=output_json,
     )
 
@@ -197,6 +241,7 @@ def run_recall(
     project: str | None = None,
     workspace: bool = False,
     obs_type: str | None = None,
+    include_superseded: bool = False,
     output_json: bool = False,
 ) -> None:
     """Search observations by semantic similarity and display results."""
@@ -215,12 +260,18 @@ def run_recall(
                 limit=limit,
                 project=search_project,
                 obs_type=obs_type,
+                active_only=not include_superseded,
             )
             return results
         finally:
             await close_engine()
 
     results = asyncio.run(_search())
+
+    def _is_inactive(r) -> bool:
+        if r.valid_until is None:
+            return False
+        return r.valid_until < datetime.now(timezone.utc)
 
     if output_json:
         data = {
@@ -238,6 +289,7 @@ def run_recall(
                     "valid_until": r.valid_until.isoformat() if r.valid_until else None,
                     "age_days": _age(r.valid_from)[1],
                     "stale": _age(r.valid_from)[2],
+                    "inactive": _is_inactive(r),
                     "score": r.score,
                 }
                 for r in results
@@ -269,14 +321,19 @@ def run_recall(
         if len(r.content) > 120:
             content_preview += "..."
         age_label, _, stale = _age(r.valid_from)
+        inactive = _is_inactive(r)
+        row_style = "dim" if stale or inactive else None
+        obs_type_label = (
+            f"{r.obs_type} (superseded)" if inactive else r.obs_type
+        )
         table.add_row(
-            r.obs_type,
+            obs_type_label,
             content_preview,
             r.source or "—",
             age_label,
             f"{r.confidence:.0%}",
             f"[{score_color}]{r.score:.2%}[/{score_color}]",
-            style="dim" if stale else None,
+            style=row_style,
         )
 
     console.print(table)

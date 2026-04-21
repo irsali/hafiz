@@ -134,10 +134,11 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--json` |
-| `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--session`, `--task`, `--json` |
+| `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
+| `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
 | `hafiz capture [TEXT]` | Ingest a transcript / multi-page dump as `chunk_type=transcript` (stdin / `--file` / TEXT) | `--title`, `--file`, `--source`, `--project`, `--tags`, `--session`, `--task`, `--json` |
 | `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
+| `hafiz distill` | List recent notes + transcripts as promotable candidates (scanner — does **not** call an LLM) | `--since`, `--project`, `--workspace`, `--session`, `--task`, `--no-transcripts`, `--limit`, `--json` |
 | `hafiz session start "<name>"` | Start a per-TTY session; subsequent `observe` / `note` / `capture` auto-tag with it | `--task`, `--project`, `--json` |
 | `hafiz session show` / `end` | Inspect / clear the active session for this terminal | `--json` |
 
@@ -147,6 +148,8 @@ hafiz status --json
 - **Auto-captured**: `metadata.commit_hash`, `metadata.branch`, `metadata.is_dirty` when the write happens inside a git repo.
 - **Staleness**: `query --recall` shows age (`3mo ago`) and dims rows older than 90d — prefer recent decisions over old ones.
 - **Sessions**: `hafiz session start "<name>"` in a terminal auto-tags subsequent observations/notes/captures with a `session_id` and optional `task`. Per-call `--session` / `--task` override the active session. Use `hafiz journal --session <id>` or `--task <name>` to pull everything from one thread of work.
+- **Supersession**: when a decision changes, write the new one with `--supersedes <old-uuid>`. The old row stays in the DB but is marked inactive; `query --recall` hides it unless `--include-superseded` is passed. Prefer supersession over silent deletion.
+- **Distillation loop**: raw thoughts go in via `hafiz note`; `hafiz capture` handles full transcripts; periodically run `hafiz distill --since 7d` to see promotable candidates; promote via `hafiz observe '<distilled>' --type decision --derived-from <note-ids>`. `--derived-from` is lineage (non-destructive); `--supersedes` is replacement (marks old inactive).
 
 ### Indexing & Maintenance
 
