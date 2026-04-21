@@ -4,6 +4,21 @@ This is the Hafiz codebase: a sovereign, CLI-first intelligence layer backed by 
 
 > For using the `hafiz` CLI as a coding assistant, see the global skills file installed by `hafiz agent install` (already loaded via `~/.claude/CLAUDE.md`). Do **not** duplicate those instructions here.
 
+## Product Stance
+
+Hafiz is **pre-1.0 and in active development** — there is no legacy to protect. Prefer bold, opinionated decisions over incremental compatibility hacks. Breaking changes are acceptable, and often preferable, when they make the product simpler, safer, or more intuitive.
+
+The north star is a **user-friendly public repo** that scales to thousands of installers and consumers. Evaluate every change through that lens:
+
+- **Install and first-run must be frictionless.** A new user on a fresh machine should reach a working `hafiz status` in minutes, with clear, actionable errors when something is off.
+- **Defaults beat flags.** Optimize the common case; reserve flags for genuine optionality.
+- **The CLI surface *is* the product.** Human output must be scannable; `--json` shapes must be stable and documented in [COMMANDS.md](COMMANDS.md).
+- **Docs, `--help` text, and error messages are features**, not afterthoughts — treat them as first-class deliverables.
+- **Dependencies and system requirements are costs borne by users.** Justify each one; avoid heavyweight additions when a lighter path exists.
+- **Product engineering > code archaeology.** When a design has drifted, propose a clean replacement rather than layering workarounds.
+
+When trade-offs arise, favor the experience of the thousandth user over the convenience of the current maintainer. Flag cross-cutting or breaking changes clearly in the plan, but don't shy back from them.
+
 ## Tech Stack
 
 - **Runtime:** Python 3.12+ (3.13 supported; GPU extras pin `onnxruntime-gpu>=1.20`).
