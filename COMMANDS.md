@@ -102,9 +102,27 @@ hafiz extract export --unextracted --project X | claude -p "extract entities per
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `journal` | "What did I record recently?" — time-bounded view over observations | — | `--json` | rich tables per day |
+| `journal` | "What did I record recently?" — time-bounded view over observations **and** captures | — | `--json` | rich tables per day |
 
 **Scoping flags:** `--since <duration>` (default `7d`), or `--day <ISO-date>` (mutually exclusive). Also `--project` / `--workspace`, `--source`, `--type`, `--limit`.
+
+Per day the output shows two tables when relevant: observations first (cyan border), captures second (magenta border).
+
+### Captures (transcripts / multi-page dumps)
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `capture [TEXT]` | Ingest a transcript or long dump — splits on blank lines, embeds each turn as `chunk_type="transcript"` | Embed | `--json` | rich panel |
+
+**Input modes** (pick one): positional `TEXT` argument, `--file <path>`, or piped stdin.
+
+**Flags:** `--title`, `--project` / `-p`, `--source` / `-s`, `--tags`, `--json`.
+
+**Storage:** chunks are written to the existing `chunks` table with a synthetic `source_file` under `captures/YYYY-MM-DD-<slug>.md`. No file is written to disk; `prune` is aware and skips these rows.
+
+**Retrieval:**
+- `query` finds transcript chunks like any other chunk.
+- `context` expands retrieved transcript chunks with ±1 turn neighbors so the agent sees surrounding dialogue, not an orphan line. Neighbors are marked `is_neighbor: true` in JSON and carry the parent's score for ranking stability.
 
 ### Review
 

@@ -136,7 +136,8 @@ hafiz status --json
 |---------|---------|-----------|
 | `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--json` |
 | `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--json` |
-| `hafiz journal` | Time-bounded digest of observations, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--limit`, `--json` |
+| `hafiz capture [TEXT]` | Ingest a transcript / multi-page dump as `chunk_type=transcript` (stdin / `--file` / TEXT) | `--title`, `--file`, `--source`, `--project`, `--tags`, `--json` |
+| `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--limit`, `--json` |
 
 - **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`, `note`
 - **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
@@ -158,7 +159,8 @@ hafiz status --json
 
 ### Type Values
 
-- **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`
+- **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`, `transcript`
+- **Transcript retrieval:** `hafiz context` auto-expands transcript hits with ±1 turn neighbors (marked `is_neighbor: true` in JSON). `hafiz query` does not expand — use `context` when surrounding dialogue matters.
 
 </details>
 

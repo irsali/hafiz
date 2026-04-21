@@ -167,3 +167,35 @@ def test_observe_rejects_garbage_duration():
     )
     assert result.exit_code == 1
     assert "duration" in result.output.lower()
+
+
+def test_capture_help():
+    result = runner.invoke(app, ["capture", "--help"])
+    assert result.exit_code == 0
+    assert "--file" in result.output
+    assert "--title" in result.output
+    assert "--json" in result.output
+
+
+def test_capture_rejects_both_text_and_file():
+    result = runner.invoke(
+        app, ["capture", "some text", "--file", "/tmp/does-not-matter.md"]
+    )
+    assert result.exit_code == 1
+    assert "not both" in result.output.lower()
+
+
+def test_capture_rejects_empty_input():
+    # CliRunner's stdin is a non-tty empty stream — we accept it and then
+    # bail because it's empty. Either "no input" or "empty" message is fine.
+    result = runner.invoke(app, ["capture"])
+    assert result.exit_code == 1
+    assert "empty" in result.output.lower() or "no input" in result.output.lower()
+
+
+def test_capture_rejects_missing_file():
+    result = runner.invoke(
+        app, ["capture", "--file", "/tmp/does-not-exist-hafiz-test.md"]
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()

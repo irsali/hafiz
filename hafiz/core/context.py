@@ -13,6 +13,7 @@ import networkx as nx
 from sqlalchemy import select
 
 from hafiz.core import graph_analysis as ga
+from hafiz.core.capture import expand_transcript_neighbors
 from hafiz.core.config import get_settings
 from hafiz.core.database import Chunk, get_session_factory
 from hafiz.core.observations import ObservationResult, search_observations
@@ -41,7 +42,12 @@ class ContextBundle:
                 if c.line_start and c.line_end:
                     location += f":{c.line_start}-{c.line_end}"
                 lang = f" ({c.language})" if c.language else ""
-                sections.append(f"\n### {location}{lang}  — similarity {c.score:.2%}")
+                if c.is_neighbor:
+                    turn = c.metadata.get("turn_index")
+                    suffix = f" — transcript neighbor (turn {turn})" if turn is not None else " — transcript neighbor"
+                    sections.append(f"\n### {location}{lang}{suffix}")
+                else:
+                    sections.append(f"\n### {location}{lang}  — similarity {c.score:.2%}")
                 sections.append(f"```{c.language or ''}\n{c.content}\n```")
         else:
             sections.append("\n_No relevant code chunks found._")
@@ -109,6 +115,9 @@ class ContextBundle:
                     "language": c.language,
                     "project": c.project,
                     "score": c.score,
+                    "is_neighbor": c.is_neighbor,
+                    "transcript_id": c.metadata.get("transcript_id"),
+                    "turn_index": c.metadata.get("turn_index"),
                 }
                 for c in self.chunks
             ],
@@ -158,6 +167,10 @@ async def build_context(
     chunks = await vector_search(
         query, limit=limit_chunks, project=project
     )
+
+    # 1b. Transcript neighbour expansion — when a transcript chunk wins,
+    # surface ±1 surrounding turn so agents see context, not an orphan line.
+    chunks = await expand_transcript_neighbors(chunks)
 
     # 2. Graph neighbours — find entities in files that produced top chunks
     entities = await _graph_from_chunks(chunks, project=project)
@@ -281,6 +294,7 @@ async def build_workspace_context(
     """
     # Search across workspace projects
     chunks = await vector_search(query, limit=limit_chunks, project=projects)
+    chunks = await expand_transcript_neighbors(chunks)
 
     # Graph neighbours from matched chunks
     entities = await _graph_from_chunks(chunks, project=projects)

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from hafiz.core.database import Observation, get_session_factory
+from hafiz.core.database import Chunk, Observation, get_session_factory
 
 
 @dataclass
@@ -29,18 +29,43 @@ class JournalEntry:
 
 
 @dataclass
+class JournalCapture:
+    """One transcript, aggregated from its constituent chunks."""
+
+    transcript_id: str
+    title: str | None
+    source_file: str
+    turn_count: int
+    captured_at: datetime
+    source: str | None
+    tags: list[str] | None
+    project: str | None
+    preview: str
+
+
+@dataclass
 class JournalBundle:
     window_start: datetime
     window_end: datetime
     entries: list[JournalEntry] = field(default_factory=list)
+    captures: list[JournalCapture] = field(default_factory=list)
 
-    def grouped_by_day(self) -> list[tuple[str, list[JournalEntry]]]:
-        """Return [(YYYY-MM-DD, entries), ...] with the newest day first."""
-        buckets: dict[str, list[JournalEntry]] = {}
+    def grouped_by_day(
+        self,
+    ) -> list[tuple[str, list[JournalEntry], list[JournalCapture]]]:
+        """Return [(YYYY-MM-DD, entries, captures), ...] newest day first."""
+        buckets: dict[str, tuple[list[JournalEntry], list[JournalCapture]]] = {}
         for e in self.entries:
             day = e.valid_from.astimezone(timezone.utc).strftime("%Y-%m-%d")
-            buckets.setdefault(day, []).append(e)
-        return sorted(buckets.items(), reverse=True)
+            buckets.setdefault(day, ([], []))[0].append(e)
+        for c in self.captures:
+            day = c.captured_at.astimezone(timezone.utc).strftime("%Y-%m-%d")
+            buckets.setdefault(day, ([], []))[1].append(c)
+        return sorted(
+            ((d, es, cs) for d, (es, cs) in buckets.items()),
+            key=lambda t: t[0],
+            reverse=True,
+        )
 
 
 async def build_journal(
@@ -104,4 +129,71 @@ async def build_journal(
         for o in rows
     ]
 
-    return JournalBundle(window_start=start, window_end=end, entries=entries)
+    captures = await _fetch_captures(
+        start=start,
+        end=end,
+        project=project,
+        source=source,
+    )
+
+    return JournalBundle(
+        window_start=start,
+        window_end=end,
+        entries=entries,
+        captures=captures,
+    )
+
+
+async def _fetch_captures(
+    *,
+    start: datetime,
+    end: datetime,
+    project: str | list[str] | None = None,
+    source: str | None = None,
+) -> list[JournalCapture]:
+    """Fetch transcripts whose chunks were indexed in ``[start, end]``."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(Chunk)
+            .where(Chunk.chunk_type == "transcript")
+            .where(Chunk.indexed_at >= start)
+            .where(Chunk.indexed_at <= end)
+            .order_by(Chunk.indexed_at.desc())
+        )
+        if isinstance(project, list):
+            stmt = stmt.where(Chunk.project.in_(project))
+        elif project:
+            stmt = stmt.where(Chunk.project == project)
+        if source:
+            stmt = stmt.where(Chunk.metadata_["source"].astext == source)
+        rows = (await session.execute(stmt)).scalars().all()
+
+    groups: dict[str, list] = {}
+    for c in rows:
+        tid = (c.metadata_ or {}).get("transcript_id")
+        if tid:
+            groups.setdefault(tid, []).append(c)
+
+    captures: list[JournalCapture] = []
+    for tid, cs in groups.items():
+        # Representative "turn 0" chunk drives title, source, and preview.
+        first = min(cs, key=lambda c: (c.metadata_ or {}).get("turn_index", 0))
+        meta = first.metadata_ or {}
+        preview = first.content[:140] + ("..." if len(first.content) > 140 else "")
+        captures.append(
+            JournalCapture(
+                transcript_id=tid,
+                title=meta.get("title"),
+                source_file=first.source_file,
+                turn_count=meta.get("total_turns") or len(cs),
+                captured_at=min(c.indexed_at for c in cs),
+                source=meta.get("source"),
+                tags=meta.get("tags"),
+                project=first.project,
+                preview=preview,
+            )
+        )
+
+    captures.sort(key=lambda c: c.captured_at, reverse=True)
+    return captures

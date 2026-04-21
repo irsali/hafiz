@@ -27,6 +27,7 @@ class SearchResult:
     project: str | None
     score: float
     metadata: dict
+    is_neighbor: bool = False
 
 
 async def vector_search(

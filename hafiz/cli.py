@@ -384,6 +384,48 @@ def observe(
     )
 
 
+# ─── CAPTURE ──────────────────────────────────────────────────────
+
+
+@app.command()
+def capture(
+    text: Optional[str] = typer.Argument(
+        None, help="Transcript text. Omit to read from --file or stdin."
+    ),
+    file: Optional[str] = typer.Option(
+        None, "--file", "-f", help="Read transcript from a file."
+    ),
+    title: Optional[str] = typer.Option(
+        None, "--title", help="Human-readable title (used in the synthetic path)."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Tag chunks with a project name."
+    ),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s", help="Origin (e.g. agent:claude-code, user:you)."
+    ),
+    tags: Optional[str] = typer.Option(
+        None, "--tags", help="Comma-separated tags."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Ingest a transcript / multi-page dump as searchable transcript chunks."""
+    from hafiz.commands.capture import run_capture
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    run_capture(
+        text,
+        file=file,
+        title=title,
+        project=project,
+        source=source,
+        tags=tag_list,
+        output_json=json_output,
+    )
+
+
 # ─── NOTE ──────────────────────────────────────────────────────────
 
 

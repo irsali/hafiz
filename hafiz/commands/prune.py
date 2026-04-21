@@ -10,22 +10,47 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from sqlalchemy import select
+
 from hafiz.core.config import get_settings
-from hafiz.core.database import Entity, close_engine, get_session_factory
+from hafiz.core.database import Chunk, Entity, close_engine, get_session_factory
 from hafiz.core.store import delete_chunks_for_file, get_indexed_files
 
 logger = logging.getLogger(__name__)
 console = Console()
 
 
+async def _transcript_source_files() -> set[str]:
+    """Source files belonging to ``chunk_type="transcript"`` rows.
+
+    Transcripts live at synthetic paths under ``captures/`` — no real file
+    exists on disk, so prune must skip them or it would wipe every capture.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Chunk.source_file)
+            .where(Chunk.chunk_type == "transcript")
+            .distinct()
+        )
+        return {row[0] for row in result.all()}
+
+
 async def _find_stale_files(project: str | None = None) -> list[str]:
-    """Find source files in the index that no longer exist on disk."""
+    """Find source files in the index that no longer exist on disk.
+
+    Transcript-backed source files are excluded — they're synthetic paths
+    for :mod:`hafiz.core.capture` storage, not real files.
+    """
     indexed = await get_indexed_files()
     settings = get_settings()
     workspace_root = Path(settings.workspace.root).resolve()
+    transcript_files = await _transcript_source_files()
 
     stale: list[str] = []
     for source_file in indexed:
+        if source_file in transcript_files:
+            continue
         full_path = workspace_root / source_file
         if not full_path.exists():
             stale.append(source_file)

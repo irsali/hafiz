@@ -126,6 +126,20 @@ def _print_json(bundle: JournalBundle) -> None:
             }
             for e in bundle.entries
         ],
+        "captures": [
+            {
+                "transcript_id": c.transcript_id,
+                "title": c.title,
+                "source_file": c.source_file,
+                "turn_count": c.turn_count,
+                "captured_at": c.captured_at.isoformat(),
+                "source": c.source,
+                "tags": c.tags,
+                "project": c.project,
+                "preview": c.preview,
+            }
+            for c in bundle.captures
+        ],
     }
     console.print_json(json.dumps(payload))
 
@@ -136,53 +150,83 @@ def _print_rich(
     since_arg: str | None,
     day_arg: str | None,
 ) -> None:
-    if not bundle.entries:
+    if not bundle.entries and not bundle.captures:
         label = f"--day {day_arg}" if day_arg else f"--since {since_arg or '7d'}"
-        console.print(f"[yellow]No entries in window ({label}).[/yellow]")
+        console.print(f"[yellow]Nothing in window ({label}).[/yellow]")
         return
 
     window_label = (
         f"Day {day_arg}" if day_arg else f"Since {since_arg or '7d'}"
     )
+    total_items = len(bundle.entries) + len(bundle.captures)
+    totals = [f"{len(bundle.entries)} entries"]
+    if bundle.captures:
+        totals.append(f"{len(bundle.captures)} captures")
     console.print()
     console.print(
         f"[bold]Journal — {window_label}[/bold]  "
-        f"[dim]({len(bundle.entries)} entries)[/dim]"
+        f"[dim]({total_items} items · {' · '.join(totals)})[/dim]"
     )
 
-    for day_str, entries in bundle.grouped_by_day():
-        table = Table(
-            title=day_str,
-            border_style="cyan",
-            title_justify="left",
-        )
-        table.add_column("Time", style="dim", width=5)
-        table.add_column("Type", width=10)
-        table.add_column("Source", style="dim", width=18)
-        table.add_column("Content", ratio=3)
-        table.add_column("Context", style="dim", width=16)
-
-        for e in entries:
-            t = e.valid_from.astimezone(timezone.utc).strftime("%H:%M")
-            type_style = OBS_TYPE_STYLE.get(e.obs_type, "white")
-            content_preview = (
-                e.content if len(e.content) <= 120 else e.content[:117] + "..."
+    for day_str, entries, captures in bundle.grouped_by_day():
+        if entries:
+            table = Table(
+                title=day_str,
+                border_style="cyan",
+                title_justify="left",
             )
-            ctx_parts: list[str] = []
-            if branch := e.metadata.get("branch"):
-                ctx_parts.append(branch)
-            if ch := e.metadata.get("commit_hash"):
-                ctx_parts.append(ch[:8])
-            if e.metadata.get("is_dirty"):
-                ctx_parts.append("*")
-            table.add_row(
-                t,
-                f"[{type_style}]{e.obs_type}[/{type_style}]",
-                e.source or "—",
-                content_preview,
-                " ".join(ctx_parts),
-            )
+            table.add_column("Time", style="dim", width=5)
+            table.add_column("Type", width=10)
+            table.add_column("Source", style="dim", width=18)
+            table.add_column("Content", ratio=3)
+            table.add_column("Context", style="dim", width=16)
 
-        console.print()
-        console.print(table)
+            for e in entries:
+                t = e.valid_from.astimezone(timezone.utc).strftime("%H:%M")
+                type_style = OBS_TYPE_STYLE.get(e.obs_type, "white")
+                content_preview = (
+                    e.content if len(e.content) <= 120 else e.content[:117] + "..."
+                )
+                ctx_parts: list[str] = []
+                if branch := e.metadata.get("branch"):
+                    ctx_parts.append(branch)
+                if ch := e.metadata.get("commit_hash"):
+                    ctx_parts.append(ch[:8])
+                if e.metadata.get("is_dirty"):
+                    ctx_parts.append("*")
+                table.add_row(
+                    t,
+                    f"[{type_style}]{e.obs_type}[/{type_style}]",
+                    e.source or "—",
+                    content_preview,
+                    " ".join(ctx_parts),
+                )
+
+            console.print()
+            console.print(table)
+
+        if captures:
+            cap_table = Table(
+                title=f"{day_str} — captures",
+                border_style="magenta",
+                title_justify="left",
+            )
+            cap_table.add_column("Time", style="dim", width=5)
+            cap_table.add_column("Title", width=24)
+            cap_table.add_column("Source", style="dim", width=18)
+            cap_table.add_column("Turns", justify="right", width=6)
+            cap_table.add_column("Preview", ratio=3)
+
+            for c in captures:
+                t = c.captured_at.astimezone(timezone.utc).strftime("%H:%M")
+                cap_table.add_row(
+                    t,
+                    c.title or "—",
+                    c.source or "—",
+                    str(c.turn_count),
+                    c.preview,
+                )
+
+            console.print()
+            console.print(cap_table)
     console.print()
