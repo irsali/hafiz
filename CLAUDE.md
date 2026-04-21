@@ -1,67 +1,129 @@
-# Hafiz -- Workspace Intelligence
+# Hafiz — Project Development Guide
 
-This project is Hafiz, a CLI-first intelligence layer backed by PostgreSQL + pgvector.
+This is the Hafiz codebase: a sovereign, CLI-first intelligence layer backed by PostgreSQL + pgvector. When Claude is invoked here, the work is **developing the product** (features, bugfixes, refactors, tests, migrations) — not consuming it.
 
-## Using Hafiz
+> For using the `hafiz` CLI as a coding assistant, see the global skills file installed by `hafiz agent install` (already loaded via `~/.claude/CLAUDE.md`). Do **not** duplicate those instructions here.
 
-Hafiz is installed globally. Run from any directory:
-```bash
-hafiz <command>
+## Tech Stack
+
+- **Runtime:** Python 3.12+ (3.13 supported; GPU extras pin `onnxruntime-gpu>=1.20`).
+- **CLI:** Typer + Rich (subcommand groups via `app.add_typer`).
+- **DB:** PostgreSQL + pgvector via SQLAlchemy 2.0 **async** + asyncpg.
+- **Embeddings:** fastembed (`nomic-embed-text-v1.5`, 768-dim, ONNX; GPU via `fastembed-gpu`).
+- **Indexing:** LlamaIndex core for chunking primitives; custom logic in [hafiz/core/chunker.py](hafiz/core/chunker.py).
+- **Migrations:** Alembic ([alembic/versions/](alembic/versions/)).
+- **Config:** pydantic-settings reading `hafiz.toml` (cwd → `~/.config/hafiz/` → `/etc/hafiz/`).
+- **Tests:** pytest + pytest-asyncio (`asyncio_mode = "auto"`).
+- **Lint/format:** ruff (`target-version = py312`, `line-length = 100`).
+
+## Project Layout
+
+```
+hafiz/
+├── cli.py              # Typer app entrypoint; wires all command groups
+├── commands/           # CLI presentation layer (thin — delegate to core/)
+│   ├── agent.py        # install/uninstall/list — writes skills.md to agent configs
+│   ├── context.py      # context "<task>" — synthesizes chunks + graph + observations
+│   ├── extract.py      # export/import — agent-driven entity extraction
+│   ├── graph.py        # show / deps / dependents
+│   ├── hooks.py        # git post-commit / post-merge installation
+│   ├── ingest.py       # chunk + embed + store
+│   ├── maintenance.py  # init, status, config, prune
+│   ├── observe.py      # persist facts / decisions / learnings / patterns / warnings
+│   ├── query.py        # vector search (+ --recall for observations)
+│   ├── review.py       # Layer 2 self-review
+│   └── watch.py        # long-running file watcher
+├── core/               # Business logic; NO Typer/Rich imports here
+│   ├── agents.py       # skills.md discovery + agent config paths
+│   ├── chunker.py      # File → chunk pipeline
+│   ├── config.py       # HafizConfig + loader
+│   ├── context.py      # Context bundle assembly
+│   ├── database.py     # Async engine, session, ORM models
+│   ├── embeddings.py   # fastembed wrapper
+│   ├── extractor.py    # Agent-driven extraction helpers
+│   ├── git_hooks.py    # Hook templates + install
+│   ├── observations.py # CRUD for observations
+│   ├── review.py       # Layer 2 review logic
+│   ├── search.py       # Vector + hybrid search, scoping
+│   ├── store.py        # Chunk / entity / relation persistence
+│   └── watcher.py      # watchdog-based file watcher
+├── data/agents/
+│   └── skills.md       # Layer 1 contract — installed by `hafiz agent install`
+└── scripts/            # One-off maintenance scripts
+
+alembic/                # Schema migrations
+tests/                  # pytest suite (test_chunker, test_cli, test_config, test_search)
+COMMANDS.md             # Source of truth for commands — keep in sync with code
+ROADMAP.md              # Vision + data model + future work
+BRAIN_AGENT_GUIDE.md    # Agent-integration playbook
+hafiz.toml.example      # Config template
 ```
 
-Configuration is loaded from `hafiz.toml` in the current directory, `~/.config/hafiz/hafiz.toml`, or `/etc/hafiz/hafiz.toml`.
+## Two-Layer Stability Model
 
-### Before starting work on any file
-```bash
-hafiz context "<task description>" --json
-```
-This returns relevant code chunks, entity relationships, and past observations in one call.
+A load-bearing architectural invariant — respect the boundary.
 
-### When searching for code or answers
-```bash
-hafiz query "<question>" --json
-hafiz query "<question>" --type code --project <name> --json
-```
+- **Layer 1 (stable):** [hafiz/data/agents/skills.md](hafiz/data/agents/skills.md) — the contract between Hafiz and every AI agent. Installed by `hafiz agent install`. Changes here ripple to every user's workflow; treat additions conservatively and never break the documented shape of commands (flags, JSON schema, exit codes).
+- **Layer 2 (evolving):** `hafiz review` and related logic in [hafiz/core/review.py](hafiz/core/review.py). Free to iterate; must not be reachable from the Layer 1 contract.
 
-### When checking past decisions
+When a change touches Layer 1, call out the cross-cutting impact and prefer a Layer 2 alternative when one exists.
+
+## Development Workflow
+
+### Editable install
 ```bash
-hafiz query "<topic>" --recall --type decision --json
+pipx install -e ".[gpu,dev]" --force   # drop [gpu] if no CUDA
 ```
 
-### After making architectural decisions
+### Run tests
 ```bash
-hafiz observe "<what was decided and why>" --type decision --source agent:claude-code
+pytest                     # full suite
+pytest tests/test_cli.py   # single file
+pytest -k chunker -x       # one case, stop on first fail
 ```
 
-### For cross-project context in multi-project workspaces
+### Lint & format
 ```bash
-hafiz context "<task description>" --workspace --json
-```
-Resolves sibling projects from the parent directory of cwd, matches them against indexed project tags (normalized: case-insensitive, ignores spaces/hyphens). Scopes search to those projects only.
-
-### When exploring dependencies
-```bash
-hafiz graph deps <entity>
-hafiz graph dependents <entity>
-hafiz graph show <entity>
+ruff check .
+ruff format .
 ```
 
-### When reviewing knowledge quality
+### Database migrations
 ```bash
-hafiz review --json
-hafiz review --project <name> --json
+alembic revision --autogenerate -m "<summary>"
+alembic upgrade head
 ```
-Analyzes observations, graph coverage, staleness, and suggests improvements. This is the self-review mechanism (Layer 2, evolving) — separate from `hafiz agent install` (Layer 1, stable contract).
+Migrations target the DB configured under `[database].url` in `hafiz.toml`. Never edit a shipped migration — add a new one.
 
-## Command Map
+### Dogfooding
+Hafiz indexes itself. After non-trivial changes, re-ingest and spot-check:
+```bash
+hafiz ingest . --project hafiz --prune
+hafiz status --diagnose
+```
 
-See [COMMANDS.md](COMMANDS.md) — the source of truth for all commands, their brain requirements, and agent vs terminal usage. **Update COMMANDS.md whenever commands change.**
+## Conventions
 
-## Project Structure
-- `hafiz/cli.py` -- Typer CLI entry point
-- `hafiz/commands/` -- Command implementations (agent, chunks, extract, query, graph, observe, context, ingest, watch, prune, hooks, maintenance, review)
-- `hafiz/core/` -- Business logic (agents, chunker, config, database, embeddings, extractor, search, store, watcher, observations, context, git_hooks, review)
-- `hafiz/data/agents/skills.md` -- Universal agent skill file (installed by `hafiz agent install`)
-- `tests/` -- pytest suite
-- `hafiz.toml.example` -- Configuration template
-- `COMMANDS.md` -- Command map (source of truth for all commands, brain requirements, agent vs terminal)
+- **Async end-to-end.** Anything touching the DB is `async def`. Command functions in `hafiz/commands/` wrap with `asyncio.run(...)`; never call blocking DB code from a running loop.
+- **Core ↔ Commands split.** `hafiz/core/` holds business logic with no Typer/Rich imports. `hafiz/commands/` is presentation only: arg parsing, `--json` vs. rich output, exit codes.
+- **`--json` is non-negotiable on user-facing commands.** Agents parse it; keep shapes stable and document new fields in [COMMANDS.md](COMMANDS.md).
+- **Scoping flags.** Any new search-ish command takes `--project` and `--workspace` (mutually exclusive), following the resolution rules in [hafiz/core/search.py](hafiz/core/search.py).
+- **No API-key-dependent paths.** Extraction is agent-driven only (direct-LLM path removed in `9440b3f`). Don't reintroduce one.
+- **Error surfacing.** Human output: Rich panel + `typer.Exit(code=...)`. JSON output: `{"ok": false, "error": "..."}` to stdout + non-zero exit.
+- **Paths.** Store and compare **absolute** paths in the DB; accept relative from the CLI and resolve immediately.
+
+## Adding a New Command
+
+1. Implement logic in `hafiz/core/<area>.py` as an async function returning plain data.
+2. Add a thin wrapper in `hafiz/commands/<area>.py` that handles `--json` vs. rich output.
+3. Register it in [hafiz/cli.py](hafiz/cli.py) (directly or via a sub-`Typer`).
+4. Add a row to [COMMANDS.md](COMMANDS.md) — purpose, brain type, agent use, terminal use.
+5. Add a Typer `CliRunner` test in [tests/test_cli.py](tests/test_cli.py).
+6. If it changes the agent contract, update [hafiz/data/agents/skills.md](hafiz/data/agents/skills.md) and flag it in the PR.
+
+## Reference Docs
+
+- [COMMANDS.md](COMMANDS.md) — command map, brain types, scoping flag semantics.
+- [ROADMAP.md](ROADMAP.md) — vision and data model.
+- [BRAIN_AGENT_GUIDE.md](BRAIN_AGENT_GUIDE.md) — agent integration playbook.
+- [README.md](README.md) — end-user install/setup.
