@@ -43,3 +43,6 @@ Thumbs.db
 
 # Alembic
 alembic/versions/*.pyc
+
+# Work items — local-only backlog & planning (see CLAUDE.md "Work Items")
+workitems/

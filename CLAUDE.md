@@ -68,6 +68,7 @@ hafiz/
 
 alembic/                # Schema migrations
 tests/                  # pytest suite (test_chunker, test_cli, test_config, test_search)
+workitems/              # Local-only backlog & planning (gitignored) — see "Work Items" below
 COMMANDS.md             # Source of truth for commands — keep in sync with code
 ROADMAP.md              # Vision + data model + future work
 BRAIN_AGENT_GUIDE.md    # Agent-integration playbook
@@ -116,6 +117,79 @@ Hafiz indexes itself. After non-trivial changes, re-ingest and spot-check:
 hafiz ingest . --project hafiz --prune
 hafiz status --diagnose
 ```
+
+## Work Items & Backlog Continuity
+
+Multi-step work, deferred decisions, and "let's come back to this" ideas live in `workitems/` as individual markdown files. **Nothing discussed in one session should be lost by the next.**
+
+`workitems/` is gitignored — these are a personal backlog, not a shared artifact. [ROADMAP.md](ROADMAP.md) is the public/shared equivalent (one-liners and vision); work items are the private design docs behind them.
+
+### When to create one
+
+- Any task spanning more than one session or one PR.
+- Any decision made now that affects future work (so we don't re-litigate).
+- Any deferral — "do this after Phase X", "revisit once Y lands".
+- Any ROADMAP entry that has a concrete approach sketched — the ROADMAP line is the one-liner; the work item is the design.
+
+In-session todos use the in-conversation task list, not workitems.
+
+### Layout
+
+- `workitems/active/<slug>.md` — proposed or in-progress.
+- `workitems/done/<slug>.md` — shipped or abandoned; kept for audit.
+- Slug-based filenames (kebab-case). Move on completion; **never delete**.
+
+### Standard template
+
+YAML frontmatter for machine-parseable state, then body:
+
+```markdown
+---
+title: Short title
+description: One-line hook — what this is, in a sentence. Required.
+status: active            # proposed | active | blocked | done | abandoned
+created: 2026-04-21
+updated: 2026-04-21
+owner: irshad
+related:
+  - ROADMAP.md#open-work
+  - workitems/active/other-item.md
+---
+
+## Objective
+One paragraph — what and why. A cold reader should be able to judge whether this is still worth doing.
+
+## Scope
+- **In:** …
+- **Out:** … (explicit, to prevent creep)
+
+## Decisions
+Locked-in choices with rationale — written to stop re-litigation.
+- **Chose X over Y** because … (date)
+- **Rejected Z** because …
+
+## Plan
+Phased checklist. Each phase independently shippable.
+- [ ] Phase 1 — name — deliverable
+- [ ] Phase 2 — …
+
+## Open questions
+
+## Notes
+Append-only session log, latest on top.
+- 2026-04-21 — initial plan.
+```
+
+### Lifecycle
+
+1. Create with `status: proposed` when a plan crystallizes.
+2. Flip to `active` when work starts.
+3. Update `Notes` + `Plan` checkboxes at the end of each session that touches it; bump `updated`.
+4. On completion, move to `done/`, set `status: done` or `abandoned`, append a short outcome.
+
+### Session handover
+
+Before planning any non-trivial task, check `workitems/active/`. At session end, update whichever work item you touched.
 
 ## Conventions
 
