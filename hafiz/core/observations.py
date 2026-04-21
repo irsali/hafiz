@@ -43,31 +43,52 @@ async def store_observation(
     confidence: float = 1.0,
     valid_from: datetime | None = None,
     valid_until: datetime | None = None,
+    session_id: str | None = None,
+    task: str | None = None,
+    commit_hash: str | None = None,
     metadata: dict | None = None,
 ) -> Observation:
     """Store a new observation with its embedding.
 
     Args:
         content: The observation text.
-        obs_type: Type — fact, decision, learning, pattern, warning.
-        source: Origin (e.g. "agent:bilal", "user:manual").
+        obs_type: fact, decision, learning, pattern, warning, note.
+        source: Origin (e.g. ``"agent:claude-code"``, ``"user:you"``).
         project: Project name.
         tags: Categorization tags.
         confidence: Confidence score 0.0–1.0.
         valid_from: When the observation becomes valid (default: now).
         valid_until: When the observation expires (None = forever).
-        metadata: Arbitrary JSONB metadata.
+        session_id: Thread of work this belongs to — see :mod:`hafiz.core.session`.
+        task: Named task within the session.
+        commit_hash: Git HEAD when the observation was made. If None and the
+            caller did not pre-populate ``metadata["commit_hash"]``, it's
+            auto-captured from the current cwd via
+            :func:`hafiz.core.git_context.current_git_context`.
+        metadata: Arbitrary JSONB metadata. Any ``commit_hash`` key is
+            promoted into the dedicated column and stripped from the dict.
 
     Returns:
         The stored Observation ORM object.
     """
     embedding = await embed_query(content)
 
-    # Auto-capture git context (commit_hash, branch, is_dirty) unless
-    # the caller already supplied those keys in metadata.
+    # Start by accepting whatever the caller provided.
     merged_metadata = dict(metadata or {})
-    for key, value in current_git_context().items():
-        merged_metadata.setdefault(key, value)
+    git_ctx = current_git_context()
+
+    # commit_hash is now a first-class column. Accept it from (in priority):
+    #  1. explicit commit_hash kwarg,
+    #  2. a commit_hash key in caller-supplied metadata (legacy callers),
+    #  3. auto-captured git HEAD.
+    # Strip from metadata either way so it doesn't duplicate.
+    legacy_from_meta = merged_metadata.pop("commit_hash", None)
+    resolved_commit_hash = commit_hash or legacy_from_meta or git_ctx.get("commit_hash")
+
+    # branch and is_dirty still live in metadata — they have no dedicated column.
+    for key in ("branch", "is_dirty"):
+        if key not in merged_metadata and key in git_ctx:
+            merged_metadata[key] = git_ctx[key]
 
     now = datetime.now(timezone.utc)
     obs = Observation(
@@ -81,6 +102,9 @@ async def store_observation(
         confidence=confidence,
         valid_from=valid_from or now,
         valid_until=valid_until,
+        session_id=session_id,
+        task=task,
+        commit_hash=resolved_commit_hash,
         metadata_=merged_metadata,
     )
 

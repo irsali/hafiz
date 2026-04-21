@@ -134,16 +134,19 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--json` |
-| `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--json` |
-| `hafiz capture [TEXT]` | Ingest a transcript / multi-page dump as `chunk_type=transcript` (stdin / `--file` / TEXT) | `--title`, `--file`, `--source`, `--project`, `--tags`, `--json` |
-| `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--limit`, `--json` |
+| `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--json` |
+| `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--session`, `--task`, `--json` |
+| `hafiz capture [TEXT]` | Ingest a transcript / multi-page dump as `chunk_type=transcript` (stdin / `--file` / TEXT) | `--title`, `--file`, `--source`, `--project`, `--tags`, `--session`, `--task`, `--json` |
+| `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
+| `hafiz session start "<name>"` | Start a per-TTY session; subsequent `observe` / `note` / `capture` auto-tag with it | `--task`, `--project`, `--json` |
+| `hafiz session show` / `end` | Inspect / clear the active session for this terminal | `--json` |
 
 - **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`, `note`
 - **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
 - **Expiration** (on `observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01` (ISO). Sets `valid_until`; expired rows are hidden from `query --recall` by default.
 - **Auto-captured**: `metadata.commit_hash`, `metadata.branch`, `metadata.is_dirty` when the write happens inside a git repo.
 - **Staleness**: `query --recall` shows age (`3mo ago`) and dims rows older than 90d — prefer recent decisions over old ones.
+- **Sessions**: `hafiz session start "<name>"` in a terminal auto-tags subsequent observations/notes/captures with a `session_id` and optional `task`. Per-call `--session` / `--task` override the active session. Use `hafiz journal --session <id>` or `--task <name>` to pull everything from one thread of work.
 
 ### Indexing & Maintenance
 

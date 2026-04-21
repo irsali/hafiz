@@ -199,3 +199,59 @@ def test_capture_rejects_missing_file():
     )
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
+
+
+def test_session_help_lists_subcommands():
+    result = runner.invoke(app, ["session", "--help"])
+    assert result.exit_code == 0
+    assert "start" in result.output
+    assert "end" in result.output
+    assert "show" in result.output
+
+
+def test_session_start_help_has_task_and_project():
+    result = runner.invoke(app, ["session", "start", "--help"])
+    assert result.exit_code == 0
+    assert "--task" in result.output
+    assert "--project" in result.output
+    assert "NAME" in result.output or "name" in result.output.lower()
+
+
+def test_session_end_help():
+    result = runner.invoke(app, ["session", "end", "--help"])
+    assert result.exit_code == 0
+    assert "--json" in result.output
+
+
+def test_session_show_help():
+    result = runner.invoke(app, ["session", "show", "--help"])
+    assert result.exit_code == 0
+    assert "--json" in result.output
+
+
+def test_observe_help_has_session_and_task():
+    result = runner.invoke(app, ["observe", "--help"])
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "--task" in result.output
+
+
+def test_note_help_has_session_and_task():
+    result = runner.invoke(app, ["note", "--help"])
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "--task" in result.output
+
+
+def test_capture_help_has_session_and_task():
+    result = runner.invoke(app, ["capture", "--help"])
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "--task" in result.output
+
+
+def test_journal_help_has_session_and_task_filters():
+    result = runner.invoke(app, ["journal", "--help"])
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "--task" in result.output

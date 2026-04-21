@@ -25,6 +25,9 @@ class JournalEntry:
     confidence: float
     valid_from: datetime
     valid_until: datetime | None
+    session_id: str | None
+    task: str | None
+    commit_hash: str | None
     metadata: dict
 
 
@@ -40,6 +43,8 @@ class JournalCapture:
     source: str | None
     tags: list[str] | None
     project: str | None
+    session_id: str | None
+    task: str | None
     preview: str
 
 
@@ -75,6 +80,8 @@ async def build_journal(
     project: str | list[str] | None = None,
     source: str | None = None,
     obs_type: str | None = None,
+    session_id: str | None = None,
+    task: str | None = None,
     limit: int = 500,
 ) -> JournalBundle:
     """Build a time-bounded journal bundle.
@@ -82,6 +89,9 @@ async def build_journal(
     Window rules:
       - If ``day`` is given, the window is that UTC day (00:00 → 23:59:59.999999).
       - Otherwise the window is ``[now - since, now]``; ``since`` defaults to 7d.
+
+    ``session_id`` / ``task`` filter both observations and captures to items
+    tagged with the given thread of work.
     """
     now = datetime.now(timezone.utc)
     if day is not None:
@@ -110,6 +120,10 @@ async def build_journal(
             stmt = stmt.where(Observation.source == source)
         if obs_type:
             stmt = stmt.where(Observation.obs_type == obs_type)
+        if session_id:
+            stmt = stmt.where(Observation.session_id == session_id)
+        if task:
+            stmt = stmt.where(Observation.task == task)
 
         rows = (await session.execute(stmt)).scalars().all()
 
@@ -124,6 +138,9 @@ async def build_journal(
             confidence=o.confidence,
             valid_from=o.valid_from,
             valid_until=o.valid_until,
+            session_id=o.session_id,
+            task=o.task,
+            commit_hash=o.commit_hash,
             metadata=o.metadata_ or {},
         )
         for o in rows
@@ -134,6 +151,8 @@ async def build_journal(
         end=end,
         project=project,
         source=source,
+        session_id=session_id,
+        task=task,
     )
 
     return JournalBundle(
@@ -150,6 +169,8 @@ async def _fetch_captures(
     end: datetime,
     project: str | list[str] | None = None,
     source: str | None = None,
+    session_id: str | None = None,
+    task: str | None = None,
 ) -> list[JournalCapture]:
     """Fetch transcripts whose chunks were indexed in ``[start, end]``."""
     session_factory = get_session_factory()
@@ -167,6 +188,10 @@ async def _fetch_captures(
             stmt = stmt.where(Chunk.project == project)
         if source:
             stmt = stmt.where(Chunk.metadata_["source"].astext == source)
+        if session_id:
+            stmt = stmt.where(Chunk.session_id == session_id)
+        if task:
+            stmt = stmt.where(Chunk.task == task)
         rows = (await session.execute(stmt)).scalars().all()
 
     groups: dict[str, list] = {}
@@ -191,6 +216,8 @@ async def _fetch_captures(
                 source=meta.get("source"),
                 tags=meta.get("tags"),
                 project=first.project,
+                session_id=first.session_id,
+                task=first.task,
                 preview=preview,
             )
         )

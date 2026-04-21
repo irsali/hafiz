@@ -19,8 +19,14 @@ async def store_chunks(
     embeddings: list[list[float]],
     *,
     project: str | None = None,
+    session_id: str | None = None,
+    task: str | None = None,
 ) -> int:
     """Store chunked content with embeddings into the database.
+
+    When ``session_id`` / ``task`` are provided, every chunk in the batch
+    gets tagged — used by :func:`hafiz.core.capture.store_transcript`
+    so a captured transcript is recoverable as a unit via session filters.
 
     Returns the number of chunks stored.
     """
@@ -45,6 +51,8 @@ async def store_chunks(
                     project=project or chunk.metadata.get("project"),
                     checksum=chunk.checksum,
                     indexed_at=datetime.now(timezone.utc),
+                    session_id=session_id,
+                    task=task,
                     metadata_=chunk.metadata,
                 )
                 session.add(db_chunk)

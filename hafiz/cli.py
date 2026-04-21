@@ -330,6 +330,58 @@ def graph_stats(
     run_graph_stats(project=project, top_central=top_central, output_json=json_output)
 
 
+# ─── SESSION ──────────────────────────────────────────────────────────
+
+session_app = typer.Typer(
+    name="session",
+    help="Per-TTY session state — tags subsequent observations and captures.",
+)
+app.add_typer(session_app)
+
+
+@session_app.command("start")
+def session_start(
+    name: str = typer.Argument(..., help="Human-readable session name (a slug is auto-generated)."),
+    task: Optional[str] = typer.Option(
+        None, "--task", help="Default task for this session."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Default project for this session."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Start a named session for this terminal."""
+    from hafiz.commands.session import run_session_start
+
+    run_session_start(name, task=task, project=project, output_json=json_output)
+
+
+@session_app.command("end")
+def session_end(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """End the active session for this terminal."""
+    from hafiz.commands.session import run_session_end
+
+    run_session_end(output_json=json_output)
+
+
+@session_app.command("show")
+def session_show(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Show the active session for this terminal."""
+    from hafiz.commands.session import run_session_show
+
+    run_session_show(output_json=json_output)
+
+
 # ─── OBSERVE ──────────────────────────────────────────────────────────
 
 @app.command()
@@ -363,6 +415,16 @@ def observe(
         "--expires",
         help="Expire at an ISO date/datetime (e.g. 2026-06-01).",
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        help="Session id to tag (overrides any active `hafiz session`).",
+    ),
+    task: Optional[str] = typer.Option(
+        None,
+        "--task",
+        help="Task label to tag (overrides any active `hafiz session`).",
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -380,6 +442,8 @@ def observe(
         confidence=confidence,
         expires_in=expires_in,
         expires=expires,
+        session=session,
+        task=task,
         output_json=json_output,
     )
 
@@ -407,6 +471,16 @@ def capture(
     tags: Optional[str] = typer.Option(
         None, "--tags", help="Comma-separated tags."
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        help="Session id to tag (overrides any active `hafiz session`).",
+    ),
+    task: Optional[str] = typer.Option(
+        None,
+        "--task",
+        help="Task label to tag (overrides any active `hafiz session`).",
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -422,6 +496,8 @@ def capture(
         project=project,
         source=source,
         tags=tag_list,
+        session=session,
+        task=task,
         output_json=json_output,
     )
 
@@ -454,6 +530,16 @@ def note(
         "--expires",
         help="Expire at an ISO date/datetime (e.g. 2026-06-01).",
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        help="Session id to tag (overrides any active `hafiz session`).",
+    ),
+    task: Optional[str] = typer.Option(
+        None,
+        "--task",
+        help="Task label to tag (overrides any active `hafiz session`).",
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -470,6 +556,8 @@ def note(
         confidence=confidence,
         expires_in=expires_in,
         expires=expires,
+        session=session,
+        task=task,
         output_json=json_output,
     )
 
@@ -504,6 +592,12 @@ def journal(
     type: Optional[str] = typer.Option(
         None, "--type", "-t", help="Filter by observation type."
     ),
+    session: Optional[str] = typer.Option(
+        None, "--session", help="Filter by session id."
+    ),
+    task: Optional[str] = typer.Option(
+        None, "--task", help="Filter by task label."
+    ),
     limit: int = typer.Option(
         500, "--limit", "-l", help="Maximum entries (default 500)."
     ),
@@ -525,6 +619,8 @@ def journal(
         workspace=workspace,
         source=source,
         obs_type=type,
+        session_id=session,
+        task=task,
         limit=limit,
         output_json=json_output,
     )

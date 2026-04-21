@@ -12,6 +12,7 @@ from rich.table import Table
 
 from hafiz.core.database import close_engine
 from hafiz.core.durations import parse_duration
+from hafiz.core.session import resolve_session_tag
 
 console = Console()
 
@@ -59,10 +60,15 @@ def run_observe(
     confidence: float = 1.0,
     expires_in: str | None = None,
     expires: str | None = None,
+    session: str | None = None,
+    task: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Store an observation and print confirmation."""
     valid_until = _compute_valid_until(expires_in, expires)
+    resolved_session_id, resolved_task = resolve_session_tag(
+        session_override=session, task_override=task
+    )
 
     async def _store():
         try:
@@ -76,6 +82,8 @@ def run_observe(
                 tags=tags,
                 confidence=confidence,
                 valid_until=valid_until,
+                session_id=resolved_session_id,
+                task=resolved_task,
             )
             return obs
         finally:
@@ -96,12 +104,21 @@ def run_observe(
                 "confidence": obs.confidence,
                 "valid_from": obs.valid_from.isoformat(),
                 "valid_until": obs.valid_until.isoformat() if obs.valid_until else None,
+                "session_id": obs.session_id,
+                "task": obs.task,
+                "commit_hash": obs.commit_hash,
             },
         }
         console.print_json(json.dumps(data))
         return
 
     tags_str = ", ".join(obs.tags) if obs.tags else "none"
+    session_line = ""
+    if obs.session_id or obs.task:
+        session_line = (
+            f"  [bold]Session:[/bold]    {obs.session_id or '—'}\n"
+            f"  [bold]Task:[/bold]       {obs.task or '—'}\n"
+        )
     info = (
         f"[bold green]Observation stored[/bold green]\n\n"
         f"  [bold]ID:[/bold]         {obs.id}\n"
@@ -110,6 +127,7 @@ def run_observe(
         f"  [bold]Project:[/bold]    {obs.project or '—'}\n"
         f"  [bold]Tags:[/bold]       {tags_str}\n"
         f"  [bold]Confidence:[/bold] {obs.confidence:.0%}\n"
+        f"{session_line}"
         f"  [bold]Content:[/bold]    {obs.content[:200]}"
     )
     console.print(Panel(info, border_style="cyan"))
@@ -124,6 +142,8 @@ def run_note(
     confidence: float = 1.0,
     expires_in: str | None = None,
     expires: str | None = None,
+    session: str | None = None,
+    task: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Store a raw thought as ``obs_type="note"`` — low-bar capture.
@@ -140,6 +160,8 @@ def run_note(
         confidence=confidence,
         expires_in=expires_in,
         expires=expires,
+        session=session,
+        task=task,
         output_json=output_json,
     )
 

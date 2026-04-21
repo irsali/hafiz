@@ -60,6 +60,8 @@ def run_journal(
     workspace: bool = False,
     source: str | None = None,
     obs_type: str | None = None,
+    session_id: str | None = None,
+    task: str | None = None,
     limit: int = 500,
     output_json: bool = False,
 ) -> None:
@@ -87,6 +89,8 @@ def run_journal(
                 project=projects,
                 source=source,
                 obs_type=obs_type,
+                session_id=session_id,
+                task=task,
                 limit=limit,
             )
         finally:
@@ -120,7 +124,9 @@ def _print_json(bundle: JournalBundle) -> None:
                 "valid_until": (
                     e.valid_until.isoformat() if e.valid_until else None
                 ),
-                "commit_hash": e.metadata.get("commit_hash"),
+                "session_id": e.session_id,
+                "task": e.task,
+                "commit_hash": e.commit_hash,
                 "branch": e.metadata.get("branch"),
                 "is_dirty": e.metadata.get("is_dirty"),
             }
@@ -136,6 +142,8 @@ def _print_json(bundle: JournalBundle) -> None:
                 "source": c.source,
                 "tags": c.tags,
                 "project": c.project,
+                "session_id": c.session_id,
+                "task": c.task,
                 "preview": c.preview,
             }
             for c in bundle.captures
@@ -190,8 +198,8 @@ def _print_rich(
                 ctx_parts: list[str] = []
                 if branch := e.metadata.get("branch"):
                     ctx_parts.append(branch)
-                if ch := e.metadata.get("commit_hash"):
-                    ctx_parts.append(ch[:8])
+                if e.commit_hash:
+                    ctx_parts.append(e.commit_hash[:8])
                 if e.metadata.get("is_dirty"):
                     ctx_parts.append("*")
                 table.add_row(

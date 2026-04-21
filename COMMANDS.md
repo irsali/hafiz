@@ -104,7 +104,7 @@ hafiz extract export --unextracted --project X | claude -p "extract entities per
 |---------|---------|:-----:|-----------|-------------|
 | `journal` | "What did I record recently?" — time-bounded view over observations **and** captures | — | `--json` | rich tables per day |
 
-**Scoping flags:** `--since <duration>` (default `7d`), or `--day <ISO-date>` (mutually exclusive). Also `--project` / `--workspace`, `--source`, `--type`, `--limit`.
+**Scoping flags:** `--since <duration>` (default `7d`), or `--day <ISO-date>` (mutually exclusive). Also `--project` / `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`.
 
 Per day the output shows two tables when relevant: observations first (cyan border), captures second (magenta border).
 
@@ -123,6 +123,25 @@ Per day the output shows two tables when relevant: observations first (cyan bord
 **Retrieval:**
 - `query` finds transcript chunks like any other chunk.
 - `context` expands retrieved transcript chunks with ±1 turn neighbors so the agent sees surrounding dialogue, not an orphan line. Neighbors are marked `is_neighbor: true` in JSON and carry the parent's score for ranking stability.
+
+### Sessions
+
+Per-TTY named threads of work that auto-tag subsequent `observe` / `note` / `capture` with a `session_id` and optional `task`. State lives in `~/.cache/hafiz/session-<tty>.json`, scoped to the controlling terminal so two shells don't pollute each other.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `session start "<name>"` | Start a named session for this terminal; auto-generates a slugged session id | — | `--json` | rich panel |
+| `session show` | Show the active session for this terminal | — | `--json` | rich panel |
+| `session end` | Clear the session state for this terminal | — | `--json` | rich line |
+
+`session start` flags: `--task <name>` (default task for the session), `--project <name>` (display only — does not filter).
+
+**Auto-tagging** on `observe` / `note` / `capture`:
+- If no flag is given and a session is active, `session_id` and `task` are inherited.
+- `--session <id>` / `--task <name>` on the command always win over the active session.
+- Storage columns: `observations.session_id` / `observations.task` / `observations.commit_hash`; `chunks.session_id` / `chunks.task` (set only on transcripts today).
+
+**No TTY (piped, CI)** → sessions are ignored; commands still work, just untagged.
 
 ### Review
 
@@ -145,6 +164,8 @@ Per day the output shows two tables when relevant: observations first (cyan bord
 | `--expires-in` | `observe`, `note` | Expire after duration (e.g. `30d`). Exclusive with `--expires` |
 | `--expires` | `observe`, `note` | Expire at ISO date/datetime. Exclusive with `--expires-in` |
 | `--source` | `observe`, `note`, `journal` | Origin tag (e.g. `agent:claude-code`, `user:<name>`) |
+| `--session` | `observe`, `note`, `capture`, `journal` | Explicit session id — overrides active `hafiz session` for write commands; filter for `journal` |
+| `--task` | `observe`, `note`, `capture`, `journal` | Explicit task label — same override / filter semantics as `--session` |
 | `--diagnose` | `status` | Run full diagnostic checks (config, DB, pgvector, embeddings) |
 
 ## Architecture Note

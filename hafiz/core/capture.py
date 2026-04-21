@@ -80,12 +80,15 @@ async def store_transcript(
     project: str | None = None,
     source: str | None = None,
     tags: list[str] | None = None,
+    session_id: str | None = None,
+    task: str | None = None,
 ) -> TranscriptStored:
     """Chunk, embed, and store a transcript.
 
     Each resulting chunk carries ``metadata.transcript_id``,
-    ``metadata.turn_index``, ``metadata.title``, and the usual fields.
-    Returns a :class:`TranscriptStored` summary.
+    ``metadata.turn_index``, ``metadata.title``, and — when given — the
+    ``session_id`` / ``task`` columns so the transcript is recoverable
+    as a unit via session-scoped filters.
     """
     turns = split_transcript(text)
     if not turns:
@@ -121,7 +124,13 @@ async def store_transcript(
         batch = chunks[i : i + EMBED_BATCH_SIZE]
         all_embeddings.extend(await embed_texts([c.content for c in batch]))
 
-    stored = await store_chunks(chunks, all_embeddings, project=project)
+    stored = await store_chunks(
+        chunks,
+        all_embeddings,
+        project=project,
+        session_id=session_id,
+        task=task,
+    )
 
     return TranscriptStored(
         transcript_id=transcript_id,

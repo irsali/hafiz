@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from hafiz.core.database import close_engine
+from hafiz.core.session import resolve_session_tag
 
 console = Console()
 
@@ -45,6 +46,8 @@ def run_capture(
     project: str | None = None,
     source: str | None = None,
     tags: list[str] | None = None,
+    session: str | None = None,
+    task: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Entry point for the ``hafiz capture`` command."""
@@ -52,6 +55,10 @@ def run_capture(
     if not content.strip():
         console.print("[red]Error:[/red] input is empty — nothing to capture.")
         raise SystemExit(1)
+
+    resolved_session_id, resolved_task = resolve_session_tag(
+        session_override=session, task_override=task
+    )
 
     async def _run():
         try:
@@ -63,6 +70,8 @@ def run_capture(
                 project=project,
                 source=source,
                 tags=tags,
+                session_id=resolved_session_id,
+                task=resolved_task,
             )
         finally:
             await close_engine()
@@ -83,12 +92,20 @@ def run_capture(
                     "source_file": summary.source_file,
                     "turn_count": summary.turn_count,
                     "chunks_stored": summary.chunks_stored,
+                    "session_id": resolved_session_id,
+                    "task": resolved_task,
                 }
             )
         )
         return
 
     tags_str = ", ".join(tags) if tags else "none"
+    session_line = ""
+    if resolved_session_id or resolved_task:
+        session_line = (
+            f"  [bold]Session:[/bold]  {resolved_session_id or '—'}\n"
+            f"  [bold]Task:[/bold]     {resolved_task or '—'}\n"
+        )
     info = (
         f"[bold green]Transcript captured[/bold green]\n\n"
         f"  [bold]ID:[/bold]       {summary.transcript_id}\n"
@@ -96,6 +113,7 @@ def run_capture(
         f"  [bold]Source:[/bold]   {source or '—'}\n"
         f"  [bold]Project:[/bold]  {project or '—'}\n"
         f"  [bold]Tags:[/bold]     {tags_str}\n"
+        f"{session_line}"
         f"  [bold]Turns:[/bold]    {summary.turn_count}\n"
         f"  [bold]Chunks:[/bold]   {summary.chunks_stored}\n"
         f"  [bold]Path:[/bold]     {summary.source_file}"

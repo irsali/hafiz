@@ -52,12 +52,16 @@ class Chunk(Base):
         TIMESTAMP(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
     __table_args__ = (
         Index("idx_chunks_project", "project"),
         Index("idx_chunks_source", "source_file"),
         Index("idx_chunks_checksum", "checksum"),
+        Index("idx_chunks_session", "session_id"),
+        Index("idx_chunks_task", "task"),
     )
 
 
@@ -173,10 +177,16 @@ class Observation(Base):
     valid_until: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
     __table_args__ = (
         Index("idx_observations_type", "obs_type"),
+        Index("idx_observations_session", "session_id"),
+        Index("idx_observations_task", "task"),
+        Index("idx_observations_commit", "commit_hash"),
     )
 
 
