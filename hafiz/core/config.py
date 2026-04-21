@@ -75,6 +75,22 @@ class WorkspaceSettings(BaseModel):
     )
 
 
+class GraphSettings(BaseModel):
+    """Tuning knobs for knowledge-graph expansion inside `hafiz context`.
+
+    context_depth        — how many hops to walk out from entities found in
+                           the retrieved chunks (undirected). 3 is a sensible
+                           default: includes neighbors-of-neighbors without
+                           blowing up the bundle.
+    context_max_entities — hard cap on how many entities land in the bundle
+                           after walking. Results are sorted by (distance,
+                           -pagerank) so nearest + most central win the cap.
+    """
+
+    context_depth: int = 3
+    context_max_entities: int = 25
+
+
 class HafizSettings(BaseSettings):
     """Main settings object. Loaded from hafiz.toml + env var overrides."""
 
@@ -87,6 +103,7 @@ class HafizSettings(BaseSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
+    graph: GraphSettings = Field(default_factory=GraphSettings)
 
 
 def load_settings() -> HafizSettings:

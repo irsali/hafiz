@@ -214,6 +214,9 @@ app.add_typer(graph_app)
 @graph_app.command("show")
 def graph_show(
     name: str = typer.Argument(..., help="Entity name to look up."),
+    depth: int = typer.Option(
+        1, "--depth", "-d", min=0, help="Include neighbors up to N hops (undirected)."
+    ),
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
@@ -221,15 +224,18 @@ def graph_show(
         False, "--json", "-j", help="Output as JSON."
     ),
 ) -> None:
-    """Show an entity and its direct connections."""
+    """Show an entity and its N-hop neighborhood (undirected walk)."""
     from hafiz.commands.graph import run_graph_show
 
-    run_graph_show(name, project=project, output_json=json_output)
+    run_graph_show(name, depth=depth, project=project, output_json=json_output)
 
 
 @graph_app.command("deps")
 def graph_deps(
     name: str = typer.Argument(..., help="Entity name to look up."),
+    depth: int = typer.Option(
+        1, "--depth", "-d", min=0, help="Walk outgoing edges up to N hops."
+    ),
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
@@ -237,15 +243,18 @@ def graph_deps(
         False, "--json", "-j", help="Output as JSON."
     ),
 ) -> None:
-    """Show what an entity depends on (outgoing relations)."""
+    """Show what an entity depends on, transitively (outgoing walk)."""
     from hafiz.commands.graph import run_graph_deps
 
-    run_graph_deps(name, project=project, output_json=json_output)
+    run_graph_deps(name, depth=depth, project=project, output_json=json_output)
 
 
-@graph_app.command("dependents")
-def graph_dependents(
+@graph_app.command("impact")
+def graph_impact(
     name: str = typer.Argument(..., help="Entity name to look up."),
+    depth: int = typer.Option(
+        1, "--depth", "-d", min=0, help="Walk incoming edges up to N hops."
+    ),
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
@@ -253,10 +262,72 @@ def graph_dependents(
         False, "--json", "-j", help="Output as JSON."
     ),
 ) -> None:
-    """Show what depends on an entity (incoming relations)."""
-    from hafiz.commands.graph import run_graph_dependents
+    """Show the blast radius — what breaks if this entity changes (incoming walk)."""
+    from hafiz.commands.graph import run_graph_impact
 
-    run_graph_dependents(name, project=project, output_json=json_output)
+    run_graph_impact(name, depth=depth, project=project, output_json=json_output)
+
+
+@graph_app.command("path")
+def graph_path(
+    source: str = typer.Argument(..., help="Source entity name."),
+    target: str = typer.Argument(..., help="Target entity name."),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Find the shortest directed path from SOURCE to TARGET."""
+    from hafiz.commands.graph import run_graph_path
+
+    run_graph_path(source, target, project=project, output_json=json_output)
+
+
+@graph_app.command("rank")
+def graph_rank(
+    metric: str = typer.Option(
+        "pagerank",
+        "--metric",
+        "-m",
+        help="Centrality metric: pagerank, betweenness, degree, in_degree, out_degree.",
+    ),
+    top: int = typer.Option(
+        20, "--top", "-n", min=1, help="Number of results to show."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Rank entities by a centrality metric (importance ranking)."""
+    from hafiz.commands.graph import run_graph_rank
+
+    run_graph_rank(metric=metric, top_n=top, project=project, output_json=json_output)
+
+
+@graph_app.command("stats")
+def graph_stats(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project."
+    ),
+    top_central: int = typer.Option(
+        5,
+        "--top-central",
+        min=0,
+        help="Number of top-central nodes to include (by PageRank).",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Show graph-level health: counts, density, components, top-central nodes."""
+    from hafiz.commands.graph import run_graph_stats
+
+    run_graph_stats(project=project, top_central=top_central, output_json=json_output)
 
 
 # ─── OBSERVE ──────────────────────────────────────────────────────────

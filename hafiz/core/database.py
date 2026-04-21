@@ -125,6 +125,15 @@ class Relation(Base):
     weight: Mapped[float] = mapped_column(Float, default=1.0)
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Relationships
     source: Mapped[Entity] = relationship(
@@ -197,13 +206,37 @@ def get_session_factory(url: str | None = None) -> async_sessionmaker[AsyncSessi
     return _session_factory
 
 
+def _alembic_config(url: str | None = None):
+    """Build an Alembic Config pointing at the packaged alembic/ directory."""
+    from pathlib import Path
+    from alembic.config import Config
+
+    import hafiz
+
+    hafiz_root = Path(hafiz.__file__).resolve().parent.parent
+    cfg = Config(str(hafiz_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(hafiz_root / "alembic"))
+    cfg.set_main_option(
+        "sqlalchemy.url", url or get_settings().database.url
+    )
+    return cfg
+
+
 async def create_tables(url: str | None = None) -> None:
-    """Create all tables (used by hafiz init)."""
-    engine = get_engine(url)
-    async with engine.begin() as conn:
-        # Enable pgvector extension
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize schema by running Alembic migrations to head.
+
+    Alembic is the single source of truth for the schema. On a fresh DB this
+    runs every migration in order; on an existing Alembic-tracked DB it applies
+    only missing ones.
+    """
+    import asyncio
+
+    from alembic import command
+
+    cfg = _alembic_config(url)
+    await asyncio.get_running_loop().run_in_executor(
+        None, command.upgrade, cfg, "head"
+    )
 
 
 async def close_engine() -> None:

@@ -9,10 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
+import networkx as nx
+from sqlalchemy import select
 
-from hafiz.core.database import Chunk, Entity, Relation, get_session_factory
+from hafiz.core import graph_analysis as ga
+from hafiz.core.config import get_settings
+from hafiz.core.database import Chunk, get_session_factory
 from hafiz.core.observations import ObservationResult, search_observations
 from hafiz.core.search import SearchResult, vector_search
 
@@ -48,8 +50,16 @@ class ContextBundle:
         sections.append("\n## Knowledge Graph")
         if self.entities:
             for ent in self.entities:
+                badges = []
+                if ent.get("is_seed"):
+                    badges.append("seed")
+                if (dist := ent.get("distance")) is not None and not ent.get("is_seed"):
+                    badges.append(f"{dist} hop{'s' if dist != 1 else ''} away")
+                if (pr := ent.get("pagerank_score")) is not None:
+                    badges.append(f"PR {pr:.4f}")
+                badge_str = f" _[{' · '.join(badges)}]_" if badges else ""
                 sections.append(
-                    f"\n**{ent['name']}** ({ent['entity_type']})"
+                    f"\n**{ent['name']}** ({ent['entity_type']}){badge_str}"
                 )
                 if ent.get("description"):
                     sections.append(f"  {ent['description']}")
@@ -295,83 +305,126 @@ async def build_workspace_context(
     )
 
 
+def _in_project(attrs: dict, project: str | list[str] | None) -> bool:
+    """True if entity `attrs` passes the project scope filter."""
+    if project is None:
+        return True
+    ent_project = attrs.get("project")
+    if isinstance(project, str):
+        return ent_project == project
+    return ent_project in project
+
+
+def _connections_for(G: nx.MultiDiGraph, node_id: str) -> list[dict]:
+    """Flatten a node's incoming + outgoing parallel edges into display dicts."""
+    out: list[dict] = []
+    for _, target, data in G.out_edges(node_id, data=True):
+        out.append(
+            {
+                "direction": "-->",
+                "relation": data.get("relation_type"),
+                "entity": G.nodes[target].get("name"),
+                "entity_type": G.nodes[target].get("entity_type"),
+            }
+        )
+    for source, _, data in G.in_edges(node_id, data=True):
+        out.append(
+            {
+                "direction": "<--",
+                "relation": data.get("relation_type"),
+                "entity": G.nodes[source].get("name"),
+                "entity_type": G.nodes[source].get("entity_type"),
+            }
+        )
+    return out
+
+
 async def _graph_from_chunks(
     chunks: list[SearchResult],
     *,
     project: str | list[str] | None = None,
+    depth: int | None = None,
+    max_entities: int | None = None,
 ) -> list[dict]:
-    """Find entities whose source_file matches the retrieved chunks, plus connections."""
+    """Expand from retrieved chunks into the knowledge graph.
+
+    Algorithm:
+      1. Seed: every entity whose `source_file` matches one of the chunks'.
+      2. Multi-source BFS up to `depth` hops (undirected) — distance tracked as
+         min distance to any seed.
+      3. Rank by (distance asc, PageRank desc) — nearest + most central first.
+      4. Cap to `max_entities` so a hub entity can't flood the bundle.
+
+    Each returned entity carries `distance`, `is_seed`, `pagerank_score`, and
+    its 1-hop `connections` list (preserving the existing display contract).
+    """
+    settings = get_settings().graph
+    if depth is None:
+        depth = settings.context_depth
+    if max_entities is None:
+        max_entities = settings.context_max_entities
+
     source_files = {c.source_file for c in chunks if c.source_file}
     if not source_files:
         return []
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        # Find entities in those files
-        stmt = select(Entity).where(Entity.source_file.in_(source_files))
-        if isinstance(project, list):
-            stmt = stmt.where(Entity.project.in_(project))
-        elif project:
-            stmt = stmt.where(Entity.project == project)
+    # Load the cached graph. A project-scoped cache is only possible for a single
+    # string project; list or None falls back to the global graph and filters
+    # via `_in_project`. (See Hafiz observation "graph cache scoping" for context
+    # on future multi-project cache scopes.)
+    cache_scope = project if isinstance(project, str) else None
+    G, _ = await ga.get_cached_graph(project=cache_scope)
+    if G.number_of_nodes() == 0:
+        return []
 
-        result = await session.execute(stmt)
-        found_entities = result.scalars().all()
+    # Seed: entities in the retrieved source files, respecting project scope
+    seed_ids = [
+        nid
+        for nid, attrs in G.nodes(data=True)
+        if attrs.get("source_file") in source_files and _in_project(attrs, project)
+    ]
+    if not seed_ids:
+        return []
 
-        if not found_entities:
-            return []
+    # Multi-source BFS — distance = min over seeds
+    distances: dict[str, int] = {}
+    for seed in seed_ids:
+        for nid, dist in ga.walk(G, seed, depth=depth, direction="both").items():
+            prev = distances.get(nid)
+            if prev is None or dist < prev:
+                distances[nid] = dist
 
-        entity_ids = [e.id for e in found_entities]
+    # For workspace (list) mode we're using the global graph, so drop walked
+    # neighbors that landed outside the project scope.
+    if isinstance(project, list):
+        distances = {
+            nid: d for nid, d in distances.items() if _in_project(G.nodes[nid], project)
+        }
 
-        # Load outgoing relations for these entities
-        out_result = await session.execute(
-            select(Relation)
-            .where(Relation.source_id.in_(entity_ids))
-            .options(selectinload(Relation.target))
-        )
-        outgoing = out_result.scalars().all()
+    # PageRank on the (scope-appropriate) graph
+    if G.number_of_edges() > 0:
+        pr = nx.pagerank(G, weight="weight")
+    else:
+        pr = {}
 
-        # Load incoming relations for these entities
-        in_result = await session.execute(
-            select(Relation)
-            .where(Relation.target_id.in_(entity_ids))
-            .options(selectinload(Relation.source))
-        )
-        incoming = in_result.scalars().all()
+    # Rank: nearest first, then most structurally central
+    ranked = sorted(
+        distances.items(),
+        key=lambda kv: (kv[1], -pr.get(kv[0], 0.0)),
+    )[:max_entities]
 
-        # Build lookup: entity_id -> connections
-        connections: dict[str, list[dict]] = {str(e.id): [] for e in found_entities}
-
-        for rel in outgoing:
-            eid = str(rel.source_id)
-            if eid in connections:
-                connections[eid].append(
-                    {
-                        "direction": "-->",
-                        "relation": rel.relation_type,
-                        "entity": rel.target.name,
-                        "entity_type": rel.target.entity_type,
-                    }
-                )
-
-        for rel in incoming:
-            eid = str(rel.target_id)
-            if eid in connections:
-                connections[eid].append(
-                    {
-                        "direction": "<--",
-                        "relation": rel.relation_type,
-                        "entity": rel.source.name,
-                        "entity_type": rel.source.entity_type,
-                    }
-                )
-
-        return [
-            {
-                "name": e.name,
-                "entity_type": e.entity_type,
-                "description": e.description,
-                "source_file": e.source_file,
-                "connections": connections.get(str(e.id), []),
-            }
-            for e in found_entities
-        ]
+    seed_set = set(seed_ids)
+    return [
+        {
+            "name": G.nodes[nid].get("name"),
+            "entity_type": G.nodes[nid].get("entity_type"),
+            "description": G.nodes[nid].get("description"),
+            "source_file": G.nodes[nid].get("source_file"),
+            "project": G.nodes[nid].get("project"),
+            "distance": dist,
+            "is_seed": nid in seed_set,
+            "pagerank_score": round(pr.get(nid, 0.0), 6),
+            "connections": _connections_for(G, nid),
+        }
+        for nid, dist in ranked
+    ]

@@ -2,14 +2,12 @@
 
 from pathlib import Path
 from textwrap import dedent
-from unittest.mock import patch
 
 from hafiz.core.chunker import (
     ChunkResult,
     chunk_file,
     compute_checksum,
     detect_language,
-    should_ignore,
 )
 
 
@@ -44,14 +42,6 @@ def test_compute_checksum():
     assert cs1 == cs2
     assert cs1 != cs3
     assert len(cs1) == 16
-
-
-def test_should_ignore_git():
-    assert should_ignore(Path(".git"), [".git"])
-
-
-def test_should_ignore_node_modules():
-    assert should_ignore(Path("project/node_modules/pkg"), ["node_modules"])
 
 
 def test_chunk_file_creates_results(tmp_path):

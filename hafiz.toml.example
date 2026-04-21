@@ -10,3 +10,9 @@ dimensions = 768
 root = "/path/to/your/workspace"
 projects = ["project-a", "project-b"]
 ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build", ".tox", ".mypy_cache", ".ruff_cache", "*.pyc", "*.pyo"]
+
+[graph]
+# How many hops to walk from entities found in the retrieved chunks (undirected).
+context_depth = 3
+# Hard cap on entities included in the context bundle, sorted by (distance, -pagerank).
+context_max_entities = 25
