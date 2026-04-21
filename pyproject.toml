@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A sovereign, CLI-first intelligence layer for your workspace"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
+license = { file = "LICENSE" }
 authors = [
     { name = "Irshad" },
 ]

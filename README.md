@@ -394,4 +394,6 @@ ROADMAP.md             -- Architecture & vision
 
 ## License
 
-MIT
+[FSL-1.1-MIT](LICENSE) — Functional Source License. Free for any use except
+offering Hafiz as a competing commercial product or service. Each release
+converts to the MIT License two years after its release date.
