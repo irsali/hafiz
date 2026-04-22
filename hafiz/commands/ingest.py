@@ -27,7 +27,17 @@ from rich.progress import (
 from hafiz.core.chunker import walk_files
 from hafiz.core.config import get_settings
 from hafiz.core.database import close_engine, get_session_factory
-from hafiz.core.store import index_file, tombstone_vanished_files
+from hafiz.core.git_context import (
+    changed_files_since,
+    current_git_context,
+    is_git_repo,
+)
+from hafiz.core.store import (
+    index_file,
+    latest_indexed_commit,
+    tombstone_vanished_files,
+    upsert_commit,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -77,9 +87,34 @@ async def _do_ingest(
             console.print(f"[red]Path not found:[/red] {target}")
         raise SystemExit(1)
 
+    # ── Step 0: git-axis — resolve HEAD + diff base ───────────────────────
+    repo_root = target if target.is_dir() else target.parent
+    git_ctx = current_git_context(repo_root) if is_git_repo(repo_root) else {}
+    head_sha: str | None = git_ctx.get("commit_hash") or None
+
+    # Diff-driven scope: if the project has been ingested before at a
+    # commit reachable from HEAD, restrict this pass to changed files.
+    # Otherwise walk everything (first-time ingest, branch-switched to
+    # an unrelated line, or rebase orphaned the old base).
+    diff_scope: set[Path] | None = None
+    base_sha: str | None = None
+    if head_sha and project is not None:
+        base_sha = await latest_indexed_commit(project)
+        if base_sha and base_sha != head_sha:
+            diff_scope = changed_files_since(base_sha, repo_root)
+
     # ── Step 1: enumerate files ───────────────────────────────────────────
     if output_json:
-        _emit({"event": "walk", "status": "start", "path": str(target)})
+        _emit(
+            {
+                "event": "walk",
+                "status": "start",
+                "path": str(target),
+                "head": head_sha,
+                "base": base_sha,
+                "diff_driven": diff_scope is not None,
+            }
+        )
     else:
         walk_ctx = Progress(
             SpinnerColumn(),
@@ -88,18 +123,44 @@ async def _do_ingest(
             console=console,
         )
         walk_ctx.__enter__()
-        walk_ctx.add_task("Walking files...", total=None)
+        if diff_scope is not None:
+            walk_ctx.add_task(
+                f"Walking files (diff-driven, base {base_sha[:8]})...",
+                total=None,
+            )
+        else:
+            walk_ctx.add_task("Walking files...", total=None)
 
     files = list(walk_files(target, ignore_patterns=ignore_patterns))
+    if diff_scope is not None:
+        files = [f for f in files if f.resolve() in diff_scope]
 
     if not output_json:
         walk_ctx.__exit__(None, None, None)
 
     if not files:
+        # Still record the commit — "we're at HEAD" is useful information
+        # even when the diff is empty.
+        if head_sha:
+            await upsert_commit(head_sha, project=project, cwd=repo_root)
         if output_json:
-            _emit({"event": "complete", "files": 0, "revisions": 0})
+            _emit(
+                {
+                    "event": "complete",
+                    "files": 0,
+                    "revisions": 0,
+                    "diff_driven": diff_scope is not None,
+                    "head": head_sha,
+                }
+            )
         else:
-            console.print("[yellow]No files found to index.[/yellow]")
+            if diff_scope is not None:
+                console.print(
+                    f"[dim]No changed files since {base_sha[:8]} — "
+                    f"index is up-to-date at HEAD.[/dim]"
+                )
+            else:
+                console.print("[yellow]No files found to index.[/yellow]")
         return
 
     if output_json:
@@ -155,6 +216,7 @@ async def _do_ingest(
                         file_path,
                         content,
                         project=project,
+                        commit_hash=head_sha,
                         session=session,
                     )
         except Exception as e:
@@ -186,11 +248,17 @@ async def _do_ingest(
     if not output_json:
         prog.__exit__(None, None, None)
 
-    # ── Step 3: tombstone vanished files (project-scoped) ────────────────
-    if project is not None:
+    # ── Step 3a: tombstone vanished files (project-scoped + full walk only) ─
+    # When diff-driven, we only looked at changed files, so we can't know
+    # what's vanished. Skip tombstoning in that case.
+    if project is not None and diff_scope is None:
         files_tombstoned = await tombstone_vanished_files(project, seen_paths)
     else:
-        files_tombstoned = 0  # cross-project tombstoning is unsafe
+        files_tombstoned = 0
+
+    # ── Step 3b: record the ingest commit in the `commits` table ──────────
+    if head_sha:
+        await upsert_commit(head_sha, project=project, cwd=repo_root)
 
     # ── Step 4: summary ──────────────────────────────────────────────────
     if output_json:

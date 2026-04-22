@@ -173,6 +173,19 @@ def run_status(*, output_json: bool = False) -> None:
                     )
                 ).all()
 
+                # ── Most-recent commit per project ──
+                last_commit_rows = (
+                    await session.execute(
+                        select(
+                            File.project,
+                            func.max(File.last_seen_commit),
+                        )
+                        .where(File.valid_until.is_(None))
+                        .where(File.last_seen_commit.is_not(None))
+                        .group_by(File.project)
+                    )
+                ).all()
+
             stats = {
                 "files": files_count,
                 "units": units_count,
@@ -188,6 +201,9 @@ def run_status(*, output_json: bool = False) -> None:
                     p or "(none)": c for p, c in project_rows
                 },
                 "by_kind": {k or "(none)": c for k, c in kind_rows},
+                "last_commit_per_project": {
+                    p or "(none)": c for p, c in last_commit_rows
+                },
             }
             return stats
         finally:
@@ -246,6 +262,17 @@ def run_status(*, output_json: bool = False) -> None:
         for kind, count in stats["by_kind"].items():
             kind_table.add_row(kind, str(count))
         console.print(kind_table)
+
+    if stats["last_commit_per_project"]:
+        console.print()
+        commit_table = Table(
+            title="Last indexed commit per project", border_style="cyan"
+        )
+        commit_table.add_column("Project")
+        commit_table.add_column("Commit", style="dim")
+        for proj, sha in stats["last_commit_per_project"].items():
+            commit_table.add_row(proj, sha[:12] if sha else "—")
+        console.print(commit_table)
 
 
 def run_config_show(*, output_json: bool = False) -> None:

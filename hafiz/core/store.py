@@ -38,6 +38,7 @@ from hafiz.core.chunker import (
     prepare_embedding_parts,
 )
 from hafiz.core.database import (
+    Commit,
     Edge,
     Embedding,
     File,
@@ -46,6 +47,7 @@ from hafiz.core.database import (
     get_session_factory,
 )
 from hafiz.core.embeddings import embed_texts
+from hafiz.core.git_context import commit_metadata
 from hafiz.core.parsers import ParsedEdge, ParsedUnit, Parser, get_registry
 
 
@@ -477,6 +479,83 @@ async def _sync_edges(
     if written or superseded:
         await session.flush()
     return written, superseded
+
+
+async def upsert_commit(
+    sha: str,
+    *,
+    project: str | None,
+    cwd: Path,
+    session: AsyncSession | None = None,
+) -> Commit | None:
+    """Record a commit's metadata in the ``commits`` table. Idempotent —
+    an existing row for the same hash is updated with fresh metadata
+    (author / summary can drift after an amend).
+
+    Returns the ORM object, or None if the commit isn't reachable from
+    ``cwd`` (e.g. rewritten away) — callers can treat that as "we
+    couldn't pin the commit, keep going".
+    """
+    if not sha:
+        return None
+    meta = commit_metadata(sha, cwd)
+    if meta is None:
+        return None
+
+    owns_session = session is None
+    if owns_session:
+        factory = get_session_factory()
+        session = factory()
+    try:
+        existing = await session.get(Commit, sha)
+        if existing is None:
+            row = Commit(
+                hash=sha,
+                project=project,
+                author=meta["author"],
+                committed_at=meta["committed_at"],
+                summary=meta["summary"],
+            )
+            session.add(row)
+        else:
+            existing.project = existing.project or project
+            existing.author = meta["author"]
+            existing.committed_at = meta["committed_at"]
+            existing.summary = meta["summary"]
+            row = existing
+        await session.flush()
+        if owns_session:
+            await session.commit()
+        return row
+    finally:
+        if owns_session:
+            await session.close()
+
+
+async def latest_indexed_commit(project: str | None) -> str | None:
+    """Return the most-recent ``last_seen_commit`` across the project's
+    currently-present files. Used as the base SHA for diff-driven
+    ingest: files unchanged since this commit can be skipped."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(File.last_seen_commit)
+            .where(File.valid_until.is_(None))
+            .where(File.last_seen_commit.is_not(None))
+        )
+        if project is not None:
+            stmt = stmt.where(File.project == project)
+        rows = (await session.execute(stmt)).scalars().all()
+    if not rows:
+        return None
+    # "Latest" here means whatever SHA appears most often as the last-seen
+    # value — a reasonable proxy for "the commit the project was ingested at".
+    # We don't need strict max-by-committed-at because the caller validates
+    # reachability via `git merge-base --is-ancestor` anyway.
+    from collections import Counter
+
+    counter = Counter(rows)
+    return counter.most_common(1)[0][0]
 
 
 async def tombstone_vanished_files(
