@@ -346,6 +346,23 @@ export HAFIZ_DATABASE__URL="postgresql+asyncpg://user:pass@host:5432/hafiz"
 export HAFIZ_EMBEDDING__MODEL="nomic-ai/nomic-embed-text-v1.5"
 ```
 
+### Embedding device (GPU vs CPU)
+
+Hafiz runs embeddings locally via ONNX. By default (`embedding.device = "auto"`) it probes CUDA on first use, falls back to CPU if that fails, and caches the verdict at `~/.cache/hafiz/device_state.json` so subsequent runs skip the probe.
+
+```bash
+hafiz embedding status        # what's being used, and why
+hafiz embedding retry         # re-probe after freeing VRAM, upgrading drivers, etc.
+```
+
+If another process (LM Studio, Whisper, a training job) is holding VRAM, force CPU for the session:
+
+```bash
+HAFIZ_EMBEDDING__DEVICE=cpu hafiz ingest .
+```
+
+Or lock it in `hafiz.toml` under `[embedding]`: `device = "cpu"` (never touch the GPU), `"gpu"` (require CUDA, fail loudly otherwise), or `"auto"` (default — probe + cache).
+
 ## Architecture
 
 ```

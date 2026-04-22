@@ -52,6 +52,33 @@ def run_init() -> None:
     asyncio.run(_init())
 
 
+def _embedding_device_summary() -> dict:
+    """Sync, DB-independent summary of the embedding-device selection."""
+    from hafiz.core import device_state as dstate
+
+    settings = get_settings()
+    sticky = dstate.load_state()
+    configured = settings.embedding.device
+
+    if configured in ("cpu", "gpu"):
+        source = "config"
+        effective = configured
+    elif sticky is not None:
+        source = "sticky"
+        effective = sticky.device
+    else:
+        source = "not-probed"
+        effective = "(not probed)"
+
+    return {
+        "configured": configured,
+        "source": source,
+        "effective": effective,
+        "sticky_probed_at": sticky.probed_at if sticky else None,
+        "sticky_reason_category": sticky.reason_category if sticky else None,
+    }
+
+
 def run_status(*, output_json: bool = False) -> None:
     """Show database statistics and index health."""
 
@@ -114,7 +141,9 @@ def run_status(*, output_json: bool = False) -> None:
         finally:
             await close_engine()
 
+    device_info = _embedding_device_summary()
     stats = asyncio.run(_status())
+    stats["embedding_device"] = device_info
 
     if output_json:
         console.print_json(json.dumps(stats))
@@ -130,6 +159,11 @@ def run_status(*, output_json: bool = False) -> None:
     table.add_row("Entities", str(stats["entities"]))
     table.add_row("Relations", str(stats["relations"]))
     table.add_row("Observations", str(stats["observations"]))
+    dev = stats["embedding_device"]
+    table.add_row(
+        "Embedding device",
+        f"{dev['effective']} [dim]({dev['source']})[/dim]",
+    )
 
     console.print()
     console.print(table)
@@ -186,6 +220,7 @@ def run_config_show(*, output_json: bool = False) -> None:
     emb_table.add_row("model", settings.embedding.model)
     emb_table.add_row("provider", settings.embedding.provider)
     emb_table.add_row("dimensions", str(settings.embedding.dimensions))
+    emb_table.add_row("device", settings.embedding.device)
     console.print(emb_table)
 
     # LLM

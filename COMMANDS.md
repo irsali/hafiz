@@ -24,6 +24,8 @@
 | `agent install` | Write skills.md to agent config directory | — | same | same |
 | `agent uninstall` | Remove skills.md from agent config directory | — | same | same |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
+| `embedding status` | Show current embedding device + provenance (config / sticky cache / probe) | — | `--json` | rich table |
+| `embedding retry` | Clear sticky device cache and re-probe (use after freeing VRAM, upgrading drivers, etc.) | Embed | `--json` | rich output |
 
 ### Indexing
 

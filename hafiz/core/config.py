@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,6 +53,7 @@ class EmbeddingSettings(BaseModel):
     model: str = "nomic-ai/nomic-embed-text-v1.5"
     provider: str = "fastembed"
     dimensions: int = 768
+    device: Literal["auto", "cpu", "gpu"] = "auto"
 
 
 class LLMSettings(BaseModel):

@@ -5,6 +5,15 @@ url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
 model = "nomic-ai/nomic-embed-text-v1.5"
 provider = "fastembed"   # fastembed | openai | ollama
 dimensions = 768
+# Device selection for local ONNX embedding. Three modes:
+#   "auto" (default) — probe CUDA once, fall back to CPU if it fails;
+#                      the outcome is cached at ~/.cache/hafiz/device_state.json.
+#                      Use `hafiz embedding retry` after freeing VRAM to re-probe.
+#   "cpu"            — never touch the GPU (ideal on shared workstations where
+#                      other processes, e.g. LM Studio, hold VRAM).
+#   "gpu"            — require CUDA; fail loudly if it doesn't work.
+# Env override: HAFIZ_EMBEDDING__DEVICE=cpu
+device = "auto"
 
 [workspace]
 root = "/path/to/your/workspace"

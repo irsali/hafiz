@@ -829,6 +829,39 @@ def hooks_install(
     run_hooks_install(repo_path, project=project)
 
 
+# ─── EMBEDDING ──────────────────────────────────────────────────────
+
+embedding_app = typer.Typer(
+    name="embedding",
+    help="Inspect and retry the embedding device selection (GPU vs CPU).",
+)
+app.add_typer(embedding_app)
+
+
+@embedding_app.command("status")
+def embedding_status(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Show the current embedding device and its provenance (config / sticky / probe)."""
+    from hafiz.commands.embedding import run_embedding_status
+
+    run_embedding_status(output_json=json_output)
+
+
+@embedding_app.command("retry")
+def embedding_retry(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Clear sticky state and re-probe the embedding device (use after freeing VRAM, upgrading drivers, etc.)."""
+    from hafiz.commands.embedding import run_embedding_retry
+
+    run_embedding_retry(output_json=json_output)
+
+
 # ─── AGENT ─────────────────────────────────────────────────────────
 
 agent_app = typer.Typer(name="agent", help="Agent integration management.")
