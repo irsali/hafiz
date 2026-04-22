@@ -37,10 +37,13 @@ def compute_hash(content: str) -> str:
 # Embedding-part preparation
 # ---------------------------------------------------------------------------
 
-# nomic-embed-text-v1.5 supports ~8k tokens; at ~3 chars per token that's
-# ~24k chars, which we use as the soft max. Most real units fit in one
-# part; only long docs and whole-file fallback on big files split.
-DEFAULT_MAX_PART_CHARS = 24_000
+# Conservative default: keep ONNX CPU attention memory bounded on a
+# 16 GB laptop. nomic-embed-text-v1.5 accepts up to 8k tokens, but a
+# single 8k-token input allocates multi-GB attention tensors on CPU — a
+# 24 KB default OOM-killed ingest in practice. ~2 KB ≈ ~512 tokens, which
+# is the safe floor. Tuned per host via the Tunable registry
+# (embedding.max_part_chars); GPU hosts can raise it freely.
+DEFAULT_MAX_PART_CHARS = 2_000
 
 
 @dataclass

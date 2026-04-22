@@ -98,10 +98,15 @@ def test_removed_recall_command():
     assert result.exit_code != 0
 
 
-def test_removed_doctor_command():
-    """doctor is now status --diagnose, standalone doctor should not exist."""
+def test_doctor_command_exists():
+    """`hafiz doctor` is the entry point for host probing + tuning
+    recommendations (phase 2 of the tunable-registry work item).
+    `status --diagnose` remains as a shortcut for the health-check
+    subset."""
     result = runner.invoke(app, ["doctor", "--help"])
-    assert result.exit_code != 0
+    assert result.exit_code == 0
+    assert "--probe" in result.output
+    assert "--json" in result.output
 
 
 def test_removed_chunks_command():

@@ -21,6 +21,8 @@
 | `init` | Create the seven tables + pgvector extension | — | same | same |
 | `status` | Count files / units / unit_revisions / embeddings / edges / annotations / commits, broken down by project and kind, plus last-indexed commit per project | — | `--json` | rich output |
 | `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
+| `doctor` | Install health + host capabilities (RAM, CPU, GPU, onnxruntime) + tunable registry. Stable `--json` shape with `checks` / `host` / `tuning` keys. | — | `--json` | rich tables |
+| `doctor --probe` | Same as `doctor`, plus runs per-tunable probers to recommend values for this host. Slow (loads the embedding model, runs several forward passes). | Embed | `--json` | rich tables |
 | `config show` | Display current hafiz.toml settings | — | `--json` | rich output |
 | `hooks install` | Write post-commit + post-merge + post-rewrite git hooks into a repo | — | same | same |
 | `agent install` | Splice `skills.md` into an agent's config file; warns on version drift | — | same | same |
@@ -29,6 +31,33 @@
 | `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage | — | `--json` | rich table |
 | `embedding status` | Show current embedding device + provenance (config / sticky cache / probe) | — | `--json` | rich table |
 | `embedding retry` | Clear sticky device cache and re-probe | Embed | `--json` | rich output |
+
+**`hafiz doctor --json` shape** (stable — agents parse this):
+```json
+{
+  "checks": [ {"name": "...", "passed": true, "detail": "...", "fix": "..."} ],
+  "host": {
+    "ram_total_mb": 64000, "ram_available_mb": 45000,
+    "cpu_count": 16, "platform": "linux-x86_64",
+    "onnx_providers": ["CPUExecutionProvider"],
+    "gpu_name": null, "gpu_vram_total_mb": null, "gpu_vram_free_mb": null,
+    "onnxruntime_version": "1.24.4",
+    "fingerprint": "9c3fa..."
+  },
+  "tuning": [
+    {
+      "key": "embedding.max_part_chars",
+      "current": 2000, "default": 2000,
+      "description": "...", "is_policy": false,
+      "recommended": 4000,          // only populated with --probe
+      "rationale": "...", "confidence": "high",
+      "measured": {"path": "cpu_measured", "budget_mb": 13500, "candidates": [...]},
+      "probe_error": null
+    }
+  ]
+}
+```
+Adding fields is safe; renaming requires a note here.
 
 ### Indexing
 

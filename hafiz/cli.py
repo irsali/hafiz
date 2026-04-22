@@ -188,7 +188,8 @@ def status(
 ) -> None:
     """Show database statistics and index health.
 
-    Use --diagnose to also run full diagnostic checks (replaces 'hafiz doctor').
+    Use --diagnose to also run full diagnostic checks (shortcut to
+    `hafiz doctor` without per-tunable probing).
     """
     from hafiz.commands.maintenance import run_status
 
@@ -198,6 +199,32 @@ def status(
         run_doctor(output_json=json_output)
     else:
         run_status(output_json=json_output)
+
+
+@app.command()
+def doctor(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (stable agent-consumable shape)."
+    ),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help=(
+            "Run per-tunable probers to recommend values for this host. "
+            "Slow (loads the embedding model, runs several forward passes) "
+            "but gives concrete recommendations for `hafiz config set`."
+        ),
+    ),
+) -> None:
+    """Diagnose install health, show host capabilities, and (with
+    --probe) recommend per-tunable values for this machine.
+
+    Every user-visible field is documented in COMMANDS.md; the `--json`
+    shape is stable for agents that want to act on the recommendations.
+    """
+    from hafiz.commands.maintenance import run_doctor
+
+    run_doctor(output_json=json_output, probe=probe)
 
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────

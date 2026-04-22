@@ -332,8 +332,14 @@ def run_config_show(*, output_json: bool = False) -> None:
     console.print()
 
 
-def run_doctor(*, output_json: bool = False) -> None:
-    """Run diagnostic checks on the Hafiz installation."""
+def run_doctor(*, output_json: bool = False, probe: bool = False) -> None:
+    """Run diagnostic checks on the Hafiz installation.
+
+    When ``probe`` is True, additionally runs each registered tunable's
+    prober and reports recommended values. Probes can be slow (the
+    embedding prober loads the model and runs several forward passes);
+    the default is False so ``hafiz doctor`` stays fast.
+    """
 
     checks: list[dict] = []
 
@@ -560,10 +566,27 @@ def run_doctor(*, output_json: bool = False) -> None:
             fix="Re-install hafiz.",
         )
 
+    # Host probe + tuning (phase 2 of the tunable-registry work item).
+    # Host probe is cheap (/proc/meminfo + nvidia-smi); tuning
+    # recommendations only populate when probe=True, so the default
+    # `hafiz doctor` stays interactive.
+    from hafiz.core.host_probe import probe_host
+
+    host = probe_host()
+    tuning = _collect_tuning(host, probe=probe)
+
     # ── Output ─────────────────────────────────────────────────────────
 
     if output_json:
-        console.print_json(json.dumps({"checks": checks}))
+        console.print_json(
+            json.dumps(
+                {
+                    "checks": checks,
+                    "host": host.as_dict(),
+                    "tuning": tuning,
+                }
+            )
+        )
         return
 
     console.print()
@@ -578,9 +601,141 @@ def run_doctor(*, output_json: bool = False) -> None:
             console.print(f"   [yellow]\u2192 {chk['fix']}[/yellow]")
             all_passed = False
 
+    _render_host_table(host)
+    _render_tuning_table(tuning, probe=probe)
+
     console.print()
     if all_passed:
         console.print("[green]All checks passed.[/green]")
     else:
         console.print("[yellow]Some checks failed — see suggestions above.[/yellow]")
+    if not probe:
+        console.print(
+            "[dim]Run [bold]hafiz doctor --probe[/bold] to measure this host "
+            "and get per-tunable recommendations.[/dim]"
+        )
     console.print()
+
+
+# ── Tuning helpers ─────────────────────────────────────────────────────
+
+
+def _collect_tuning(host, *, probe: bool) -> list[dict]:
+    """Build per-tunable report rows for both JSON and Rich output.
+
+    Shape (stable for agents; additive changes only):
+
+        {
+          "key": "embedding.max_part_chars",
+          "current": 2000,
+          "default": 2000,
+          "description": "...",
+          "is_policy": False,
+          "recommended": int | None,   # only populated when probe=True
+          "rationale": str | None,
+          "confidence": "high|medium|low" | None,
+          "measured": dict | None,
+          "probe_error": str | None,
+        }
+    """
+    from hafiz.core import tunables as _tunables
+
+    rows: list[dict] = []
+    for t in _tunables.all_tunables():
+        current = _tunables.resolve(t.key)
+        row: dict = {
+            "key": t.key,
+            "current": current,
+            "default": t.default,
+            "description": t.description,
+            "is_policy": t.is_policy,
+            "recommended": None,
+            "rationale": None,
+            "confidence": None,
+            "measured": None,
+            "probe_error": None,
+        }
+        if probe and t.prober is not None:
+            try:
+                result = t.prober(host)
+                row["recommended"] = result.recommended_value
+                row["rationale"] = result.rationale
+                row["confidence"] = result.confidence
+                row["measured"] = dict(result.measured)
+            except Exception as e:
+                row["probe_error"] = f"{type(e).__name__}: {e}"
+        rows.append(row)
+    return rows
+
+
+def _render_host_table(host) -> None:
+    console.print()
+    tbl = Table(title="Host", show_header=False, border_style="cyan")
+    tbl.add_column("Key", style="bold")
+    tbl.add_column("Value")
+
+    def _mb(n):
+        return f"{n:,} MB" if isinstance(n, int) else "—"
+
+    tbl.add_row("platform", host.platform)
+    tbl.add_row("cpu_count", str(host.cpu_count) if host.cpu_count else "—")
+    tbl.add_row("ram_total", _mb(host.ram_total_mb))
+    tbl.add_row("ram_available", _mb(host.ram_available_mb))
+    if host.swap_total_mb:
+        tbl.add_row(
+            "swap",
+            f"{host.swap_used_mb or 0:,}/{host.swap_total_mb:,} MB used",
+        )
+    tbl.add_row(
+        "onnx_providers",
+        ", ".join(host.onnx_providers) if host.onnx_providers else "—",
+    )
+    if host.onnxruntime_version:
+        tbl.add_row("onnxruntime", host.onnxruntime_version)
+    if host.gpu_name:
+        tbl.add_row("gpu", host.gpu_name)
+        tbl.add_row(
+            "gpu_vram",
+            f"{host.gpu_vram_free_mb or 0:,} MB free / "
+            f"{host.gpu_vram_total_mb or 0:,} MB total",
+        )
+    tbl.add_row("fingerprint", host.fingerprint)
+    console.print(tbl)
+
+
+def _render_tuning_table(rows: list[dict], *, probe: bool) -> None:
+    console.print()
+    title = "Tuning recommendations" if probe else "Tuning — current values"
+    tbl = Table(title=title, border_style="cyan")
+    tbl.add_column("Key", style="bold")
+    tbl.add_column("Current")
+    if probe:
+        tbl.add_column("Recommended")
+        tbl.add_column("Confidence")
+    tbl.add_column("Notes", style="dim")
+
+    for r in rows:
+        key = r["key"]
+        current = str(r["current"])
+        notes: list[str] = []
+        if r["is_policy"]:
+            notes.append("policy cap (not probed)")
+        if probe and r.get("probe_error"):
+            notes.append(f"probe error: {r['probe_error']}")
+        elif probe and r.get("rationale"):
+            notes.append(r["rationale"])
+        notes_s = " — ".join(notes) or "—"
+
+        if probe:
+            rec = r["recommended"]
+            if rec is None:
+                rec_cell = "—"
+            elif rec != r["current"]:
+                rec_cell = f"[green]{rec}[/green]"
+            else:
+                rec_cell = str(rec)
+            tbl.add_row(key, current, rec_cell, r["confidence"] or "—", notes_s)
+        else:
+            tbl.add_row(key, current, notes_s)
+
+    console.print(tbl)

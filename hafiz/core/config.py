@@ -54,6 +54,22 @@ class EmbeddingSettings(BaseModel):
     provider: str = "fastembed"
     dimensions: int = 768
     device: Literal["auto", "cpu", "gpu"] = "auto"
+    # Conservative CPU-safe default. ONNX attention is O(n²) in sequence
+    # length; a ~2 KB part is ~512 tokens and keeps peak RSS bounded on
+    # a 16 GB laptop. GPU hosts can safely raise this via `hafiz config set`
+    # or `hafiz doctor --apply`. See: workitems/active/tunable-registry.md.
+    max_part_chars: int = 2_000
+
+
+class IngestSettings(BaseModel):
+    """Policy caps for the ingest pipeline — hard guards, not probed."""
+
+    # Skip any file larger than this (bytes). Minified bundles, vendored
+    # build output, and accidentally-committed binaries can sneak past the
+    # binary-content probe; this stops them from OOM-ing the embedder.
+    # 2 MB comfortably covers every hand-authored file we care about while
+    # rejecting the classes of file that blow memory.
+    max_file_bytes: int = 2_097_152  # 2 MB
 
 
 class LLMSettings(BaseModel):
@@ -102,6 +118,7 @@ class HafizSettings(BaseSettings):
 
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     graph: GraphSettings = Field(default_factory=GraphSettings)

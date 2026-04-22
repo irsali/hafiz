@@ -14,6 +14,20 @@ dimensions = 768
 #   "gpu"            — require CUDA; fail loudly if it doesn't work.
 # Env override: HAFIZ_EMBEDDING__DEVICE=cpu
 device = "auto"
+# Max characters per embedding part. ONNX attention is O(n²) in sequence
+# length, so long parts blow up memory on CPU. The 2_000-char default
+# (~512 tokens) is CPU-safe on a 16 GB laptop. GPU hosts can raise this
+# to 16_000+ via `hafiz config set embedding.max_part_chars 16000` or
+# `hafiz doctor --apply` once the self-tuning prober lands.
+# Env override: HAFIZ_EMBEDDING__MAX_PART_CHARS=4096
+max_part_chars = 2000
+
+[ingest]
+# Skip any file larger than this (bytes). Guards against minified
+# bundles, generated output, and accidentally-committed binaries that
+# can slip past the binary-content probe and OOM the embedder.
+# Env override: HAFIZ_INGEST__MAX_FILE_BYTES=4194304
+max_file_bytes = 2097152  # 2 MB
 
 [workspace]
 root = "/path/to/your/workspace"

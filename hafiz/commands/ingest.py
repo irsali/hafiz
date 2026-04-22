@@ -40,6 +40,7 @@ from hafiz.core.store import (
     tombstone_vanished_files,
     upsert_commit,
 )
+from hafiz.core.tunables import resolve as resolve_tunable
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -216,8 +217,34 @@ async def _do_ingest(
         prog.__enter__()
         task = prog.add_task("Indexing files...", total=len(files))
 
+    max_file_bytes = resolve_tunable("ingest.max_file_bytes")
+
     for file_path in files:
         seen_paths.add(str(file_path))
+
+        # Policy cap: skip oversized files before reading them into RAM.
+        # Minified bundles, generated output, or accidentally-committed
+        # blobs can slip past the binary-content probe and OOM the
+        # embedder. Record as a failure so the user sees what was skipped.
+        try:
+            file_size = file_path.stat().st_size
+        except OSError as e:
+            failures.append((str(file_path), f"stat error: {e}"))
+            if not output_json:
+                prog.update(task, advance=1)
+            continue
+        if file_size > max_file_bytes:
+            failures.append(
+                (
+                    str(file_path),
+                    f"skipped: {file_size:,} bytes exceeds "
+                    f"ingest.max_file_bytes={max_file_bytes:,}",
+                )
+            )
+            if not output_json:
+                prog.update(task, advance=1)
+            continue
+
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
         except (OSError, UnicodeDecodeError) as e:

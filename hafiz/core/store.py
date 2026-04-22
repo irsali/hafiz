@@ -49,6 +49,7 @@ from hafiz.core.database import (
 from hafiz.core.embeddings import embed_texts
 from hafiz.core.git_context import commit_metadata, is_commit_reachable
 from hafiz.core.parsers import ParsedEdge, ParsedUnit, Parser, get_registry
+from hafiz.core.tunables import resolve as resolve_tunable
 
 
 EmbedFn = Callable[[list[str]], Awaitable[list[list[float]]]]
@@ -271,10 +272,15 @@ async def index_file(
             changed_revisions.append((new_rev, parsed.content))
 
         # Batch-embed all changed revisions together. Group by revision
-        # so we can assign parts back.
+        # so we can assign parts back. Part size comes from the Tunable
+        # registry so `hafiz config` / `hafiz doctor --apply` can adjust
+        # it per host without touching callsites.
+        max_chars = resolve_tunable("embedding.max_part_chars")
         per_rev_parts: list[tuple[UnitRevision, list[EmbeddingPart]]] = []
         for rev, rev_content in changed_revisions:
-            per_rev_parts.append((rev, prepare_embedding_parts(rev_content)))
+            per_rev_parts.append(
+                (rev, prepare_embedding_parts(rev_content, max_chars=max_chars))
+            )
 
         all_part_texts: list[str] = [
             p.content for _, parts in per_rev_parts for p in parts
