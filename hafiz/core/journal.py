@@ -1,7 +1,12 @@
-"""Time-bounded digest over observations — the ``hafiz journal`` feature.
+"""Time-bounded digest over annotations — the ``hafiz journal`` feature.
 
-A lightweight view layer: "what did I record between X and Y, grouped by day".
-Reuses the existing ``observations`` table — no new storage, no migration.
+A lightweight view layer: "what did I record between X and Y, grouped by
+day". Reads from the ``annotations`` table — no new storage.
+
+Transcript captures are temporarily absent from the bundle: Phase 3b-2
+rewires :mod:`hafiz.core.capture` onto the new schema (transcripts
+become units + annotation links). Until then, :func:`fetch_captures`
+returns an empty list and the bundle is annotation-only.
 """
 
 from __future__ import annotations
@@ -11,14 +16,14 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from hafiz.core.database import Chunk, Observation, get_session_factory
+from hafiz.core.database import Annotation, get_session_factory
 
 
 @dataclass
 class JournalEntry:
     id: str
     content: str
-    obs_type: str
+    kind: str
     source: str | None
     project: str | None
     tags: list[str] | None
@@ -33,7 +38,11 @@ class JournalEntry:
 
 @dataclass
 class JournalCapture:
-    """One transcript, aggregated from its constituent chunks."""
+    """One transcript, aggregated from its constituent turns.
+
+    Populated by :func:`fetch_captures` once Phase 3b-2 rewires capture.
+    Until then, :class:`JournalBundle.captures` is always an empty list.
+    """
 
     transcript_id: str
     title: str | None
@@ -79,7 +88,7 @@ async def build_journal(
     day: datetime | None = None,
     project: str | list[str] | None = None,
     source: str | None = None,
-    obs_type: str | None = None,
+    kind: str | None = None,
     session_id: str | None = None,
     task: str | None = None,
     limit: int = 500,
@@ -90,7 +99,7 @@ async def build_journal(
       - If ``day`` is given, the window is that UTC day (00:00 → 23:59:59.999999).
       - Otherwise the window is ``[now - since, now]``; ``since`` defaults to 7d.
 
-    ``session_id`` / ``task`` filter both observations and captures to items
+    ``session_id`` / ``task`` filter both annotations and captures to items
     tagged with the given thread of work.
     """
     now = datetime.now(timezone.utc)
@@ -106,44 +115,44 @@ async def build_journal(
     session_factory = get_session_factory()
     async with session_factory() as session:
         stmt = (
-            select(Observation)
-            .where(Observation.valid_from >= start)
-            .where(Observation.valid_from <= end)
-            .order_by(Observation.valid_from.desc())
+            select(Annotation)
+            .where(Annotation.valid_from >= start)
+            .where(Annotation.valid_from <= end)
+            .order_by(Annotation.valid_from.desc())
             .limit(limit)
         )
         if isinstance(project, list):
-            stmt = stmt.where(Observation.project.in_(project))
+            stmt = stmt.where(Annotation.project.in_(project))
         elif project:
-            stmt = stmt.where(Observation.project == project)
+            stmt = stmt.where(Annotation.project == project)
         if source:
-            stmt = stmt.where(Observation.source == source)
-        if obs_type:
-            stmt = stmt.where(Observation.obs_type == obs_type)
+            stmt = stmt.where(Annotation.source == source)
+        if kind:
+            stmt = stmt.where(Annotation.kind == kind)
         if session_id:
-            stmt = stmt.where(Observation.session_id == session_id)
+            stmt = stmt.where(Annotation.session_id == session_id)
         if task:
-            stmt = stmt.where(Observation.task == task)
+            stmt = stmt.where(Annotation.task == task)
 
         rows = (await session.execute(stmt)).scalars().all()
 
     entries = [
         JournalEntry(
-            id=str(o.id),
-            content=o.content,
-            obs_type=o.obs_type,
-            source=o.source,
-            project=o.project,
-            tags=o.tags,
-            confidence=o.confidence,
-            valid_from=o.valid_from,
-            valid_until=o.valid_until,
-            session_id=o.session_id,
-            task=o.task,
-            commit_hash=o.commit_hash,
-            metadata=o.metadata_ or {},
+            id=str(a.id),
+            content=a.content,
+            kind=a.kind,
+            source=a.source,
+            project=a.project,
+            tags=a.tags,
+            confidence=a.confidence,
+            valid_from=a.valid_from,
+            valid_until=a.valid_until,
+            session_id=a.session_id,
+            task=a.task,
+            commit_hash=a.commit_hash,
+            metadata=a.metadata_ or {},
         )
-        for o in rows
+        for a in rows
     ]
 
     captures = await fetch_captures(
@@ -172,55 +181,15 @@ async def fetch_captures(
     session_id: str | None = None,
     task: str | None = None,
 ) -> list[JournalCapture]:
-    """Fetch transcripts whose chunks were indexed in ``[start, end]``."""
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        stmt = (
-            select(Chunk)
-            .where(Chunk.chunk_type == "transcript")
-            .where(Chunk.indexed_at >= start)
-            .where(Chunk.indexed_at <= end)
-            .order_by(Chunk.indexed_at.desc())
-        )
-        if isinstance(project, list):
-            stmt = stmt.where(Chunk.project.in_(project))
-        elif project:
-            stmt = stmt.where(Chunk.project == project)
-        if source:
-            stmt = stmt.where(Chunk.metadata_["source"].astext == source)
-        if session_id:
-            stmt = stmt.where(Chunk.session_id == session_id)
-        if task:
-            stmt = stmt.where(Chunk.task == task)
-        rows = (await session.execute(stmt)).scalars().all()
+    """Transcripts in ``[start, end]``.
 
-    groups: dict[str, list] = {}
-    for c in rows:
-        tid = (c.metadata_ or {}).get("transcript_id")
-        if tid:
-            groups.setdefault(tid, []).append(c)
-
-    captures: list[JournalCapture] = []
-    for tid, cs in groups.items():
-        # Representative "turn 0" chunk drives title, source, and preview.
-        first = min(cs, key=lambda c: (c.metadata_ or {}).get("turn_index", 0))
-        meta = first.metadata_ or {}
-        preview = first.content[:140] + ("..." if len(first.content) > 140 else "")
-        captures.append(
-            JournalCapture(
-                transcript_id=tid,
-                title=meta.get("title"),
-                source_file=first.source_file,
-                turn_count=meta.get("total_turns") or len(cs),
-                captured_at=min(c.indexed_at for c in cs),
-                source=meta.get("source"),
-                tags=meta.get("tags"),
-                project=first.project,
-                session_id=first.session_id,
-                task=first.task,
-                preview=preview,
-            )
-        )
-
-    captures.sort(key=lambda c: c.captured_at, reverse=True)
-    return captures
+    Temporarily a no-op: Phase 3b-2 rewires :mod:`hafiz.core.capture` so
+    transcripts live as units (`chat.turn` or similar) tied to
+    annotations. Until that lands the journal is annotation-only —
+    returning an empty list here keeps :func:`build_journal` and
+    :func:`hafiz.core.distill.find_distill_candidates` unchanged.
+    """
+    # Suppress unused-arg warnings — the signature is preserved so Phase
+    # 3b-2 can drop in a real implementation without touching callers.
+    del start, end, project, source, session_id, task
+    return []

@@ -16,7 +16,7 @@ from hafiz.core.journal import JournalBundle, build_journal
 console = Console()
 
 # Visual hierarchy — dim for raw capture, bold for load-bearing decisions.
-OBS_TYPE_STYLE = {
+KIND_STYLE = {
     "note": "dim cyan",
     "fact": "white",
     "decision": "bold green",
@@ -59,7 +59,7 @@ def run_journal(
     project: str | None = None,
     workspace: bool = False,
     source: str | None = None,
-    obs_type: str | None = None,
+    kind: str | None = None,
     session_id: str | None = None,
     task: str | None = None,
     limit: int = 500,
@@ -79,16 +79,21 @@ def run_journal(
         try:
             projects: str | list[str] | None = project
             if workspace:
-                from hafiz.core.context import resolve_workspace_projects
-
-                projects = await resolve_workspace_projects() or None
+                # hafiz.core.context is still on the old schema (Phase 3b-3).
+                # Workspace fan-out is disabled until it's rewired; fall back
+                # to the explicit --project filter.
+                console.print(
+                    "[yellow]--workspace fan-out is disabled until "
+                    "hafiz.core.context is rewired (Phase 3b-3). "
+                    "Falling back to --project filter.[/yellow]"
+                )
 
             return await build_journal(
                 since=since_td,
                 day=day_dt,
                 project=projects,
                 source=source,
-                obs_type=obs_type,
+                kind=kind,
                 session_id=session_id,
                 task=task,
                 limit=limit,
@@ -115,7 +120,7 @@ def _print_json(bundle: JournalBundle) -> None:
             {
                 "id": e.id,
                 "content": e.content,
-                "obs_type": e.obs_type,
+                "kind": e.kind,
                 "source": e.source,
                 "project": e.project,
                 "tags": e.tags,
@@ -191,7 +196,7 @@ def _print_rich(
 
             for e in entries:
                 t = e.valid_from.astimezone(timezone.utc).strftime("%H:%M")
-                type_style = OBS_TYPE_STYLE.get(e.obs_type, "white")
+                kind_style = KIND_STYLE.get(e.kind, "white")
                 content_preview = (
                     e.content if len(e.content) <= 120 else e.content[:117] + "..."
                 )
@@ -204,7 +209,7 @@ def _print_rich(
                     ctx_parts.append("*")
                 table.add_row(
                     t,
-                    f"[{type_style}]{e.obs_type}[/{type_style}]",
+                    f"[{kind_style}]{e.kind}[/{kind_style}]",
                     e.source or "—",
                     content_preview,
                     " ".join(ctx_parts),

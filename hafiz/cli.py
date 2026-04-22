@@ -655,7 +655,7 @@ def journal(
         project=project,
         workspace=workspace,
         source=source,
-        obs_type=type,
+        kind=type,
         session_id=session,
         task=task,
         limit=limit,
