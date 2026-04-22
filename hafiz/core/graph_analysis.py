@@ -394,6 +394,21 @@ def rank_nodes(
         return []
 
     if metric == "pagerank":
+        # networkx.pagerank delegates to scipy internally. If scipy isn't
+        # importable (common after a pipx install that predates scipy being
+        # added to deps), the resulting ModuleNotFoundError bubbles up as a
+        # scary traceback. Surface it cleanly with the fix — the top-level
+        # handler would otherwise log it, which is fine, but a clear
+        # remediation is better than a suggestion-after-the-fact.
+        try:
+            import scipy  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "pagerank needs scipy, which isn't installed in this "
+                "environment. Fix: `pipx inject hafiz scipy` (or "
+                "`pipx reinstall hafiz` if hafiz was installed via pipx "
+                "before scipy was added to dependencies)."
+            ) from exc
         scores = nx.pagerank(G, weight="weight")
     elif metric == "betweenness":
         scores = nx.betweenness_centrality(G)

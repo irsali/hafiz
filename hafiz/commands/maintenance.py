@@ -911,6 +911,67 @@ def run_doctor(
             fix="Re-install hafiz.",
         )
 
+    # 10. Runtime deps importable — catch "pipx install predates a new
+    #     dependency" cases before the user hits them from a real
+    #     command. Only the deps we've actually seen break in the wild
+    #     are checked; keep the list small on purpose.
+    _critical_runtime_modules = [
+        "scipy",
+        "networkx",
+        "fastembed",
+        "sqlalchemy",
+        "pgvector",
+        "pydantic",
+        "pydantic_settings",
+        "tomli_w",
+    ]
+    missing_modules = []
+    for mod in _critical_runtime_modules:
+        try:
+            __import__(mod)
+        except ImportError:
+            missing_modules.append(mod)
+    _check(
+        "Runtime deps importable",
+        not missing_modules,
+        detail=(
+            "all present"
+            if not missing_modules
+            else f"missing: {', '.join(missing_modules)}"
+        ),
+        fix=(
+            f"`pipx inject hafiz {' '.join(missing_modules)}` "
+            f"(or `pipx reinstall hafiz`)"
+            if missing_modules
+            else ""
+        ),
+    )
+
+    # 11. Recent errors — informational, not a fail. Agents can drill
+    #     in with `hafiz errors list --since 1d --json`.
+    try:
+        from hafiz.core import error_log
+
+        recent = error_log.tail(since="1d", limit=1)
+        count_24h = error_log.count_recent(since="1d")
+        if count_24h == 0:
+            detail = "none in last 24h"
+        else:
+            most_recent = recent[0]
+            detail = (
+                f"{count_24h} in last 24h; most recent: "
+                f"{most_recent.exception_type} in `{most_recent.command}` "
+                f"({most_recent.id[:8]})"
+            )
+        _check("Recent errors", True, detail=detail)
+    except Exception as e:
+        _check(
+            "Recent errors",
+            False,
+            detail=str(e)[:120],
+            fix="Error log unreadable — run `hafiz errors clear` to reset.",
+        )
+
     # Host probe + tuning (phase 2 of the tunable-registry work item).
     # Host probe is cheap (/proc/meminfo + nvidia-smi); tuning
     # recommendations only populate when probe=True, so the default

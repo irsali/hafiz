@@ -26,7 +26,7 @@ def version_callback(value: bool) -> None:
 
 
 @app.callback()
-def main(
+def _top_level_callback(
     version: Optional[bool] = typer.Option(
         None,
         "--version",
@@ -37,6 +37,10 @@ def main(
     ),
 ) -> None:
     """Hafiz — sovereign intelligence layer for your workspace."""
+    # Empty body by design — Typer invokes this for global flags
+    # (currently just --version) before dispatching to subcommands.
+    # The real entry point lives in `main()` at the bottom of this
+    # file (see pyproject `[project.scripts] hafiz = "hafiz.cli:main"`).
 
 
 # ─── INIT ───────────────────────────────────────────────────────────────
@@ -1054,3 +1058,99 @@ def parsers_list_cmd(
     from hafiz.commands.parsers import run_parsers_list
 
     run_parsers_list(output_json=json_output)
+
+
+
+# ─── ERRORS ───────────────────────────────────────────────────────────
+
+errors_app = typer.Typer(
+    name="errors",
+    help="Inspect the hafiz error log (~/.cache/hafiz/errors.log).",
+)
+app.add_typer(errors_app)
+
+
+@errors_app.command("list")
+def errors_list(
+    since: Optional[str] = typer.Option(
+        None, "--since", help="Relative duration: 1h, 30m, 2d, 1w. Default: all."
+    ),
+    limit: int = typer.Option(
+        20, "--limit", "-n", min=1, help="Max records to return."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (agent-consumable)."
+    ),
+) -> None:
+    """Show recent errors, newest first.
+
+    Use `--since 1d` to limit scope, and `hafiz errors show <id>` for
+    the full traceback of one entry.
+    """
+    from hafiz.commands.errors import run_errors_list
+
+    run_errors_list(since=since, limit=limit, output_json=json_output)
+
+
+@errors_app.command("show")
+def errors_show(
+    record_id: str = typer.Argument(..., help="Full or unique-prefix error id."),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Show the full structured record (including traceback) for one error."""
+    from hafiz.commands.errors import run_errors_show
+
+    run_errors_show(record_id, output_json=json_output)
+
+
+@errors_app.command("clear")
+def errors_clear(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Delete the error log. Returns the count of records discarded."""
+    from hafiz.commands.errors import run_errors_clear
+
+    run_errors_clear(output_json=json_output)
+
+
+# ─── Top-level entry point ────────────────────────────────────────────
+#
+# `pyproject.toml` points `hafiz` at this `main()` so every unhandled
+# exception lands in the error log. SystemExit (including Typer's
+# controlled-exit path via `typer.Exit`) passes through unaltered —
+# we only want to capture bugs, not propagate tracebacks from
+# legitimate non-zero exits.
+
+
+def main() -> None:
+    import sys as _sys
+
+    try:
+        app()
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        # User-initiated — don't log, don't decorate; just exit quietly.
+        _sys.exit(130)
+    except Exception as exc:  # noqa: BLE001 — this is the backstop
+        from rich.console import Console as _Console
+
+        from hafiz.core.error_log import log_exception
+
+        record = log_exception(exc, argv=_sys.argv[1:])
+        err = _Console(stderr=True)
+        err.print(
+            f"[red]hafiz hit an unexpected error:[/red] "
+            f"[bold]{record.exception_type}[/bold]: {record.message}"
+        )
+        if record.suggested_action:
+            err.print(f"[yellow]Suggested fix:[/yellow] {record.suggested_action}")
+        err.print(
+            f"[dim]Saved. Run [bold]hafiz errors show {record.id[:8]}[/bold] "
+            f"for the traceback.[/dim]"
+        )
+        _sys.exit(1)

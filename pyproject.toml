@@ -39,7 +39,7 @@ Repository = "https://github.com/irsali/hafiz"
 Issues = "https://github.com/irsali/hafiz/issues"
 
 [project.scripts]
-hafiz = "hafiz.cli:app"
+hafiz = "hafiz.cli:main"
 
 [project.optional-dependencies]
 gpu = [

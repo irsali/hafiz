@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 3 -->
-# Hafiz — Workspace Intelligence (v3)
+<!-- SKILLS_VERSION: 4 -->
+# Hafiz — Workspace Intelligence (v4)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -169,6 +169,32 @@ repo, re-ingests are diff-driven: only files changed since the last
 indexed commit are re-parsed. Rebases and amends fire the
 `post-rewrite` hook automatically if installed via `hafiz hooks install`.
 
+## Error reporting
+
+Hafiz captures every unhandled exception into a sovereign,
+user-scope error log at `~/.cache/hafiz/errors.log` (NDJSON, capped
+at 1000 entries). Use it when the user says "hafiz feels broken"
+or you want to understand why a recent command misbehaved.
+
+```bash
+hafiz errors list --since 1d --json       # newest-first, agent-consumable
+hafiz errors show <id> --json             # full traceback + suggested fix
+hafiz errors clear                        # reset the log
+```
+
+Each record carries: `timestamp`, `command`, `argv`, `exception_type`,
+`message`, `traceback`, `cwd`, `hafiz_version`, `git_branch`,
+`host_fingerprint`, plus — for recognized error classes — a
+`suggested_action` string and structured `context` (e.g.,
+`{"missing_module": "scipy", "is_declared_dep": true}`).
+
+The suggestion is informational. Offer it to the user; don't
+auto-run remedial commands without explicit opt-in — even safe
+ones like `pipx inject` mutate the user's environment.
+
+`hafiz doctor` surfaces the last-24h error count inline so you can
+see at a glance whether something's been failing.
+
 ## Self-tuning the install
 
 Hafiz has a tunable registry (RAM-sensitive knobs like embedding
@@ -278,6 +304,14 @@ workstation is a no-op, not a hazard.
 | `hafiz init` | Create schema + pgvector extension | — |
 | `hafiz hooks install <repo>` | Write post-commit / post-merge / post-rewrite hooks | `--project` |
 | `hafiz agent install` | Splice this skills.md into an agent config | — |
+
+### Error reporting
+
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `hafiz errors list` | Recent errors, newest first. Each record includes `suggested_action` + `context` for recognized classes. | `--since`, `--limit`, `--json` |
+| `hafiz errors show <id>` | Full structured record: traceback, cwd, git branch, host fingerprint. Accepts a unique-prefix id. | `--json` |
+| `hafiz errors clear` | Wipe the log. Returns the count discarded. | `--json` |
 
 ### Self-tuning
 

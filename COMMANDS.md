@@ -1,7 +1,7 @@
 # Hafiz Command Map
 
 > Source of truth for all hafiz commands. Update this file when commands change.
-> Post-structural-grounding: parsers own structure, agents own meaning — see skills.md v3 (adds the self-tuning surface to the agent contract).
+> Post-structural-grounding: parsers own structure, agents own meaning — see skills.md v4 (adds self-tuning and error reporting to the agent contract).
 
 ## Brain Types
 
@@ -30,6 +30,9 @@
 | `config unset <key> [--local]` | Remove a tunable from hafiz.toml so it falls through to sticky / default. Prunes emptied tables. | — | `--json` | rich output |
 | `config apply` | Runs every prober and persists recommendations to sticky state. Equivalent to `hafiz doctor --apply` with a narrower JSON summary. | Embed | `--json` | rich output |
 | `config clear-sticky` | Delete the sticky tuning cache. Re-probe is required to repopulate. | — | `--json` | rich output |
+| `errors list [--since] [--limit]` | Recent errors newest-first from `~/.cache/hafiz/errors.log` (NDJSON, 1000-entry cap, FIFO rotation). Each record includes `suggested_action` + `context` for recognized classes. | — | `--json` | rich table |
+| `errors show <id>` | Full structured record: traceback, cwd, git branch, host fingerprint. Accepts unique-prefix ids. | — | `--json` | rich panel |
+| `errors clear` | Wipe the log; returns count discarded. | — | `--json` | rich output |
 | `hooks install` | Write post-commit + post-merge + post-rewrite git hooks into a repo | — | same | same |
 | `agent install` | Splice `skills.md` into an agent's config file; warns on version drift | — | same | same |
 | `agent uninstall` | Remove the spliced `skills.md` block | — | same | same |
