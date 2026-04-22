@@ -24,7 +24,7 @@ def _run_query(
     limit: int,
     project: str | None,
     workspace: bool = False,
-    chunk_type: str | None,
+    kind: str | None,
     output_json: bool,
 ) -> None:
     """Run the async search and display results."""
@@ -33,14 +33,18 @@ def _run_query(
         try:
             search_project: str | list[str] | None = project
             if workspace:
-                from hafiz.core.context import resolve_workspace_projects
-
-                search_project = await resolve_workspace_projects() or None
+                # hafiz.core.context still depends on the old schema;
+                # workspace fan-out is disabled until Phase 3b rewires it.
+                console.print(
+                    "[yellow]--workspace fan-out is disabled until "
+                    "hafiz.core.context is rewired (Phase 3b). "
+                    "Falling back to --project filter.[/yellow]"
+                )
             results = await vector_search(
                 text,
                 limit=limit,
                 project=search_project,
-                chunk_type=chunk_type,
+                kind=kind,
             )
             return results
         finally:
@@ -54,13 +58,16 @@ def _run_query(
             "results": [
                 {
                     "id": r.id,
+                    "unit_id": r.unit_id,
+                    "unit_name": r.unit_name,
+                    "kind": r.kind,
                     "content": r.content,
                     "source_file": r.source_file,
                     "line_start": r.line_start,
                     "line_end": r.line_end,
-                    "chunk_type": r.chunk_type,
                     "language": r.language,
                     "project": r.project,
+                    "part_index": r.part_index,
                     "score": r.score,
                 }
                 for r in results
@@ -76,18 +83,20 @@ def _run_query(
 
     console.print()
     panel_content = []
-    for i, r in enumerate(results, 1):
-        location = r.source_file
+    for r in results:
+        location = f"{r.source_file}::{r.unit_name}"
         if r.line_start and r.line_end:
-            location += f" (lines {r.line_start}-{r.line_end})"
+            location += f" (L{r.line_start}-{r.line_end})"
 
-        lang = f"[dim]{r.language}[/dim] " if r.language else ""
-        score_color = "green" if r.score > 0.7 else "yellow" if r.score > 0.5 else "red"
+        kind_tag = f"[dim]{r.kind}[/dim] "
+        score_color = (
+            "green" if r.score > 0.7 else "yellow" if r.score > 0.5 else "red"
+        )
 
         panel_content.append(
-            f"  {lang}[bold]{location}[/bold]  [{score_color}]{r.score:.2%}[/{score_color}]"
+            f"  {kind_tag}[bold]{location}[/bold]  "
+            f"[{score_color}]{r.score:.2%}[/{score_color}]"
         )
-        # Show a preview (first 200 chars)
         preview = r.content[:200].replace("\n", " ").strip()
         if len(r.content) > 200:
             preview += "..."
@@ -98,7 +107,7 @@ def _run_query(
     console.print(
         Panel(
             panel_text,
-            title=f"Results ({len(results)} chunks)",
+            title=f"Results ({len(results)} matches)",
             border_style="cyan",
         )
     )

@@ -1,4 +1,9 @@
-"""hafiz observe / note / recall — store and search observations."""
+"""hafiz observe / note / recall — store and search annotations.
+
+The CLI verb stays ``observe`` (and ``note`` / ``recall``); internally these
+write/read the `annotations` table via :mod:`hafiz.core.annotations`. See
+workitems/active/structural-grounding.md for the rename rationale.
+"""
 
 from __future__ import annotations
 
@@ -72,7 +77,7 @@ def _parse_uuid_list(raw: str | None) -> list[str] | None:
 def run_observe(
     text: str,
     *,
-    obs_type: str = "fact",
+    kind: str = "fact",
     source: str | None = None,
     project: str | None = None,
     tags: list[str] | None = None,
@@ -85,30 +90,31 @@ def run_observe(
     derived_from: str | None = None,
     output_json: bool = False,
 ) -> None:
-    """Store an observation and print confirmation."""
+    """Store an annotation and print confirmation."""
     valid_until = _compute_valid_until(expires_in, expires)
     resolved_session_id, resolved_task = resolve_session_tag(
         session_override=session, task_override=task
     )
     derived_ids = _parse_uuid_list(derived_from)
 
-    # Validate supersedes as a UUID up-front so we fail before embedding.
     if supersedes:
         import uuid as _uuid
 
         try:
             _uuid.UUID(supersedes)
         except ValueError:
-            console.print(f"[red]Error:[/red] --supersedes not a valid UUID: {supersedes!r}")
+            console.print(
+                f"[red]Error:[/red] --supersedes not a valid UUID: {supersedes!r}"
+            )
             raise SystemExit(1)
 
     async def _store():
         try:
-            from hafiz.core.observations import store_observation
+            from hafiz.core.annotations import store_annotation
 
-            obs = await store_observation(
+            ann = await store_annotation(
                 text,
-                obs_type=obs_type,
+                kind=kind,
                 source=source,
                 project=project,
                 tags=tags,
@@ -119,12 +125,12 @@ def run_observe(
                 supersedes_id=supersedes,
                 derived_from=derived_ids,
             )
-            return obs
+            return ann
         finally:
             await close_engine()
 
     try:
-        obs = asyncio.run(_store())
+        ann = asyncio.run(_store())
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
@@ -132,43 +138,44 @@ def run_observe(
     if output_json:
         data = {
             "action": "observe",
-            "observation": {
-                "id": str(obs.id),
-                "content": obs.content,
-                "obs_type": obs.obs_type,
-                "source": obs.source,
-                "project": obs.project,
-                "tags": obs.tags,
-                "confidence": obs.confidence,
-                "valid_from": obs.valid_from.isoformat(),
-                "valid_until": obs.valid_until.isoformat() if obs.valid_until else None,
-                "session_id": obs.session_id,
-                "task": obs.task,
-                "commit_hash": obs.commit_hash,
-                "supersedes_id": str(obs.supersedes_id) if obs.supersedes_id else None,
-                "derived_from": (obs.metadata_ or {}).get("derived_from"),
+            "annotation": {
+                "id": str(ann.id),
+                "content": ann.content,
+                "kind": ann.kind,
+                "source": ann.source,
+                "project": ann.project,
+                "tags": ann.tags,
+                "confidence": ann.confidence,
+                "valid_from": ann.valid_from.isoformat(),
+                "valid_until": ann.valid_until.isoformat() if ann.valid_until else None,
+                "unit_id": str(ann.unit_id) if ann.unit_id else None,
+                "session_id": ann.session_id,
+                "task": ann.task,
+                "commit_hash": ann.commit_hash,
+                "supersedes_id": str(ann.supersedes_id) if ann.supersedes_id else None,
+                "derived_from": (ann.metadata_ or {}).get("derived_from"),
             },
         }
         console.print_json(json.dumps(data))
         return
 
-    tags_str = ", ".join(obs.tags) if obs.tags else "none"
+    tags_str = ", ".join(ann.tags) if ann.tags else "none"
     session_line = ""
-    if obs.session_id or obs.task:
+    if ann.session_id or ann.task:
         session_line = (
-            f"  [bold]Session:[/bold]    {obs.session_id or '—'}\n"
-            f"  [bold]Task:[/bold]       {obs.task or '—'}\n"
+            f"  [bold]Session:[/bold]    {ann.session_id or '—'}\n"
+            f"  [bold]Task:[/bold]       {ann.task or '—'}\n"
         )
     info = (
-        f"[bold green]Observation stored[/bold green]\n\n"
-        f"  [bold]ID:[/bold]         {obs.id}\n"
-        f"  [bold]Type:[/bold]       {obs.obs_type}\n"
-        f"  [bold]Source:[/bold]     {obs.source or '—'}\n"
-        f"  [bold]Project:[/bold]    {obs.project or '—'}\n"
+        f"[bold green]Annotation stored[/bold green]\n\n"
+        f"  [bold]ID:[/bold]         {ann.id}\n"
+        f"  [bold]Kind:[/bold]       {ann.kind}\n"
+        f"  [bold]Source:[/bold]     {ann.source or '—'}\n"
+        f"  [bold]Project:[/bold]    {ann.project or '—'}\n"
         f"  [bold]Tags:[/bold]       {tags_str}\n"
-        f"  [bold]Confidence:[/bold] {obs.confidence:.0%}\n"
+        f"  [bold]Confidence:[/bold] {ann.confidence:.0%}\n"
         f"{session_line}"
-        f"  [bold]Content:[/bold]    {obs.content[:200]}"
+        f"  [bold]Content:[/bold]    {ann.content[:200]}"
     )
     console.print(Panel(info, border_style="cyan"))
 
@@ -188,14 +195,10 @@ def run_note(
     derived_from: str | None = None,
     output_json: bool = False,
 ) -> None:
-    """Store a raw thought as ``obs_type="note"`` — low-bar capture.
-
-    Thin wrapper over :func:`run_observe`; keeps the CLI surface light
-    so ``hafiz note "..."`` does not require choosing a type.
-    """
+    """Low-bar capture — stores as ``kind="note"``."""
     run_observe(
         text,
-        obs_type="note",
+        kind="note",
         source=source,
         project=project,
         tags=tags,
@@ -214,11 +217,7 @@ STALE_DAYS = 90
 
 
 def _age(valid_from: datetime) -> tuple[str, int, bool]:
-    """Return (human label, age in days, stale flag) for a ``valid_from``.
-
-    Stale threshold is :data:`STALE_DAYS` — age beyond that dims the row
-    in recall output so old knowledge doesn't look as authoritative.
-    """
+    """(human label, age in days, stale flag) for a ``valid_from``."""
     now = datetime.now(timezone.utc)
     days = (now - valid_from.astimezone(timezone.utc)).days
     if days < 0:
@@ -240,26 +239,31 @@ def run_recall(
     limit: int = 10,
     project: str | None = None,
     workspace: bool = False,
-    obs_type: str | None = None,
+    kind: str | None = None,
     include_superseded: bool = False,
     output_json: bool = False,
 ) -> None:
-    """Search observations by semantic similarity and display results."""
+    """Search annotations by semantic similarity and display results."""
 
     async def _search():
         try:
-            from hafiz.core.observations import search_observations
+            from hafiz.core.annotations import search_annotations
 
             search_project: str | list[str] | None = project
             if workspace:
-                from hafiz.core.context import resolve_workspace_projects
-
-                search_project = await resolve_workspace_projects() or None
-            results = await search_observations(
+                # resolve_workspace_projects lives in context.py which still
+                # depends on the old schema; keep workspace-fanout stubbed
+                # until Phase 3b rewires context.
+                console.print(
+                    "[yellow]--workspace fanout is disabled until "
+                    "hafiz.core.context is rewired (Phase 3b). "
+                    "Falling back to --project filter.[/yellow]"
+                )
+            results = await search_annotations(
                 query,
                 limit=limit,
                 project=search_project,
-                obs_type=obs_type,
+                kind=kind,
                 active_only=not include_superseded,
             )
             return results
@@ -280,13 +284,14 @@ def run_recall(
                 {
                     "id": r.id,
                     "content": r.content,
-                    "obs_type": r.obs_type,
+                    "kind": r.kind,
                     "source": r.source,
                     "project": r.project,
                     "tags": r.tags,
                     "confidence": r.confidence,
                     "valid_from": r.valid_from.isoformat(),
                     "valid_until": r.valid_until.isoformat() if r.valid_until else None,
+                    "unit_id": r.unit_id,
                     "age_days": _age(r.valid_from)[1],
                     "stale": _age(r.valid_from)[2],
                     "inactive": _is_inactive(r),
@@ -300,15 +305,15 @@ def run_recall(
         return
 
     if not results:
-        console.print("[yellow]No observations found.[/yellow]")
+        console.print("[yellow]No annotations found.[/yellow]")
         return
 
     console.print()
     table = Table(
-        title=f"Recall: \"{query}\" ({len(results)} results)",
+        title=f'Recall: "{query}" ({len(results)} results)',
         border_style="cyan",
     )
-    table.add_column("Type", style="yellow", width=10)
+    table.add_column("Kind", style="yellow", width=10)
     table.add_column("Content", ratio=3)
     table.add_column("Source", style="dim", width=16)
     table.add_column("Age", style="dim", width=8)
@@ -323,11 +328,9 @@ def run_recall(
         age_label, _, stale = _age(r.valid_from)
         inactive = _is_inactive(r)
         row_style = "dim" if stale or inactive else None
-        obs_type_label = (
-            f"{r.obs_type} (superseded)" if inactive else r.obs_type
-        )
+        kind_label = f"{r.kind} (superseded)" if inactive else r.kind
         table.add_row(
-            obs_type_label,
+            kind_label,
             content_preview,
             r.source or "—",
             age_label,

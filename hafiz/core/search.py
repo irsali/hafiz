@@ -1,32 +1,44 @@
-"""Vector similarity search using pgvector cosine distance.
+"""Vector similarity search over the structural-grounding schema.
 
-Direct SQL queries against the chunks table — no LlamaIndex vector store abstraction.
+Queries hit the ``embeddings`` table and join back to
+``unit_revisions → units → files`` for context. Only current revisions
+(``superseded_at IS NULL``) are searched — old bodies stay in the DB for
+history but don't pollute retrieval.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 
-from hafiz.core.database import Chunk, get_session_factory
+from hafiz.core.database import (
+    Embedding,
+    File,
+    Unit,
+    UnitRevision,
+    get_session_factory,
+)
 from hafiz.core.embeddings import embed_query
 
 
 @dataclass
 class SearchResult:
-    """A single search result with similarity score."""
+    """A single search result. Fields are populated from the joined
+    ``embeddings`` → ``unit_revisions`` → ``units`` → ``files`` row."""
 
-    id: str
-    content: str
+    id: str                       # embedding row id
+    unit_id: str
+    unit_name: str
+    kind: str                     # namespaced: code.function, doc.heading, file.raw, …
+    content: str                  # the embedded part (may be a slice of the unit body)
     source_file: str
     line_start: int | None
     line_end: int | None
-    chunk_type: str
     language: str | None
     project: str | None
+    part_index: int
     score: float
-    metadata: dict
     is_neighbor: bool = False
 
 
@@ -35,78 +47,91 @@ async def vector_search(
     *,
     limit: int = 10,
     project: str | list[str] | None = None,
-    chunk_type: str | None = None,
+    kind: str | None = None,
     similarity_threshold: float = 0.0,
 ) -> list[SearchResult]:
-    """Search chunks by vector similarity using cosine distance.
+    """Search embeddings by cosine similarity and return enriched results.
 
     Args:
-        query: The search query text.
-        limit: Maximum number of results.
-        project: Filter by project name (str), multiple projects (list), or None for all.
-        chunk_type: Filter by chunk type (code, doc, note, decision).
-        similarity_threshold: Minimum similarity score (0-1).
+        query: Search query text (will be embedded).
+        limit: Maximum results.
+        project: Filter by project name (str), multiple projects (list),
+            or None for no project filter.
+        kind: Filter by unit kind (e.g. ``"code.function"``,
+            ``"doc.heading"``). Matches on ``units.kind``.
+        similarity_threshold: Drop results below this cosine similarity.
 
     Returns:
-        List of SearchResult sorted by similarity (highest first).
+        List of SearchResult ordered by similarity (best first).
     """
     query_embedding = await embed_query(query)
 
+    similarity = (
+        1 - Embedding.embedding.cosine_distance(query_embedding)
+    ).label("similarity")
+
+    stmt = (
+        select(Embedding, UnitRevision, Unit, File, similarity)
+        .join(UnitRevision, UnitRevision.id == Embedding.unit_revision_id)
+        .join(Unit, Unit.id == UnitRevision.unit_id)
+        .join(File, File.id == Unit.file_id)
+        .where(Embedding.embedding.isnot(None))
+        .where(UnitRevision.superseded_at.is_(None))
+        .where(Unit.valid_until.is_(None))
+        .where(File.valid_until.is_(None))
+        .order_by(Embedding.embedding.cosine_distance(query_embedding))
+        .limit(limit)
+    )
+
+    if isinstance(project, list):
+        stmt = stmt.where(File.project.in_(project))
+    elif project:
+        stmt = stmt.where(File.project == project)
+    if kind:
+        stmt = stmt.where(Unit.kind == kind)
+
     session_factory = get_session_factory()
     async with session_factory() as session:
-        # Build the query with cosine distance
-        # pgvector: 1 - (embedding <=> query_embedding) gives cosine similarity
-        stmt = (
-            select(
-                Chunk,
-                (1 - Chunk.embedding.cosine_distance(query_embedding)).label("similarity"),
+        rows = (await session.execute(stmt)).all()
+
+    results: list[SearchResult] = []
+    for emb, rev, unit, file, sim in rows:
+        sim_f = float(sim)
+        if sim_f < similarity_threshold:
+            continue
+        results.append(
+            SearchResult(
+                id=str(emb.id),
+                unit_id=str(unit.id),
+                unit_name=unit.name,
+                kind=unit.kind,
+                content=emb.content,
+                source_file=file.path,
+                line_start=rev.line_start,
+                line_end=rev.line_end,
+                language=file.language,
+                project=file.project,
+                part_index=emb.part_index,
+                score=round(sim_f, 4),
             )
-            .where(Chunk.embedding.isnot(None))
-            .order_by(Chunk.embedding.cosine_distance(query_embedding))
-            .limit(limit)
         )
-
-        # Apply filters
-        if isinstance(project, list):
-            stmt = stmt.where(Chunk.project.in_(project))
-        elif project:
-            stmt = stmt.where(Chunk.project == project)
-        if chunk_type:
-            stmt = stmt.where(Chunk.chunk_type == chunk_type)
-
-        result = await session.execute(stmt)
-        rows = result.all()
-
-        results = []
-        for chunk, similarity in rows:
-            if similarity < similarity_threshold:
-                continue
-            results.append(
-                SearchResult(
-                    id=str(chunk.id),
-                    content=chunk.content,
-                    source_file=chunk.source_file,
-                    line_start=chunk.line_start,
-                    line_end=chunk.line_end,
-                    chunk_type=chunk.chunk_type,
-                    language=chunk.language,
-                    project=chunk.project,
-                    score=round(float(similarity), 4),
-                    metadata=chunk.metadata_ or {},
-                )
-            )
-
-        return results
+    return results
 
 
-async def count_chunks(project: str | None = None) -> int:
-    """Count total chunks, optionally filtered by project."""
+async def count_embeddings(project: str | None = None) -> int:
+    """Count current embedding rows, optionally filtered by project."""
     session_factory = get_session_factory()
     async with session_factory() as session:
-        from sqlalchemy import func
-
-        stmt = select(func.count()).select_from(Chunk)
+        stmt = (
+            select(func.count())
+            .select_from(Embedding)
+            .join(UnitRevision, UnitRevision.id == Embedding.unit_revision_id)
+            .join(Unit, Unit.id == UnitRevision.unit_id)
+            .join(File, File.id == Unit.file_id)
+            .where(UnitRevision.superseded_at.is_(None))
+            .where(Unit.valid_until.is_(None))
+            .where(File.valid_until.is_(None))
+        )
         if project:
-            stmt = stmt.where(Chunk.project == project)
-        result = await session.execute(stmt)
-        return result.scalar() or 0
+            stmt = stmt.where(File.project == project)
+        return (await session.execute(stmt)).scalar() or 0

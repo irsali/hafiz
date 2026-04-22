@@ -165,14 +165,14 @@ def query(
             limit=limit,
             project=project,
             workspace=workspace,
-            obs_type=type,
+            kind=type,
             include_superseded=include_superseded,
             output_json=json_output,
         )
     else:
         from hafiz.commands.query import _run_query
 
-        _run_query(text, limit=limit, project=project, workspace=workspace, chunk_type=type, output_json=json_output)
+        _run_query(text, limit=limit, project=project, workspace=workspace, kind=type, output_json=json_output)
 
 
 # ─── STATUS ─────────────────────────────────────────────────────────────
@@ -399,12 +399,12 @@ def session_show(
 
 @app.command()
 def observe(
-    text: str = typer.Argument(..., help="The observation text to store."),
-    obs_type: str = typer.Option(
+    text: str = typer.Argument(..., help="The annotation text to store."),
+    kind: str = typer.Option(
         "fact",
         "--type",
         "-t",
-        help="Type: fact, decision, learning, pattern, warning, note.",
+        help="Kind: fact, decision, learning, pattern, warning, note.",
     ),
     source: Optional[str] = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:bilal, user:manual)."
@@ -458,7 +458,7 @@ def observe(
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     run_observe(
         text,
-        obs_type=obs_type,
+        kind=kind,
         source=source,
         project=project,
         tags=tag_list,

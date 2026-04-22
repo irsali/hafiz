@@ -1,27 +1,36 @@
-"""hafiz ingest — index files into the chunks table (chunk + embed + store)."""
+"""hafiz ingest — walk a path, parse each file via the Parser Registry,
+and write units / revisions / embeddings to the DB.
+
+Hash-aware and idempotent: unchanged files produce zero new revisions
+and zero new embeddings; changed files re-embed only the units whose
+bodies actually changed. Vanished files and vanished units get
+tombstoned (``valid_until`` set) so search skips them while history
+remains intact.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import uuid
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 
-from hafiz.core.chunker import chunk_file, walk_and_chunk
+from hafiz.core.chunker import walk_files
 from hafiz.core.config import get_settings
-from hafiz.core.database import close_engine
-from hafiz.core.embeddings import embed_texts
-from hafiz.core.store import delete_chunks_for_file, store_chunks
+from hafiz.core.database import close_engine, get_session_factory
+from hafiz.core.store import index_file, tombstone_vanished_files
 
 logger = logging.getLogger(__name__)
 console = Console()
-
-# Max batch size for embedding calls
-EMBED_BATCH_SIZE = 64
 
 
 def _emit(event: dict) -> None:
@@ -29,42 +38,19 @@ def _emit(event: dict) -> None:
     print(json.dumps(event), flush=True)
 
 
-async def _do_prune(*, project: str | None = None, output_json: bool = False) -> None:
-    """Run prune before ingest — remove chunks for deleted files."""
-    from hafiz.commands.prune import _do_prune as prune_impl
-
-    result = await prune_impl(project=project, dry_run=False)
-    stale_count = len(result["stale_files"])
-    chunks_deleted = result["chunks_deleted"]
-
-    if output_json:
-        _emit({
-            "event": "prune",
-            "status": "done",
-            "stale_files": stale_count,
-            "chunks_deleted": chunks_deleted,
-        })
-    elif stale_count:
-        console.print(
-            f"[yellow]Pruned {chunks_deleted} chunks from {stale_count} stale files.[/yellow]"
-        )
-    else:
-        console.print("[dim]Prune: no stale files found.[/dim]")
-
-
 def run_ingest(
     path: str,
     *,
     project: str | None = None,
-    prune: bool = False,
+    prune: bool = False,  # retained for CLI compat; the new pipeline
+                          # tombstones on-the-fly, so explicit prune is a
+                          # no-op here. Kept so `--prune` still parses.
     output_json: bool = False,
 ) -> None:
     """Run the ingestion pipeline for a path."""
 
     async def _ingest():
         try:
-            if prune:
-                await _do_prune(project=project, output_json=output_json)
             return await _do_ingest(
                 path, project=project, output_json=output_json
             )
@@ -80,7 +66,6 @@ async def _do_ingest(
     project: str | None = None,
     output_json: bool = False,
 ) -> None:
-    """Async ingestion pipeline: chunk -> embed -> store."""
     target = Path(path).resolve()
     settings = get_settings()
     ignore_patterns = settings.workspace.ignore
@@ -92,120 +77,165 @@ async def _do_ingest(
             console.print(f"[red]Path not found:[/red] {target}")
         raise SystemExit(1)
 
-    # ── Step 1: Chunk files ───────────────────────────────────────────────
+    # ── Step 1: enumerate files ───────────────────────────────────────────
     if output_json:
-        _emit({"event": "chunking", "status": "start", "path": str(target)})
+        _emit({"event": "walk", "status": "start", "path": str(target)})
     else:
-        progress_ctx = Progress(
+        walk_ctx = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             transient=True,
             console=console,
         )
-        progress_ctx.__enter__()
-        progress_ctx.add_task("Chunking files...", total=None)
+        walk_ctx.__enter__()
+        walk_ctx.add_task("Walking files...", total=None)
 
-    chunks = walk_and_chunk(target, ignore_patterns=ignore_patterns)
+    files = list(walk_files(target, ignore_patterns=ignore_patterns))
 
     if not output_json:
-        progress_ctx.__exit__(None, None, None)
+        walk_ctx.__exit__(None, None, None)
 
-    if not chunks:
+    if not files:
         if output_json:
-            _emit({"event": "complete", "chunks": 0, "files": 0})
+            _emit({"event": "complete", "files": 0, "revisions": 0})
         else:
-            console.print("[yellow]No content found to index.[/yellow]")
+            console.print("[yellow]No files found to index.[/yellow]")
         return
-
-    files_to_reindex = {c.source_file for c in chunks}
 
     if output_json:
         _emit({
-            "event": "chunking",
+            "event": "walk",
             "status": "done",
-            "chunks": len(chunks),
-            "files": len(files_to_reindex),
+            "files": len(files),
         })
     else:
-        console.print(f"Found [bold]{len(chunks)}[/bold] chunks from [bold]{target}[/bold]")
+        console.print(
+            f"Found [bold]{len(files)}[/bold] files under [bold]{target}[/bold]"
+        )
 
-    # ── Step 2: Delete existing chunks for re-indexed files ───────────────
-    for source_file in files_to_reindex:
-        await delete_chunks_for_file(source_file)
-
-    # ── Step 3: Embed chunks in batches ───────────────────────────────────
-    all_embeddings: list[list[float]] = []
+    # ── Step 2: parse + embed + store, one file per transaction ──────────
+    session_factory = get_session_factory()
+    totals = {
+        "files_processed": 0,
+        "units_seen": 0,
+        "revisions_created": 0,
+        "embeddings_written": 0,
+        "units_tombstoned": 0,
+    }
+    seen_paths: set[str] = set()
+    failures: list[tuple[str, str]] = []
 
     if output_json:
-        _emit({"event": "embedding", "status": "start", "total": len(chunks)})
+        _emit({"event": "index", "status": "start", "total": len(files)})
     else:
-        progress_ctx = Progress(
+        prog = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
             console=console,
         )
-        progress_ctx.__enter__()
-        rich_task = progress_ctx.add_task("Embedding chunks...", total=len(chunks))
+        prog.__enter__()
+        task = prog.add_task("Indexing files...", total=len(files))
 
-    for i in range(0, len(chunks), EMBED_BATCH_SIZE):
-        batch = chunks[i : i + EMBED_BATCH_SIZE]
-        texts = [c.content for c in batch]
-        embeddings = await embed_texts(texts)
-        all_embeddings.extend(embeddings)
+    for file_path in files:
+        seen_paths.add(str(file_path))
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, UnicodeDecodeError) as e:
+            failures.append((str(file_path), f"read error: {e}"))
+            if not output_json:
+                prog.update(task, advance=1)
+            continue
 
-        done = min(i + len(batch), len(chunks))
+        try:
+            async with session_factory() as session:
+                async with session.begin():
+                    result = await index_file(
+                        file_path,
+                        content,
+                        project=project,
+                        session=session,
+                    )
+        except Exception as e:
+            logger.exception("Failed to index %s", file_path)
+            failures.append((str(file_path), f"{type(e).__name__}: {e}"))
+            if not output_json:
+                prog.update(task, advance=1)
+            continue
+
+        totals["files_processed"] += 1
+        totals["units_seen"] += result.units_seen
+        totals["revisions_created"] += result.revisions_created
+        totals["embeddings_written"] += result.embeddings_written
+        totals["units_tombstoned"] += result.units_tombstoned
+
         if output_json:
-            _emit({"event": "embedding", "status": "progress", "done": done, "total": len(chunks)})
+            _emit({
+                "event": "index",
+                "status": "progress",
+                "path": str(file_path),
+                "parser": result.parser_name,
+                "units_seen": result.units_seen,
+                "revisions_created": result.revisions_created,
+                "embeddings_written": result.embeddings_written,
+            })
         else:
-            progress_ctx.update(rich_task, advance=len(batch))
+            prog.update(task, advance=1)
 
     if not output_json:
-        progress_ctx.__exit__(None, None, None)
+        prog.__exit__(None, None, None)
 
-    # ── Step 4: Store in database ─────────────────────────────────────────
-    if output_json:
-        _emit({"event": "storing", "status": "start"})
+    # ── Step 3: tombstone vanished files (project-scoped) ────────────────
+    if project is not None:
+        files_tombstoned = await tombstone_vanished_files(project, seen_paths)
     else:
-        progress_ctx = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=True,
-            console=console,
-        )
-        progress_ctx.__enter__()
-        progress_ctx.add_task("Storing in database...", total=None)
+        files_tombstoned = 0  # cross-project tombstoning is unsafe
 
-    stored = await store_chunks(chunks, all_embeddings, project=project)
-
+    # ── Step 4: summary ──────────────────────────────────────────────────
     if output_json:
         _emit({
             "event": "complete",
-            "chunks": stored,
-            "files": len(files_to_reindex),
+            **totals,
+            "files_tombstoned": files_tombstoned,
+            "failures": [
+                {"path": p, "error": e} for p, e in failures
+            ],
         })
     else:
-        progress_ctx.__exit__(None, None, None)
         console.print(
-            f"[green]Indexed {stored} chunks[/green] from "
-            f"[bold]{len(files_to_reindex)}[/bold] files"
+            f"[green]Indexed {totals['files_processed']} files[/green] — "
+            f"{totals['units_seen']} units, "
+            f"{totals['revisions_created']} new revisions, "
+            f"{totals['embeddings_written']} new embeddings"
         )
+        if totals["units_tombstoned"]:
+            console.print(
+                f"  [dim]Tombstoned {totals['units_tombstoned']} vanished units[/dim]"
+            )
+        if files_tombstoned:
+            console.print(
+                f"  [dim]Tombstoned {files_tombstoned} vanished files[/dim]"
+            )
+        if failures:
+            console.print(
+                f"  [yellow]{len(failures)} file(s) failed to index:[/yellow]"
+            )
+            for p, e in failures[:5]:
+                console.print(f"    [dim]{p}: {e}[/dim]")
+            if len(failures) > 5:
+                console.print(f"    [dim]... and {len(failures) - 5} more[/dim]")
 
 
 def run_git_hook_ingest_cmd(*, project: str | None = None) -> None:
-    """Run git-hook-based ingest: only files changed in the latest commit."""
-    from hafiz.core.git_hooks import run_git_hook_ingest
+    """Git-hook-based ingest: only files changed in the latest commit.
 
-    async def _ingest():
-        try:
-            return await run_git_hook_ingest(".", project=project)
-        finally:
-            await close_engine()
-
-    files_processed, chunks_stored = asyncio.run(_ingest())
-
+    Phase 5 of the structural-grounding work rewires this for diff-based
+    delta ingest. Until then, fall back to a full ingest of the cwd so
+    the hook keeps working.
+    """
     console.print(
-        f"[green]Git hook ingest:[/green] {files_processed} files processed, "
-        f"{chunks_stored} chunks stored."
+        "[yellow]git-hook ingest currently runs a full ingest. "
+        "Phase 5 introduces proper diff-based delta ingest.[/yellow]"
     )
+    run_ingest(".", project=project)
