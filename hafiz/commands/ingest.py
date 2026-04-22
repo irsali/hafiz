@@ -30,11 +30,13 @@ from hafiz.core.database import close_engine, get_session_factory
 from hafiz.core.git_context import (
     changed_files_since,
     current_git_context,
+    git_operation_in_progress,
     is_git_repo,
 )
 from hafiz.core.store import (
     index_file,
     latest_indexed_commit,
+    reconcile_orphaned_commits,
     tombstone_vanished_files,
     upsert_commit,
 )
@@ -87,8 +89,23 @@ async def _do_ingest(
             console.print(f"[red]Path not found:[/red] {target}")
         raise SystemExit(1)
 
-    # ── Step 0: git-axis — resolve HEAD + diff base ───────────────────────
+    # ── Step 0: git-axis — race safety + resolve HEAD + diff base ────────
     repo_root = target if target.is_dir() else target.parent
+    in_flight = (
+        git_operation_in_progress(repo_root) if is_git_repo(repo_root) else None
+    )
+    if in_flight:
+        msg = (
+            f"Git operation in progress ({in_flight}); refusing to ingest an "
+            f"intermediate tree state. Finish the rebase / merge / cherry-pick "
+            f"and re-run."
+        )
+        if output_json:
+            _emit({"event": "error", "code": "git_in_progress", "message": msg})
+        else:
+            console.print(f"[red]{msg}[/red]")
+        raise SystemExit(2)
+
     git_ctx = current_git_context(repo_root) if is_git_repo(repo_root) else {}
     head_sha: str | None = git_ctx.get("commit_hash") or None
 
@@ -260,12 +277,23 @@ async def _do_ingest(
     if head_sha:
         await upsert_commit(head_sha, project=project, cwd=repo_root)
 
+    # ── Step 3c: reconcile orphaned commits (Phase 5b belt-and-braces) ────
+    # If a rebase happened since last ingest without the post-rewrite hook
+    # firing, stale commit rows get marked `rewritten_at=now` so they stop
+    # looking like live history.
+    reconciled = (
+        await reconcile_orphaned_commits(project, repo_root)
+        if head_sha
+        else 0
+    )
+
     # ── Step 4: summary ──────────────────────────────────────────────────
     if output_json:
         _emit({
             "event": "complete",
             **totals,
             "files_tombstoned": files_tombstoned,
+            "commits_reconciled": reconciled,
             "failures": [
                 {"path": p, "error": e} for p, e in failures
             ],
@@ -284,6 +312,10 @@ async def _do_ingest(
         if files_tombstoned:
             console.print(
                 f"  [dim]Tombstoned {files_tombstoned} vanished files[/dim]"
+            )
+        if reconciled:
+            console.print(
+                f"  [dim]Marked {reconciled} rewritten commits as orphaned[/dim]"
             )
         if failures:
             console.print(

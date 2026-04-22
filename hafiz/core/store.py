@@ -47,7 +47,7 @@ from hafiz.core.database import (
     get_session_factory,
 )
 from hafiz.core.embeddings import embed_texts
-from hafiz.core.git_context import commit_metadata
+from hafiz.core.git_context import commit_metadata, is_commit_reachable
 from hafiz.core.parsers import ParsedEdge, ParsedUnit, Parser, get_registry
 
 
@@ -556,6 +556,49 @@ async def latest_indexed_commit(project: str | None) -> str | None:
 
     counter = Counter(rows)
     return counter.most_common(1)[0][0]
+
+
+async def reconcile_orphaned_commits(
+    project: str | None,
+    cwd: Path,
+) -> int:
+    """Mark commits orphaned by rebase / force-push as ``rewritten_at = now``.
+
+    Belt-and-braces for the ``post-rewrite`` hook: even if the hook was
+    skipped (or never installed), this pass keeps the ``commits`` table
+    honest over time. Walks every commit row whose ``rewritten_at`` is
+    still null and checks git reachability from any ref. Unreachable
+    rows get a timestamp so downstream queries can distinguish history
+    from "still live".
+
+    ``rewritten_to`` is left null here — inferring the successor
+    requires reflog / patch-id matching, which is Phase 5b-follow-up.
+    The ``post-rewrite`` hook is the primary path for populating it.
+    """
+    if not is_commit_reachable("HEAD", cwd):
+        # Either not in a git repo or HEAD itself is orphaned — both
+        # cases mean we can't draw reliable conclusions. Skip.
+        return 0
+
+    session_factory = get_session_factory()
+    now = datetime.now(timezone.utc)
+    reconciled = 0
+
+    async with session_factory() as session:
+        stmt = select(Commit).where(Commit.rewritten_at.is_(None))
+        if project is not None:
+            stmt = stmt.where(Commit.project == project)
+        commits = (await session.execute(stmt)).scalars().all()
+
+        for commit in commits:
+            if not is_commit_reachable(commit.hash, cwd):
+                commit.rewritten_at = now
+                reconciled += 1
+
+        if reconciled:
+            await session.commit()
+
+    return reconciled
 
 
 async def tombstone_vanished_files(

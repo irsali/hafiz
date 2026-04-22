@@ -35,6 +35,22 @@ set -e
 nohup hafiz ingest --git-hook{project_opt} > /dev/null 2>&1 &
 """
 
+POST_REWRITE_TEMPLATE = """\
+#!/usr/bin/env bash
+# Hafiz post-rewrite hook — reconciles the commits table after a rebase
+# or amend (Phase 5b of structural-grounding). The hook runs a regular
+# re-ingest in the background, which picks up the new HEAD and marks
+# orphaned commits as rewritten.
+# Installed by: hafiz hooks install
+
+set -e
+
+{project_flag}
+
+# Run in background so the rewrite operation isn't blocked
+nohup hafiz ingest --git-hook{project_opt} > /dev/null 2>&1 &
+"""
+
 
 def _install_hook(
     hooks_dir: Path,
@@ -85,6 +101,7 @@ def run_hooks_install(repo_path: str, *, project: str | None = None) -> None:
     hooks = [
         ("post-commit", POST_COMMIT_TEMPLATE),
         ("post-merge", POST_MERGE_TEMPLATE),
+        ("post-rewrite", POST_REWRITE_TEMPLATE),
     ]
 
     for hook_name, template in hooks:

@@ -34,6 +34,68 @@ def is_git_repo(cwd: Path) -> bool:
     return _git(["rev-parse", "--is-inside-work-tree"], cwd) == "true"
 
 
+# Filesystem markers git creates while a rewrite-class operation is in
+# flight. If any exist, the tree is in an intermediate state and ingesting
+# it would capture garbage. Used by hafiz ingest's race-safety guard.
+_REWRITE_IN_PROGRESS_MARKERS = (
+    "rebase-apply",
+    "rebase-merge",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "BISECT_LOG",
+)
+
+
+def git_operation_in_progress(cwd: Path) -> str | None:
+    """Return the name of the in-flight git operation, or None.
+
+    Checks for the well-known filesystem markers git writes during
+    rebase / merge / cherry-pick / revert / bisect. Ingesting while one
+    of these is set would capture an intermediate tree state.
+    """
+    if not is_git_repo(cwd):
+        return None
+    git_dir_raw = _git(["rev-parse", "--git-dir"], cwd)
+    if not git_dir_raw:
+        return None
+    git_dir = Path(git_dir_raw)
+    if not git_dir.is_absolute():
+        git_dir = (cwd / git_dir).resolve()
+    for marker in _REWRITE_IN_PROGRESS_MARKERS:
+        if (git_dir / marker).exists():
+            return marker
+    return None
+
+
+def is_commit_reachable(sha: str, cwd: Path) -> bool:
+    """True iff ``sha`` is reachable from any ref in ``cwd``.
+
+    Used by reconcile-on-ingest to detect hashes orphaned by rebase /
+    force-push. Uses ``git cat-file -e`` (object exists) AND checks for
+    reachability via refs — a rewritten commit may still be in the
+    object db but unreachable from any branch.
+    """
+    if not sha or not is_git_repo(cwd):
+        return False
+    # First: does the object exist at all?
+    exists = subprocess.run(
+        ["git", "cat-file", "-e", sha],
+        cwd=str(cwd),
+        capture_output=True,
+        timeout=5,
+    )
+    if exists.returncode != 0:
+        return False
+    # Second: reachable from any ref? `git for-each-ref --contains <sha>`
+    # lists refs that have <sha> in their history; empty output = orphaned.
+    reachable = _git(
+        ["for-each-ref", "--contains", sha, "--count=1", "--format=%(refname)"],
+        cwd,
+    )
+    return bool(reachable)
+
+
 def current_git_context(cwd: Path | None = None) -> dict:
     """Return a dict describing the current git HEAD, or {} if not in a repo.
 
