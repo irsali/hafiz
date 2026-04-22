@@ -8,6 +8,7 @@ unknown agents can specify --path/--file directly.
 from __future__ import annotations
 
 import importlib.resources
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -118,6 +119,36 @@ def is_hafiz_managed(path: Path) -> bool:
         return find_hafiz_region(path.read_text(encoding="utf-8")) is not None
     except (OSError, UnicodeDecodeError):
         return False
+
+
+# Matches ``<!-- SKILLS_VERSION: N -->`` anywhere in a skills region.
+# Emitted by the shipped skills.md so agent installers can tell an
+# out-of-date splice apart from a current one.
+_SKILLS_VERSION_RE = re.compile(r"<!--\s*SKILLS_VERSION:\s*(\d+)\s*-->")
+
+
+def current_skills_version() -> int:
+    """Version of the skills.md shipping with this package. Source of
+    truth for the agent contract."""
+    marker = _SKILLS_VERSION_RE.search(load_skills_content())
+    return int(marker.group(1)) if marker else 1
+
+
+def installed_skills_version(target: Path) -> int | None:
+    """Version of the skills.md currently spliced into ``target``, or
+    None if the file doesn't exist or has no hafiz-managed region."""
+    if not target.exists():
+        return None
+    try:
+        content = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    region = find_hafiz_region(content)
+    if region is None:
+        return None
+    start, end = region
+    marker = _SKILLS_VERSION_RE.search(content[start:end])
+    return int(marker.group(1)) if marker else 1
 
 
 def resolve_target(

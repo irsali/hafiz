@@ -776,23 +776,18 @@ def extract_export_cmd(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Filter by project."
     ),
-    path: Optional[str] = typer.Option(
-        None, "--path", help="Filter by source-file path prefix."
-    ),
-    unextracted: bool = typer.Option(
-        False, "--unextracted", help="Only export chunks whose files have no entities."
-    ),
     limit: int = typer.Option(
-        200, "--limit", "-l", help="Maximum chunks to export."
+        500, "--limit", "-l", help="Maximum units to surface."
     ),
-    offset: int = typer.Option(
-        0, "--offset", help="Skip the first N chunks."
+    pretty: bool = typer.Option(
+        False, "--pretty", help="Human-readable summary instead of JSON."
     ),
 ) -> None:
-    """Export indexed chunks as JSON (for agent-driven extraction)."""
-    from hafiz.commands.chunks import run_chunks_export
+    """Emit the AST-known units + structural edges agents can annotate
+    against. JSON by default (agents parse it); --pretty for humans."""
+    from hafiz.commands.extract import run_extract_export
 
-    run_chunks_export(project=project, path_prefix=path, unextracted=unextracted, limit=limit, offset=offset)
+    run_extract_export(project=project, limit=limit, output_json=not pretty)
 
 
 @extract_app.command("import")
@@ -801,10 +796,11 @@ def extract_import_cmd(
         None, "--file", "-f", help="JSON file (reads stdin if omitted)."
     ),
     project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Project tag for stored entities."
+        None, "--project", "-p", help="Project tag for stored rows."
     ),
 ) -> None:
-    """Import extraction results from JSON (file or stdin)."""
+    """Import agent extraction v2 (annotations + semantic edges)
+    from JSON (file or stdin)."""
     from hafiz.commands.extract import run_extract_import
 
     run_extract_import(file, project=project)

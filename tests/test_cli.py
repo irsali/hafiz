@@ -79,7 +79,10 @@ def test_review_help():
 def test_extract_export_help():
     result = runner.invoke(app, ["extract", "export", "--help"])
     assert result.exit_code == 0
-    assert "--unextracted" in result.output
+    # v2 export surfaces AST-known units/edges; the v1 chunk-oriented
+    # flags (--unextracted, --path, --offset) are gone.
+    assert "--limit" in result.output
+    assert "--pretty" in result.output
     assert "--project" in result.output
 
 

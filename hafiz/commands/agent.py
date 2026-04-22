@@ -9,7 +9,9 @@ from rich.table import Table
 
 from hafiz.core.agents import (
     AGENTS,
+    current_skills_version,
     install_file,
+    installed_skills_version,
     is_hafiz_managed,
     load_skills_content,
     resolve_target,
@@ -38,6 +40,13 @@ def run_agent_install(
     display_name = agent.display_name if agent else (name or "custom agent")
     console.print(f"Installing hafiz skills for [bold]{display_name}[/bold]...")
 
+    # Detect version drift: an agent config with an older SKILLS_VERSION
+    # than what we're about to install is running the previous contract
+    # (e.g. v1 extractor vocabulary). Flag it so users know the refresh
+    # is carrying a hard break — not a no-op cosmetic update.
+    current_v = current_skills_version()
+    prev_v = installed_skills_version(target)
+
     content = load_skills_content()
     wrapper = agent.wrapper if agent else None
     status = install_file(target, content, wrapper=wrapper)
@@ -49,13 +58,24 @@ def run_agent_install(
     }
     console.print(f"  {icons.get(status, '?')} {target}  [dim]({status})[/dim]")
 
+    if prev_v is not None and prev_v < current_v:
+        console.print(
+            f"\n[yellow]Upgraded skills.md from v{prev_v} to v{current_v}.[/yellow] "
+            "The agent contract changed — extract import rejects v1 payloads "
+            "(entity_type / relation_type vocabulary). See the 'Agent Extraction' "
+            "section of the new skills.md and retrain any in-flight extractors."
+        )
+
     if status == "appended":
         console.print(
             f"\n[green]Done.[/green] Hafiz block appended to your existing {target.name}; "
             "your instructions are preserved."
         )
     else:
-        console.print(f"\n[green]Done.[/green] {display_name} is configured to use hafiz.")
+        console.print(
+            f"\n[green]Done.[/green] {display_name} is configured to use hafiz "
+            f"(skills v{current_v})."
+        )
 
 
 def run_agent_uninstall(

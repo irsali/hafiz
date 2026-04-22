@@ -1,9 +1,29 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-# Hafiz — Workspace Intelligence
+<!-- SKILLS_VERSION: 2 -->
+# Hafiz — Workspace Intelligence (v2)
 
-IMPORTANT: You have access to `hafiz`, a CLI tool that indexes the entire
-codebase with semantic search, an entity graph, and an observations store.
-Always use `--json` when parsing output programmatically.
+IMPORTANT: You have access to `hafiz`, a CLI tool that is the
+user's **sovereign second brain** — not just code indexing. It tracks
+code structure via AST parsers, attaches agent-authored meaning via
+annotations, and preserves a git-aware history across branches and
+rewrites. Always use `--json` when parsing output programmatically.
+
+## Ownership rule (load-bearing)
+
+Parsers own structure. Agents own meaning.
+
+- **Structural facts** — classes, functions, modules, imports, calls,
+  inheritance. Produced by AST parsers at ingest time. You do not
+  write these; `hafiz extract import` rejects them.
+- **Semantic facts** — decisions, learnings, patterns, warnings,
+  concepts, workarounds. Produced by you, via `hafiz observe` for
+  free-floating wisdom or `hafiz extract import` for unit-bound
+  annotations + semantic edges.
+
+Units are namespaced by kind (`code.function`, `code.class`,
+`doc.heading`, `mail.message`, `chat.turn`, `file.raw`, …).
+Annotation kinds: `fact` · `decision` · `learning` · `pattern` ·
+`warning` · `note` · `concept` · `service`.
 
 ## Required Behaviors
 
@@ -14,9 +34,9 @@ You MUST follow these rules in every session:
    hafiz context "<task description>" --json
    ```
 
-2. **Before refactoring or modifying a class/function**, check what depends on it:
+2. **Before refactoring or modifying a unit**, check what depends on it:
    ```bash
-   hafiz graph dependents <EntityName> --json
+   hafiz graph impact <UnitName> --json
    ```
 
 3. **After making an architectural decision**, record it:
@@ -33,114 +53,121 @@ You MUST follow these rules in every session:
 
 | Command | When to use |
 |---------|-------------|
-| `hafiz context "<task>"` | **First thing** — synthesizes code, graph, and past observations |
-| `hafiz query "<text>" --json` | Searching for specific code or answers |
-| `hafiz query "<topic>" --recall --type decision --json` | Checking past decisions or known gotchas |
-| `hafiz graph deps <name> --json` | Understanding what an entity depends on |
-| `hafiz graph dependents <name> --json` | Assessing impact before changing an entity |
-| `hafiz observe "<text>" --type <type> --source agent:<name>` | Recording decisions, warnings, patterns, learnings |
-| `hafiz note "<text>" --source agent:<name>` | Capturing a raw thought — anything below decision-grade |
-| `hafiz journal --since 7d --json` | "What did I record recently?" — observations + captures grouped by day |
-| `hafiz distill --since 7d --json` | Promotable candidates: recent notes + transcripts, with a ready observe-scaffold |
+| `hafiz context "<task>"` | **First thing** — bundle of relevant units, graph neighborhood, and annotations |
+| `hafiz query "<text>" --json` | Semantic search over indexed content (units + embedding parts) |
+| `hafiz query "<topic>" --recall --type decision --json` | Search annotations (decisions, facts, learnings, patterns, warnings) |
+| `hafiz graph deps <name> --json` | What this unit depends on (outgoing edges) |
+| `hafiz graph impact <name> --json` | Blast radius — what depends on this unit (incoming edges) |
+| `hafiz observe "<text>" --type <kind> --source agent:<name>` | Record a decision / warning / pattern / learning / fact |
+| `hafiz note "<text>" --source agent:<name>` | Capture a raw thought — anything below decision-grade |
+| `hafiz journal --since 7d --json` | "What did I record recently?" — annotations grouped by day |
+| `hafiz distill --since 7d --json` | Promotable notes with a ready observe scaffold |
 
 ## Capture → Distill Workflow
 
-Beyond indexing code, Hafiz is a second brain for your reasoning trail. The loop is:
+The reasoning loop:
 
-1. **Capture raw.** As you work, note half-formed thoughts without ceremony:
+1. **Capture raw.** Half-formed thoughts go in without ceremony:
    ```bash
    hafiz note "Wondering if refresh tokens should live in httponly cookies"
    ```
-   Pipe long discussions (chat transcripts, meeting notes) in whole:
-   ```bash
-   cat conversation.md | hafiz capture --title "JWT design chat"
-   ```
 
-2. **Review.** `hafiz journal --since 7d` shows everything recorded by day — notes + decisions + transcripts + commits.
+2. **Review.** `hafiz journal --since 7d` groups by day.
 
-3. **Distill.** `hafiz distill --since 7d` lists promotable notes and transcripts with a ready-to-run promote command. Hafiz does **not** call an LLM here — you are the distiller. Promote via:
+3. **Distill.** `hafiz distill --since 7d` lists promotable notes.
+   Hafiz does **not** call an LLM — you are the distiller. Promote via:
    ```bash
    hafiz observe "<distilled decision>" --type decision --derived-from <note-id>,<note-id>
    ```
 
-4. **Supersede when things change.** Never silently delete — write the new decision with `--supersedes <old-id>` so the old one stays auditable but inactive:
+4. **Supersede when things change.** Never silently delete — write the
+   new decision with `--supersedes <old-id>` so the old stays auditable:
    ```bash
    hafiz observe "<new decision>" --type decision --supersedes <old-id>
    ```
 
-Sessions (optional) group everything you record in a terminal:
+Sessions (optional) group everything you record in one terminal:
 ```bash
 hafiz session start "jwt-migration" --task auth --project my-project
-# subsequent observe / note / capture auto-tag with session_id + task
+# subsequent observe / note auto-tag with session_id + task
 hafiz journal --session <id>     # pull one thread of work
 ```
 
-## Ingest Workflow
+## Agent Extraction (v2)
 
-When the user asks to ingest, index, or re-index a codebase, you act as the
-extraction engine — no external API key is needed. You ARE the brain.
+When you want to attach structured annotations or semantic edges to
+the parsed code graph in bulk — beyond the one-shot `hafiz observe` —
+use the extract pipeline.
 
-**Step 1** — Chunk and embed files:
+**Step 1 — see what's already parsed:**
 ```bash
-hafiz ingest <path> --project <name>
+hafiz extract export --project <name> --json > /tmp/units.json
 ```
+Output is the AST-known units (with their stable `identity_key`) and
+structural edges. Use it to know which units exist before you
+annotate them — don't re-derive structure.
 
-**Step 2** — Export chunks grouped by file for analysis:
-```bash
-hafiz extract export --unextracted --project <name> --limit 200
-```
-Output is grouped by `source_file` with chunks ordered by line number.
-If `total` exceeds the batch, repeat with `--offset` to get all chunks.
-
-**Step 3** — Two-phase extraction from the chunk content.
-
-*Phase 1 — Entities (per file):* Read each file's chunks together. Identify
-entities **defined** in that file. Entities are file-scoped — a class, function,
-or config is defined in one file.
-
-*Phase 2 — Relations (cross-file):* With all entities identified, find
-relationships across files. Look at imports, function calls, type references,
-inheritance. Relations are project-scoped — they cross file boundaries.
-
-Produce a JSON object with this schema:
-
+**Step 2 — produce an agent-extraction payload (v2):**
 ```json
 {
-  "entities": [
+  "version": 2,
+  "annotations": [
     {
-      "name": "ExactNameFromCode",
-      "entity_type": "<class|function|module|api_endpoint|database_table|concept|config|service>",
-      "description": "Brief description",
-      "source_file": "/absolute/path/to/file.py",
-      "chunk_id": "uuid-from-chunks-export"
+      "content": "Canonical auth entry — all routes funnel through here",
+      "kind": "pattern",
+      "source": "agent:claude-code",
+      "unit_identity_key": "<copy from step 1>",
+      "confidence": 0.9,
+      "tags": ["auth"]
     }
   ],
-  "relations": [
+  "edges": [
     {
-      "source_name": "Caller",
-      "source_type": "function",
-      "target_name": "Callee",
-      "target_type": "function",
-      "relation_type": "<calls|imports|inherits|depends_on|defines|reads|writes|configures|implements>",
-      "evidence": "actual_code_snippet(proving_this)"
+      "source_name": "UserService",
+      "source_file": "/abs/path/auth.py",
+      "target_name": "SecurityPolicy",
+      "target_file": "/abs/path/policy.py",
+      "relation": "implements_pattern",
+      "evidence": "canonicalized via policy_engine.enforce(...)"
     }
   ]
 }
 ```
 
-Rules: use exact names from code, provide real code as evidence, do not invent
-entities or relations, set `chunk_id` from the export, one entity per definition.
-Only declare a relation if you can see both sides (the caller and the callee).
+Rules:
+- **Kinds:** annotations only — `fact` · `decision` · `learning` ·
+  `pattern` · `warning` · `note` · `concept` · `service`.
+  Anything starting `code.*` is rejected (that's the parser's job).
+- **Relations:** semantic only — `implements_pattern` · `is_workaround_for` ·
+  `supersedes_approach` · `depends_on_concept` · `related_to` ·
+  `documents` · `configures`. Structural relations
+  (`calls` / `imports` / `inherits` / `references`) are rejected.
+- **Unit references:** prefer `unit_identity_key` (copied from export).
+  Fall back to `(unit_name, source_file)` — may be ambiguous when a
+  name repeats across files.
+- **Source:** always `agent:<your-name>` or `user:<name>`.
 
-**Step 4** — Import results:
+**Step 3 — import:**
 ```bash
-cat /tmp/hafiz_extraction.json | hafiz extract import --project <name>
+cat /tmp/extraction.json | hafiz extract import --project <name>
 ```
 
-**Step 5** — Verify:
+The import surfaces per-row warnings (unknown kind, unresolved unit)
+and counts them in the summary. Unresolved references are stored with
+null unit_id / target_unit_id; they become resolvable on a later pass
+once the parser catches up.
+
+## Ingest (for reference — users usually drive this)
+
 ```bash
-hafiz status --json
+hafiz ingest <path> --project <name>
 ```
+
+Hafiz walks the tree (gitignore-aware), picks a parser per file via
+the registry, and upserts units / revisions / embeddings. On a git
+repo, re-ingests are diff-driven: only files changed since the last
+indexed commit are re-parsed. Rebases and amends fire the
+`post-rewrite` hook automatically if installed via `hafiz hooks install`.
 
 ---
 
@@ -153,55 +180,66 @@ hafiz status --json
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz context "<task>"` | Full context bundle (chunks + graph + observations) | `--project`, `--workspace`, `--json` |
-| `hafiz query "<text>"` | Semantic search over indexed code and docs | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
-| `hafiz query "<text>" --recall` | Search observations (decisions, facts, learnings) | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--project`, `--workspace`, `--json` |
+| `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz query "<text>" --recall` | Semantic search over annotations | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
 
 ### Knowledge Graph
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz graph show <name>` | Entity and its direct connections | `--project`, `--json` |
-| `hafiz graph deps <name>` | What this entity depends on (outgoing) | `--project`, `--json` |
-| `hafiz graph dependents <name>` | What depends on this entity (incoming) | `--project`, `--json` |
+| `hafiz graph show <name>` | Unit and its direct connections | `--project`, `--json` |
+| `hafiz graph deps <name>` | What this unit depends on (outgoing) | `--project`, `--json` |
+| `hafiz graph impact <name>` | Blast radius — what depends on it | `--project`, `--json` |
+| `hafiz graph path <from> <to>` | Shortest directed path | `--project`, `--json` |
+| `hafiz graph rank` | Top units by centrality | `--metric`, `--top`, `--project`, `--json` |
+| `hafiz graph stats` | Overall graph health | `--project`, `--top-central`, `--json` |
 
-### Observations
+### Annotations (the "wisdom layer")
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz observe "<text>"` | Store a decision, fact, learning, pattern, warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
-| `hafiz note "<text>"` | Low-bar capture of a raw thought — `obs_type=note`; distill later | `--source`, `--project`, `--tags`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
-| `hafiz capture [TEXT]` | Ingest a transcript / multi-page dump as `chunk_type=transcript` (stdin / `--file` / TEXT) | `--title`, `--file`, `--source`, `--project`, `--tags`, `--session`, `--task`, `--json` |
-| `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
-| `hafiz distill` | List recent notes + transcripts as promotable candidates (scanner — does **not** call an LLM) | `--since`, `--project`, `--workspace`, `--session`, `--task`, `--no-transcripts`, `--limit`, `--json` |
-| `hafiz session start "<name>"` | Start a per-TTY session; subsequent `observe` / `note` / `capture` auto-tag with it | `--task`, `--project`, `--json` |
-| `hafiz session show` / `end` | Inspect / clear the active session for this terminal | `--json` |
+| `hafiz observe "<text>"` | Store a fact / decision / learning / pattern / warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
+| `hafiz note "<text>"` | Low-bar capture — `kind="note"` | same as `observe` minus `--type` |
+| `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
+| `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
+| `hafiz session start "<name>"` | Per-TTY session; subsequent writes auto-tag | `--task`, `--project`, `--json` |
+| `hafiz session show` / `end` | Inspect / clear | `--json` |
 
-- **Observation types**: `fact`, `decision`, `learning`, `pattern`, `warning`, `note`
+- **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`
 - **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
-- **Expiration** (on `observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01` (ISO). Sets `valid_until`; expired rows are hidden from `query --recall` by default.
-- **Auto-captured**: `metadata.commit_hash`, `metadata.branch`, `metadata.is_dirty` when the write happens inside a git repo.
-- **Staleness**: `query --recall` shows age (`3mo ago`) and dims rows older than 90d — prefer recent decisions over old ones.
-- **Sessions**: `hafiz session start "<name>"` in a terminal auto-tags subsequent observations/notes/captures with a `session_id` and optional `task`. Per-call `--session` / `--task` override the active session. Use `hafiz journal --session <id>` or `--task <name>` to pull everything from one thread of work.
-- **Supersession**: when a decision changes, write the new one with `--supersedes <old-uuid>`. The old row stays in the DB but is marked inactive; `query --recall` hides it unless `--include-superseded` is passed. Prefer supersession over silent deletion.
-- **Distillation loop**: raw thoughts go in via `hafiz note`; `hafiz capture` handles full transcripts; periodically run `hafiz distill --since 7d` to see promotable candidates; promote via `hafiz observe '<distilled>' --type decision --derived-from <note-ids>`. `--derived-from` is lineage (non-destructive); `--supersedes` is replacement (marks old inactive).
+- **Expiration** (`observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01`. Sets `valid_until`; expired rows are hidden from `--recall` by default.
+- **Git auto-captured**: `commit_hash` on every write inside a repo; `branch` / `is_dirty` on annotations.
+- **Staleness**: `--recall` shows age (`3mo ago`) and dims rows older than 90d.
+- **Supersession**: replace a decision with `--supersedes <old-uuid>`; prefer over silent deletion.
+- **Lineage**: `--derived-from <ids>` records distillation source without replacing.
+
+### Extraction (agent contract v2)
+
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `hafiz extract export` | Emit the AST-known units + structural edges to attach annotations to | `--project`, `--limit`, `--pretty` |
+| `hafiz extract import` | Import v2 payload (annotations + semantic edges) from JSON | `--file`, `--project` |
 
 ### Indexing & Maintenance
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz ingest <path>` | Index files (chunk + embed + store) | `--project`, `--git-hook`, `--prune`, `--json` |
-| `hafiz extract export` | Export chunks grouped by file as JSON | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
-| `hafiz extract import` | Import entity/relation extraction from JSON | `--file`, `--project` |
-| `hafiz watch <path>` | Watch directory and re-index on change | `--project`, `--json` |
-| `hafiz prune` | Remove chunks for deleted files | `--project`, `--dry-run`, `--json` |
-| `hafiz status` | Database statistics and index health | `--json`, `--diagnose` |
-| `hafiz review` | Review knowledge quality, suggest improvements | `--project`, `--json` |
+| `hafiz ingest <path>` | Parse + embed + store. Diff-driven on re-runs. | `--project`, `--git-hook`, `--json` |
+| `hafiz status` | Counts across the seven tables; last-indexed commit per project | `--json`, `--diagnose` |
+| `hafiz init` | Create schema + pgvector extension | — |
+| `hafiz hooks install <repo>` | Write post-commit / post-merge / post-rewrite hooks | `--project` |
+| `hafiz agent install` | Splice this skills.md into an agent config | — |
 
-### Type Values
+### Data model — the seven tables
 
-- **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`, `transcript`
-- **Transcript retrieval:** `hafiz context` auto-expands transcript hits with ±1 turn neighbors (marked `is_neighbor: true` in JSON). `hafiz query` does not expand — use `context` when surrounding dialogue matters.
+- `files` — one row per file ever seen (tombstoned via `valid_until`).
+- `units` — stable identity of an addressable thing (function, heading, …). `kind` is namespaced.
+- `unit_revisions` — append-only versioned body; at most one `superseded_at IS NULL` per unit.
+- `embeddings` — 1:N vector search index over revisions (oversized bodies split into parts).
+- `edges` — append-only relations; `source ∈ {ast, agent, user}`.
+- `annotations` — decisions / facts / learnings. May link to a unit or float free.
+- `commits` — git axis; populated on ingest. `rewritten_at` marks orphaned commits.
 
 </details>
 
