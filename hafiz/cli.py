@@ -215,6 +215,14 @@ def doctor(
             "but gives concrete recommendations for `hafiz config set`."
         ),
     ),
+    apply_: bool = typer.Option(
+        False,
+        "--apply",
+        help=(
+            "Persist recommendations to the sticky tuning cache "
+            "(~/.cache/hafiz/tuning_state.json). Implies --probe."
+        ),
+    ),
 ) -> None:
     """Diagnose install health, show host capabilities, and (with
     --probe) recommend per-tunable values for this machine.
@@ -224,7 +232,7 @@ def doctor(
     """
     from hafiz.commands.maintenance import run_doctor
 
-    run_doctor(output_json=json_output, probe=probe)
+    run_doctor(output_json=json_output, probe=probe or apply_, apply=apply_)
 
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
@@ -239,10 +247,94 @@ def config_show(
         False, "--json", "-j", help="Output as JSON."
     ),
 ) -> None:
-    """Show current Hafiz configuration."""
+    """Show current Hafiz configuration and per-tunable resolution sources."""
     from hafiz.commands.maintenance import run_config_show
 
     run_config_show(output_json=json_output)
+
+
+@config_app.command("get")
+def config_get(
+    key: str = typer.Argument(..., help="Tunable key, e.g. embedding.max_part_chars"),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Print a single tunable's effective value and its source layer."""
+    from hafiz.commands.maintenance import run_config_get
+
+    run_config_get(key, output_json=json_output)
+
+
+@config_app.command("set")
+def config_set(
+    key: str = typer.Argument(..., help="Tunable key, e.g. embedding.max_part_chars"),
+    value: str = typer.Argument(..., help="Value to set (string; coerced by type)"),
+    local: bool = typer.Option(
+        False,
+        "--local",
+        help=(
+            "Write to ./hafiz.toml (project scope) instead of the user config "
+            "at ~/.config/hafiz/hafiz.toml."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Persist a tunable value to hafiz.toml.
+
+    By default writes to the user-scope config (~/.config/hafiz/hafiz.toml).
+    Use --local to target the project's ./hafiz.toml instead.
+    """
+    from hafiz.commands.maintenance import run_config_set
+
+    run_config_set(key, value, local=local, output_json=json_output)
+
+
+@config_app.command("unset")
+def config_unset(
+    key: str = typer.Argument(..., help="Tunable key to remove from hafiz.toml"),
+    local: bool = typer.Option(
+        False, "--local", help="Target ./hafiz.toml instead of user scope."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Remove a tunable from hafiz.toml so it falls through to sticky / default."""
+    from hafiz.commands.maintenance import run_config_unset
+
+    run_config_unset(key, local=local, output_json=json_output)
+
+
+@config_app.command("apply")
+def config_apply(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Run all probers and persist their recommendations to sticky state.
+
+    Equivalent to `hafiz doctor --probe --apply`. Does not modify
+    hafiz.toml — sticky state is user-scope cache, separate from
+    checked-in configuration.
+    """
+    from hafiz.commands.maintenance import run_config_apply
+
+    run_config_apply(output_json=json_output)
+
+
+@config_app.command("clear-sticky")
+def config_clear_sticky(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """Delete the sticky tuning-state cache (re-probe is required to repopulate)."""
+    from hafiz.commands.maintenance import run_config_clear_sticky
+
+    run_config_clear_sticky(output_json=json_output)
 
 
 # ─── GRAPH ─────────────────────────────────────────────────────────────

@@ -276,11 +276,27 @@ def run_status(*, output_json: bool = False) -> None:
 
 
 def run_config_show(*, output_json: bool = False) -> None:
-    """Show the current Hafiz configuration."""
+    """Show the current Hafiz configuration + per-tunable resolution sources."""
     settings = get_settings()
 
+    # Per-tunable resolution chain — independent of pydantic settings.
+    from hafiz.core import tunables as _tunables
+
+    tunable_rows = [
+        {
+            "key": t.key,
+            "value": _tunables.resolve_with_source(t.key)[0],
+            "source": _tunables.resolve_with_source(t.key)[1],
+            "default": t.default,
+            "is_policy": t.is_policy,
+        }
+        for t in _tunables.all_tunables()
+    ]
+
     if output_json:
-        console.print_json(settings.model_dump_json())
+        payload = json.loads(settings.model_dump_json())
+        payload["tunables"] = tunable_rows
+        console.print_json(json.dumps(payload))
         return
 
     config_path = find_config_file()
@@ -329,16 +345,345 @@ def run_config_show(*, output_json: bool = False) -> None:
     ws_table.add_row("projects", ", ".join(settings.workspace.projects) or "(none)")
     ws_table.add_row("ignore", ", ".join(settings.workspace.ignore))
     console.print(ws_table)
+
+    # Tunables — the source-aware view, so users can see *why* a value is what it is.
+    console.print()
+    tun_table = Table(title="Tunables", border_style="cyan")
+    tun_table.add_column("Key", style="bold")
+    tun_table.add_column("Value")
+    tun_table.add_column("Source")
+    tun_table.add_column("Default", style="dim")
+    for row in tunable_rows:
+        source_style = {
+            "env": "[magenta]env[/magenta]",
+            "toml": "[cyan]toml[/cyan]",
+            "sticky": "[green]sticky[/green]",
+            "default": "[dim]default[/dim]",
+        }[row["source"]]
+        tun_table.add_row(
+            row["key"], str(row["value"]), source_style, str(row["default"])
+        )
+    console.print(tun_table)
     console.print()
 
 
-def run_doctor(*, output_json: bool = False, probe: bool = False) -> None:
+# ── `hafiz config get` ────────────────────────────────────────────────
+
+
+def run_config_get(key: str, *, output_json: bool = False) -> None:
+    from hafiz.core import tunables as _tunables
+
+    try:
+        t = _tunables.get(key)
+    except KeyError:
+        return _config_error(
+            "unknown_tunable",
+            f"No tunable registered for key {key!r}. "
+            f"Run `hafiz doctor --json` to list registered tunables.",
+            output_json,
+            exit_code=1,
+        )
+
+    value, source = _tunables.resolve_with_source(key)
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "key": key,
+                    "value": value,
+                    "source": source,
+                    "default": t.default,
+                    "is_policy": t.is_policy,
+                }
+            )
+        )
+        return
+
+    console.print()
+    console.print(f"[bold]{key}[/bold] = {value}")
+    console.print(f"  source:  [dim]{source}[/dim]")
+    if value != t.default:
+        console.print(f"  default: [dim]{t.default}[/dim]")
+    console.print()
+
+
+# ── `hafiz config set` / `unset` ──────────────────────────────────────
+
+
+def _resolve_config_target(*, local: bool) -> Path:
+    """Decide where `config set` / `unset` writes. User scope by default."""
+    if local:
+        return Path.cwd() / CONFIG_FILENAME
+    return Path.home() / ".config" / "hafiz" / CONFIG_FILENAME
+
+
+def _read_toml(path: Path) -> dict:
+    """Parse a TOML file if it exists; return empty dict otherwise."""
+    if not path.is_file():
+        return {}
+    import sys as _sys
+
+    if _sys.version_info >= (3, 11):
+        import tomllib as _tomllib
+    else:
+        import tomli as _tomllib  # type: ignore[no-redef]
+    with open(path, "rb") as f:
+        return _tomllib.load(f)
+
+
+def _write_toml(path: Path, data: dict) -> None:
+    """Write ``data`` to ``path`` (tomli-w). Creates parents as needed."""
+    import tomli_w  # project dep, available at runtime
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        tomli_w.dump(data, f)
+
+
+def _dig(data: dict, parts: list[str]) -> tuple[dict, str] | None:
+    """Walk to the parent table of the leaf key, creating intermediate
+    tables as needed. Returns (parent_table, leaf_key) or None on
+    malformed paths (an existing non-dict in the way)."""
+    obj = data
+    for p in parts[:-1]:
+        if p not in obj or obj[p] is None:
+            obj[p] = {}
+        if not isinstance(obj[p], dict):
+            return None
+        obj = obj[p]
+    return obj, parts[-1]
+
+
+def run_config_set(
+    key: str, raw_value: str, *, local: bool = False, output_json: bool = False
+) -> None:
+    from hafiz.core import tunables as _tunables
+
+    try:
+        t = _tunables.get(key)
+    except KeyError:
+        return _config_error(
+            "unknown_tunable",
+            f"No tunable registered for key {key!r}.",
+            output_json,
+            exit_code=1,
+        )
+
+    try:
+        value = _tunables._coerce(t, raw_value)
+    except (ValueError, TypeError) as e:
+        return _config_error(
+            "coerce_failed",
+            f"Cannot interpret {raw_value!r} as {t.type_.__name__}: {e}",
+            output_json,
+            exit_code=1,
+        )
+
+    if t.validator is not None:
+        try:
+            t.validator(value)
+        except ValueError as e:
+            return _config_error(
+                "validation_failed",
+                f"Invalid value for {key}: {e}",
+                output_json,
+                exit_code=1,
+            )
+
+    target = _resolve_config_target(local=local)
+    data = _read_toml(target)
+    dug = _dig(data, key.split("."))
+    if dug is None:
+        return _config_error(
+            "malformed_toml",
+            f"Existing {target} has a non-table entry blocking {key!r}.",
+            output_json,
+            exit_code=1,
+        )
+    parent, leaf = dug
+    parent[leaf] = value
+    _write_toml(target, data)
+
+    # Drop the pydantic-settings cache so subsequent reads pick up the
+    # new TOML. The sticky layer is unchanged.
+    from hafiz.core.config import reset_settings
+
+    reset_settings()
+
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "ok": True,
+                    "key": key,
+                    "value": value,
+                    "target": str(target),
+                    "scope": "local" if local else "user",
+                }
+            )
+        )
+        return
+
+    scope = "project" if local else "user"
+    console.print(
+        f"[green]Set[/green] [bold]{key}[/bold] = {value} in the {scope}-scope "
+        f"config ([bold]{target}[/bold])."
+    )
+
+
+def run_config_unset(
+    key: str, *, local: bool = False, output_json: bool = False
+) -> None:
+    from hafiz.core import tunables as _tunables
+
+    try:
+        _tunables.get(key)
+    except KeyError:
+        return _config_error(
+            "unknown_tunable",
+            f"No tunable registered for key {key!r}.",
+            output_json,
+            exit_code=1,
+        )
+
+    target = _resolve_config_target(local=local)
+    if not target.is_file():
+        if output_json:
+            console.print_json(
+                json.dumps({"ok": True, "key": key, "target": str(target), "no_op": True})
+            )
+        else:
+            console.print(
+                f"[dim]No-op: {target} does not exist, nothing to remove.[/dim]"
+            )
+        return
+
+    data = _read_toml(target)
+    parts = key.split(".")
+    # Walk down, collecting parent chain so we can prune empty tables.
+    chain: list[tuple[dict, str]] = []
+    obj: Any = data
+    for p in parts:
+        if not isinstance(obj, dict) or p not in obj:
+            break
+        chain.append((obj, p))
+        obj = obj[p]
+    else:
+        parent, leaf = chain[-1]
+        del parent[leaf]
+        # Walk up, deleting emptied parent tables we created along the way.
+        for table, tkey in reversed(chain[:-1]):
+            child = table[tkey]
+            if isinstance(child, dict) and not child:
+                del table[tkey]
+            else:
+                break
+
+    _write_toml(target, data)
+    from hafiz.core.config import reset_settings
+
+    reset_settings()
+
+    if output_json:
+        console.print_json(
+            json.dumps({"ok": True, "key": key, "target": str(target)})
+        )
+    else:
+        console.print(
+            f"[green]Unset[/green] [bold]{key}[/bold] from [bold]{target}[/bold]."
+        )
+
+
+# ── `hafiz config apply` / `clear-sticky` ─────────────────────────────
+
+
+def run_config_apply(*, output_json: bool = False) -> None:
+    """Run all probers and persist recommendations to sticky state.
+
+    Equivalent to `hafiz doctor --apply` but with a narrower,
+    apply-focused JSON summary agents can act on directly.
+    """
+    from hafiz.core.host_probe import probe_host
+
+    host = probe_host()
+    rows = _collect_tuning(host, probe=True)
+    applied = _apply_tuning(host, rows)
+
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "ok": True,
+                    "applied": applied,
+                    "host_fingerprint": host.fingerprint,
+                }
+            )
+        )
+        return
+
+    if not applied:
+        console.print(
+            "[yellow]No probed recommendations to apply.[/yellow] "
+            "Run `hafiz doctor --probe` to inspect per-tunable probe_error details."
+        )
+        return
+    console.print()
+    for a in applied:
+        console.print(
+            f"[green]Applied[/green] [bold]{a['key']}[/bold] = {a['value']} "
+            f"(confidence {a['confidence']})"
+        )
+        if a.get("rationale"):
+            console.print(f"  [dim]{a['rationale']}[/dim]")
+    console.print(
+        f"\n[dim]Persisted to sticky cache. "
+        f"Run [bold]hafiz config clear-sticky[/bold] to revert.[/dim]"
+    )
+
+
+def run_config_clear_sticky(*, output_json: bool = False) -> None:
+    from hafiz.core.tuning_state import clear_state
+
+    removed = clear_state()
+    if output_json:
+        console.print_json(json.dumps({"ok": True, "removed": removed}))
+        return
+    if removed:
+        console.print("[green]Cleared sticky tuning cache.[/green]")
+    else:
+        console.print("[dim]No sticky tuning cache to clear.[/dim]")
+
+
+# ── helpers ───────────────────────────────────────────────────────────
+
+
+def _config_error(
+    code: str, message: str, output_json: bool, *, exit_code: int = 1
+) -> None:
+    import typer as _typer
+
+    if output_json:
+        console.print_json(json.dumps({"ok": False, "error": code, "message": message}))
+    else:
+        console.print(f"[red]Error:[/red] {message}")
+    raise _typer.Exit(exit_code)
+
+
+def datetime_now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def run_doctor(
+    *, output_json: bool = False, probe: bool = False, apply: bool = False
+) -> None:
     """Run diagnostic checks on the Hafiz installation.
 
     When ``probe`` is True, additionally runs each registered tunable's
-    prober and reports recommended values. Probes can be slow (the
-    embedding prober loads the model and runs several forward passes);
-    the default is False so ``hafiz doctor`` stays fast.
+    prober and reports recommended values. When ``apply`` is True,
+    the recommendations that differ from current are persisted to the
+    sticky tuning cache. ``apply`` implies ``probe``.
     """
 
     checks: list[dict] = []
@@ -575,6 +920,13 @@ def run_doctor(*, output_json: bool = False, probe: bool = False) -> None:
     host = probe_host()
     tuning = _collect_tuning(host, probe=probe)
 
+    # Persist recommendations to sticky state when asked. We only write
+    # rows that actually produced a recommendation (skip policy caps and
+    # failed probes); sticky never silently lowers a value below default.
+    applied: list[dict] = []
+    if apply:
+        applied = _apply_tuning(host, tuning)
+
     # ── Output ─────────────────────────────────────────────────────────
 
     if output_json:
@@ -584,6 +936,7 @@ def run_doctor(*, output_json: bool = False, probe: bool = False) -> None:
                     "checks": checks,
                     "host": host.as_dict(),
                     "tuning": tuning,
+                    "applied": applied,
                 }
             )
         )
@@ -609,6 +962,22 @@ def run_doctor(*, output_json: bool = False, probe: bool = False) -> None:
         console.print("[green]All checks passed.[/green]")
     else:
         console.print("[yellow]Some checks failed — see suggestions above.[/yellow]")
+    if apply and applied:
+        console.print()
+        for a in applied:
+            console.print(
+                f"[green]Applied[/green] [bold]{a['key']}[/bold] = {a['value']} "
+                f"(confidence {a['confidence']})"
+            )
+        console.print(
+            f"[dim]Persisted to sticky cache. "
+            f"Run [bold]hafiz config clear-sticky[/bold] to revert.[/dim]"
+        )
+    elif apply and not applied:
+        console.print()
+        console.print(
+            "[yellow]No probed recommendations to apply.[/yellow]"
+        )
     if not probe:
         console.print(
             "[dim]Run [bold]hafiz doctor --probe[/bold] to measure this host "
@@ -618,6 +987,65 @@ def run_doctor(*, output_json: bool = False, probe: bool = False) -> None:
 
 
 # ── Tuning helpers ─────────────────────────────────────────────────────
+
+
+def _apply_tuning(host, rows: list[dict]) -> list[dict]:
+    """Persist probed recommendations to sticky state and return a
+    summary of what was applied.
+
+    Skips policy caps, failed probes, and rows whose recommendation
+    matches the current effective value (no point writing a no-op).
+    The returned summary mirrors the JSON shape agents expect to read.
+    """
+    from hafiz.core.tuning_state import (
+        TuningEntry,
+        load_state,
+        merge_into_state,
+        save_state,
+    )
+
+    new_entries: dict[str, TuningEntry] = {}
+    summary: list[dict] = []
+    now_iso = datetime_now_iso()
+
+    for r in rows:
+        if r.get("recommended") is None:
+            continue
+        if r.get("probe_error"):
+            continue
+        if r["recommended"] == r["current"]:
+            # Already effective — don't write a sticky entry that just
+            # duplicates current state.
+            continue
+        entry = TuningEntry(
+            value=r["recommended"],
+            rationale=r.get("rationale"),
+            confidence=r.get("confidence"),
+            probed_at=now_iso,
+            measured=r.get("measured") or {},
+        )
+        new_entries[r["key"]] = entry
+        summary.append(
+            {
+                "key": r["key"],
+                "value": entry.value,
+                "rationale": entry.rationale,
+                "confidence": entry.confidence,
+            }
+        )
+
+    if not new_entries:
+        return summary
+
+    existing = load_state()
+    merged = merge_into_state(
+        existing,
+        fingerprint=host.fingerprint,
+        ort_version=host.onnxruntime_version,
+        new_entries=new_entries,
+    )
+    save_state(merged)
+    return summary
 
 
 def _collect_tuning(host, *, probe: bool) -> list[dict]:

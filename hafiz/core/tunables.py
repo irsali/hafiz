@@ -30,10 +30,11 @@ built-in default.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
-from hafiz.core.config import get_settings
+from hafiz.core.config import find_config_file, load_toml
 
 
 # ---------------------------------------------------------------------------
@@ -122,26 +123,95 @@ def all_tunables() -> list[Tunable]:
 # ---------------------------------------------------------------------------
 
 
-def resolve(key: str) -> Any:
-    """Resolve a tunable's effective value, applying the precedence chain.
+Source = Literal["env", "toml", "sticky", "default"]
 
-    Phase 1: env → TOML → default (pydantic-settings handles all three
-    via the HAFIZ_*__* env prefix and the loaded hafiz.toml).
 
-    Phase 3 will insert a sticky-state lookup between TOML and default.
-    Callers at site-of-use (chunker, ingest) should always go through
-    this function rather than reading settings directly, so that insertion
-    is invisible to them.
+def _env_var_name(key: str) -> str:
+    """HAFIZ_ prefix + double-underscore nesting (pydantic-settings convention)."""
+    return "HAFIZ_" + key.replace(".", "__").upper()
+
+
+def _coerce(tunable: "Tunable", raw: str) -> Any:
+    """Best-effort type coercion for env var strings. Mirrors how
+    pydantic-settings would coerce the same value, but we parse it
+    explicitly so resolution doesn't depend on re-reading settings."""
+    if tunable.type_ is int:
+        return int(raw)
+    if tunable.type_ is float:
+        return float(raw)
+    if tunable.type_ is bool:
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    return raw
+
+
+def _toml_lookup(key: str) -> tuple[bool, Any]:
+    """Check whether ``key`` is explicitly present in the discovered
+    hafiz.toml. Returns ``(found, value)`` — ``found`` distinguishes
+    "TOML set this to its default value" from "TOML didn't mention it".
     """
-    # Look up the tunable to validate the key is known. This catches typos
-    # at the callsite, which matters once we have a dozen tunables.
-    get(key)
-
-    settings = get_settings()
-    obj: Any = settings
+    path = find_config_file()
+    if path is None:
+        return False, None
+    try:
+        data = load_toml(path)
+    except OSError:
+        return False, None
+    obj: Any = data
     for part in key.split("."):
-        obj = getattr(obj, part)
-    return obj
+        if not isinstance(obj, dict) or part not in obj:
+            return False, None
+        obj = obj[part]
+    return True, obj
+
+
+def _sticky_lookup(key: str) -> tuple[bool, Any]:
+    """Check sticky state. Returns ``(found, value)``. Imports are
+    deferred so tunables.py doesn't need host_probe at module load."""
+    from hafiz.core.host_probe import probe_host
+    from hafiz.core.tuning_state import get_value
+
+    host = probe_host()
+    value = get_value(
+        key,
+        fingerprint=host.fingerprint,
+        ort_version=host.onnxruntime_version,
+    )
+    return (value is not None, value)
+
+
+def resolve(key: str) -> Any:
+    """Effective value through the full precedence chain.
+
+    Order: **env → TOML → sticky → default**.
+
+    Callers at site-of-use (chunker, ingest) should always go through
+    this function rather than reading pydantic settings directly —
+    pydantic doesn't know about the sticky layer and will skip it.
+    """
+    return resolve_with_source(key)[0]
+
+
+def resolve_with_source(key: str) -> tuple[Any, Source]:
+    """Same resolution as :func:`resolve`, plus the layer the value came from.
+
+    Used by ``hafiz config show`` / ``hafiz config get`` so users can see
+    *why* a tunable is set to a given value, not just what the value is.
+    """
+    t = get(key)
+
+    env_name = _env_var_name(key)
+    if env_name in os.environ:
+        return _coerce(t, os.environ[env_name]), "env"
+
+    found, value = _toml_lookup(key)
+    if found:
+        return value, "toml"
+
+    found, value = _sticky_lookup(key)
+    if found:
+        return value, "sticky"
+
+    return t.default, "default"
 
 
 # ---------------------------------------------------------------------------

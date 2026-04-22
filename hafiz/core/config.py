@@ -23,17 +23,28 @@ else:
 
 CONFIG_FILENAME = "hafiz.toml"
 
-# Search order for config file
-CONFIG_SEARCH_PATHS = [
-    Path.cwd() / CONFIG_FILENAME,
-    Path.home() / ".config" / "hafiz" / CONFIG_FILENAME,
-    Path("/etc/hafiz") / CONFIG_FILENAME,
-]
+
+def config_search_paths() -> list[Path]:
+    """Search order for the config file. Computed fresh each call so that
+    tests (and cwd-changing users) see a consistent view — the module-
+    level captured values would bake in whatever ``Path.home()`` /
+    ``Path.cwd()`` were at import time."""
+    return [
+        Path.cwd() / CONFIG_FILENAME,
+        Path.home() / ".config" / "hafiz" / CONFIG_FILENAME,
+        Path("/etc/hafiz") / CONFIG_FILENAME,
+    ]
+
+
+# Back-compat alias for any external readers that were importing this
+# directly. The list is a snapshot at import time — callers wanting a
+# live view should use ``config_search_paths()`` instead.
+CONFIG_SEARCH_PATHS = config_search_paths()
 
 
 def find_config_file() -> Path | None:
     """Find the first existing hafiz.toml in search paths."""
-    for path in CONFIG_SEARCH_PATHS:
+    for path in config_search_paths():
         if path.is_file():
             return path
     return None

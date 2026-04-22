@@ -23,7 +23,13 @@
 | `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
 | `doctor` | Install health + host capabilities (RAM, CPU, GPU, onnxruntime) + tunable registry. Stable `--json` shape with `checks` / `host` / `tuning` keys. | — | `--json` | rich tables |
 | `doctor --probe` | Same as `doctor`, plus runs per-tunable probers to recommend values for this host. Slow (loads the embedding model, runs several forward passes). | Embed | `--json` | rich tables |
-| `config show` | Display current hafiz.toml settings | — | `--json` | rich output |
+| `doctor --apply` | Implies `--probe`; additionally persists the recommendations to the sticky tuning cache (`~/.cache/hafiz/tuning_state.json`). JSON response gains an `applied` array. | Embed | `--json` | rich tables |
+| `config show` | Display current hafiz.toml settings **and** per-tunable resolution sources (env / toml / sticky / default) | — | `--json` (payload gains a `tunables` array) | rich output |
+| `config get <key>` | Print one tunable's effective value + source layer | — | `--json` | rich output |
+| `config set <key> <value> [--local]` | Persist a tunable to hafiz.toml. User-scope by default (`~/.config/hafiz/hafiz.toml`); `--local` targets the project's `./hafiz.toml`. Validates and type-coerces the input. | — | `--json` | rich output |
+| `config unset <key> [--local]` | Remove a tunable from hafiz.toml so it falls through to sticky / default. Prunes emptied tables. | — | `--json` | rich output |
+| `config apply` | Runs every prober and persists recommendations to sticky state. Equivalent to `hafiz doctor --apply` with a narrower JSON summary. | Embed | `--json` | rich output |
+| `config clear-sticky` | Delete the sticky tuning cache. Re-probe is required to repopulate. | — | `--json` | rich output |
 | `hooks install` | Write post-commit + post-merge + post-rewrite git hooks into a repo | — | same | same |
 | `agent install` | Splice `skills.md` into an agent's config file; warns on version drift | — | same | same |
 | `agent uninstall` | Remove the spliced `skills.md` block | — | same | same |
@@ -58,6 +64,8 @@
 }
 ```
 Adding fields is safe; renaming requires a note here.
+
+**Tunable resolution order:** `env (HAFIZ_*__*)` → `hafiz.toml` → sticky tuning cache → built-in default. The sticky layer is written by `doctor --apply` / `config apply` and keyed to a host fingerprint that invalidates itself when the RAM class, GPU presence, OS/arch, or onnxruntime provider set materially changes. Clear it with `config clear-sticky`.
 
 ### Indexing
 
