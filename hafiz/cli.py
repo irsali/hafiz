@@ -915,3 +915,23 @@ def agent_list() -> None:
     from hafiz.commands.agent import run_agent_list
 
     run_agent_list()
+
+
+# ─── PARSERS ──────────────────────────────────────────────────────────
+
+parsers_app = typer.Typer(name="parsers", help="Parser registry observability.")
+app.add_typer(parsers_app)
+
+
+@parsers_app.command("list")
+def parsers_list_cmd(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON."
+    ),
+) -> None:
+    """List registered parsers (in-tree + entry-point-loaded) and their
+    language coverage. Useful for answering "is AST active for my .go
+    files?" without inspecting config."""
+    from hafiz.commands.parsers import run_parsers_list
+
+    run_parsers_list(output_json=json_output)

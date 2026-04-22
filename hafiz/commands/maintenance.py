@@ -535,6 +535,31 @@ def run_doctor(*, output_json: bool = False) -> None:
             fix="Run: pip install fastembed",
         )
 
+    # 9. Parser coverage — "which languages will hafiz ingest see as AST?"
+    try:
+        from hafiz.core.parsers import get_registry
+
+        registry = get_registry()
+        parsers = registry.all_parsers()
+        coverage = ", ".join(
+            f"{p.name}({'+'.join(registry.extensions_for(p))})" for p in parsers
+        )
+        _check(
+            "Parser registry",
+            bool(parsers),
+            detail=coverage or "(no parsers registered)",
+            fix="Re-install hafiz — in-tree parsers should self-register."
+            if not parsers
+            else "",
+        )
+    except Exception as e:
+        _check(
+            "Parser registry",
+            False,
+            detail=str(e)[:120],
+            fix="Re-install hafiz.",
+        )
+
     # ── Output ─────────────────────────────────────────────────────────
 
     if output_json:

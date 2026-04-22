@@ -1,6 +1,7 @@
 # Hafiz Command Map
 
 > Source of truth for all hafiz commands. Update this file when commands change.
+> Post-structural-grounding: parsers own structure, agents own meaning — see skills.md v2.
 
 ## Brain Types
 
@@ -8,7 +9,8 @@
 |------|-----------|------|--------|
 | **—** | No model needed, pure DB/filesystem operations | Free | — |
 | **Embed** | fastembed (nomic-embed-text-v1.5), runs locally via ONNX | Free | `[embedding]` in hafiz.toml |
-| **Agent** | The LLM in conversation (Claude Code, Cursor, Copilot) or piped via CLI (`claude -p`) | Already paying for the session | N/A — agent reads CLI output and acts |
+| **Agent** | The LLM in conversation (Claude Code, Cursor, Copilot) or piped via CLI | Already paying for the session | N/A — agent reads CLI output and acts |
+| **Parser** | Deterministic AST / prose parser loaded at ingest time | Free | `[parsers]` via entry points |
 
 ## Command Reference
 
@@ -16,66 +18,89 @@
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `init` | Create DB tables + pgvector extension | — | same | same |
-| `status` | Count chunks, entities, relations, observations by project | — | `--json` | rich output |
-| `status --diagnose` | Check DB, pgvector, embeddings, config health | — | `--json` | rich output |
+| `init` | Create the seven tables + pgvector extension | — | same | same |
+| `status` | Count files / units / unit_revisions / embeddings / edges / annotations / commits, broken down by project and kind, plus last-indexed commit per project | — | `--json` | rich output |
+| `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
 | `config show` | Display current hafiz.toml settings | — | `--json` | rich output |
-| `hooks install` | Write post-commit + post-merge git hooks into a repo | — | same | same |
-| `agent install` | Write skills.md to agent config directory | — | same | same |
-| `agent uninstall` | Remove skills.md from agent config directory | — | same | same |
+| `hooks install` | Write post-commit + post-merge + post-rewrite git hooks into a repo | — | same | same |
+| `agent install` | Splice `skills.md` into an agent's config file; warns on version drift | — | same | same |
+| `agent uninstall` | Remove the spliced `skills.md` block | — | same | same |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
+| `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage | — | `--json` | rich table |
 | `embedding status` | Show current embedding device + provenance (config / sticky cache / probe) | — | `--json` | rich table |
-| `embedding retry` | Clear sticky device cache and re-probe (use after freeing VRAM, upgrading drivers, etc.) | Embed | `--json` | rich output |
+| `embedding retry` | Clear sticky device cache and re-probe | Embed | `--json` | rich output |
 
 ### Indexing
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `ingest <path>` | Chunk files, embed, store in DB | Embed | `--json` emits NDJSON progress | rich progress bars |
-| `ingest --git-hook` | Re-index only files changed in latest commit | Embed | `--json` | rich output |
-| `ingest --prune` | Remove stale chunks first, then ingest | Embed | `--json` | rich output |
-| `watch <path>` | Long-running: detect file changes, re-ingest automatically | Embed | `--json` events | rich output |
-| `prune` | Delete chunks for files that no longer exist on disk, mark entities stale | — | `--json` | rich output |
+| `ingest <path>` | Walk the tree, pick a parser per file, upsert units / revisions / embeddings. On a git repo, diff-driven: re-ingests only files changed since last indexed commit | Embed + Parser | `--json` emits NDJSON progress | rich progress |
+| `ingest --git-hook` | Same pipeline, designed to run inside the installed post-commit / post-merge / post-rewrite hooks | Embed + Parser | `--json` | rich output |
+| `watch <path>` | Long-running: detect file changes, re-ingest automatically. *(Phase 3b-2: still on the old API — falls through with a "not yet rewired" message.)* | Embed + Parser | `--json` events | rich output |
+| `prune` | Obsolete under new pipeline — on-ingest tombstoning handles this. Kept as a CLI no-op. | — | `--json` | rich output |
 
-### Extraction (agent-driven, two-phase)
+**Race safety:** ingest refuses to run during a rebase / merge / cherry-pick in progress (detects `.git/<marker>` files) and exits with code 2.
 
-Entity extraction is always agent-driven. The agent reads chunks, identifies
-entities and relationships, and imports the results. No external API key needed.
+**Rewrite resilience:** reconcile pass on every ingest marks commits that are no longer reachable in git as `commits.rewritten_at = now`. The installed `post-rewrite` hook triggers a fresh ingest automatically after an amend / rebase.
+
+### Extraction (agent contract v2)
+
+Parsers own structural facts (entities, calls, imports, inherits) — agents no longer write them. The extract pipeline is narrower and semantic-only.
 
 | Step | Command | Brain | What happens |
 |------|---------|:-----:|-------------|
-| 1. Export | `extract export --unextracted` | — | Exports chunks grouped by file, filtered to files without entities |
-| 2. Analyze | _(agent reads the output)_ | Agent | **Phase 1:** identify entities per file (file-scoped). **Phase 2:** identify relations across files (project-scoped). |
-| 3. Import | `extract import` | — | Stores the agent-produced entities/relations JSON into the graph |
-| 4. Verify | `status --json` | — | Confirm entity and relation counts |
+| 1. Export | `extract export --project X` | — | Emits the AST-known units (with stable `identity_key`) + structural edges so the agent knows what already exists. |
+| 2. Analyze | _(agent reads the output)_ | Agent | Decides which units deserve annotations (decisions / patterns / warnings) and which semantic edges to draw. |
+| 3. Import | `extract import --project X` | — | Validates the v2 payload (rejects v1 / AST-territory) and writes annotations + semantic edges. |
+| 4. Verify | `status --json` | — | Confirms counts across tables. |
 
-**Terminal (no agent in session):** pipe through an LLM CLI:
-```bash
-hafiz extract export --unextracted --project X | claude -p "extract entities per hafiz schema" | hafiz extract import --project X
+**v2 JSON shape:**
+```json
+{
+  "version": 2,
+  "annotations": [
+    {
+      "content": "Canonical auth entry",
+      "kind": "pattern",
+      "source": "agent:claude-code",
+      "unit_identity_key": "<from step 1>",
+      "confidence": 0.9,
+      "tags": ["auth"]
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "UserService", "source_file": "/abs/auth.py",
+      "target_name": "SecurityPolicy", "target_file": "/abs/policy.py",
+      "relation": "implements_pattern",
+      "evidence": "..."
+    }
+  ]
+}
 ```
 
-**Supporting commands:**
+Rejected at import time: `kind` starting with `code.*`; relations in `{calls, imports, inherits, references}`. Off-vocabulary kinds / relations produce warnings but are accepted.
 
 | Command | Purpose | Brain | Key Flags |
 |---------|---------|:-----:|-----------|
-| `extract export` | Export chunks grouped by file as JSON | — | `--project`, `--unextracted`, `--path`, `--limit`, `--offset` |
-| `extract import` | Store entities/relations from JSON (file or stdin) | — | `--file`, `--project` |
+| `extract export` | Emit the AST-known units + edges the agent can attach to | — | `--project`, `--limit`, `--pretty` |
+| `extract import` | Import a v2 payload (annotations + semantic edges) from JSON | — | `--file`, `--project` |
 
 ### Search
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `query "<text>"` | Vector similarity search over code chunks | Embed | `--json` | rich output |
-| `query "<text>" --recall` | Vector similarity search over observations | Embed | `--json` | rich output |
-| `context "<task>"` | Synthesize chunks + graph + observations for a task | Embed | `--json` | rich panel |
+| `query "<text>"` | Vector similarity search over the `embeddings` table (joined back to units + files for context) | Embed | `--json` | rich output |
+| `query "<text>" --recall` | Vector similarity search over annotations | Embed | `--json` | rich output |
+| `context "<task>"` | Synthesize units + graph + annotations for a task | Embed | `--json` | rich panel |
 
-**Scoping flags** (available on `context`, `query`):
+**Scoping flags** (on `context`, `query`):
 
 | Flag | Scope | How it works |
 |------|-------|-------------|
-| `--project X` | Single named project | Filters DB queries to `project = X` |
-| `--workspace` | Sibling projects | Resolves directories in parent of cwd, matches to DB project tags (normalized: case-insensitive, ignores spaces/hyphens) |
-| _(neither)_ | Everything | No filter — searches all indexed content |
+| `--project X` | Single named project | Filters queries to `files.project = X` |
+| `--workspace` | Sibling projects | Resolves directories in parent of cwd, matches to DB project tags (normalized) |
+| _(neither)_ | Everything | No filter |
 
 `--project` and `--workspace` are mutually exclusive.
 
@@ -83,92 +108,57 @@ hafiz extract export --unextracted --project X | claude -p "extract entities per
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `graph show <name>` | Show entity and its direct connections (in + out) | — | `--json` | rich output |
-| `graph deps <name>` | Show what an entity depends on (outgoing relations) | — | `--json` | rich output |
-| `graph dependents <name>` | Show what depends on an entity (incoming relations) | — | `--json` | rich output |
+| `graph show <name>` | Unit and its direct connections | — | `--json` | rich tree |
+| `graph deps <name>` | What this unit depends on (outgoing edges) | — | `--json` | rich table |
+| `graph impact <name>` | Blast radius — what depends on this unit (incoming edges) | — | `--json` | rich table |
+| `graph path <src> <tgt>` | Shortest directed path | — | `--json` | rich tree |
+| `graph rank` | Top units by centrality (pagerank / betweenness / degree) | — | `--json` | rich table |
+| `graph stats` | Overall graph health (density, components, top-central, kind/relation breakdowns) | — | `--json` | rich tables |
 
-### Observations
+Graph nodes are current units (`valid_until IS NULL`), edges are current edges (`superseded_at IS NULL`) with both endpoints resolved in scope. External references (`target_unit_id IS NULL`, `target_name` set) are excluded from traversal — visible via raw DB if needed.
+
+### Annotations (the "wisdom layer")
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `observe "<text>"` | Embed and store a fact, decision, learning, pattern, warning, or note | Embed | `--json` | rich panel |
+| `observe "<text>"` | Embed and store a fact / decision / learning / pattern / warning / note | Embed | `--json` | rich panel |
 | `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane | Embed | `--json` | rich panel |
-| `journal` | Time-bounded digest of observations, grouped by day | — | `--json` | rich tables |
-| `distill` | Surface recent notes + transcripts as promotable candidates (scanner, not promoter) | — | `--json` | rich tables + scaffold |
+| `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables |
+| `distill` | Surface recent notes as promotable candidates (scanner, not promoter) | — | `--json` | rich tables |
 
-- **Observation types:** `fact`, `decision`, `learning`, `pattern`, `warning`, `note`.
-- **Auto-captured git context:** `commit_hash` lives on the column (`observations.commit_hash`); `branch` and `is_dirty` stay in `metadata` JSONB. Captured when stored inside a git repo; no-op elsewhere.
-- **Expiration flags** (on `observe` / `note`, mutually exclusive): `--expires-in <30d|2w|6m|1y>` or `--expires <ISO-date>`. Sets `valid_until`; `query --recall` hides expired rows by default.
-- **Staleness hint:** `query --recall` surfaces the age of each row (e.g. `3mo ago`) and dims results older than 90 days.
-- **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive (`valid_until=now`) and records the link in the new row's `supersedes_id` column. Nothing is deleted. Recall hides superseded rows by default; pass `--include-superseded` to see them, dimmed with a `(superseded)` marker.
-- **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` stores `metadata.derived_from` on the new row. Used by `distill` promotions to record which raw notes / transcripts a decision was drawn from. Does **not** supersede the sources.
-
-### Journal
-
-| Command | Purpose | Brain | Agent use | Terminal use |
-|---------|---------|:-----:|-----------|-------------|
-| `journal` | "What did I record recently?" — time-bounded view over observations **and** captures | — | `--json` | rich tables per day |
-
-**Scoping flags:** `--since <duration>` (default `7d`), or `--day <ISO-date>` (mutually exclusive). Also `--project` / `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`.
-
-Per day the output shows two tables when relevant: observations first (cyan border), captures second (magenta border).
+- **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`.
+- **Auto-captured git context**: `commit_hash` column; `branch` / `is_dirty` in metadata JSONB. Captured when writing inside a git repo.
+- **Expiration** (on `observe` / `note`, mutually exclusive): `--expires-in <30d|2w|6m|1y>` or `--expires <ISO-date>`. Sets `valid_until`; `--recall` hides expired rows by default.
+- **Staleness hint**: `--recall` surfaces age (e.g. `3mo ago`) and dims rows older than 90 days.
+- **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive and records the link. Nothing is deleted.
+- **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` records distillation source without replacing.
+- **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
 
 ### Captures (transcripts / multi-page dumps)
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `capture [TEXT]` | Ingest a transcript or long dump — splits on blank lines, embeds each turn as `chunk_type="transcript"` | Embed | `--json` | rich panel |
-
-**Input modes** (pick one): positional `TEXT` argument, `--file <path>`, or piped stdin.
-
-**Flags:** `--title`, `--project` / `-p`, `--source` / `-s`, `--tags`, `--json`.
-
-**Storage:** chunks are written to the existing `chunks` table with a synthetic `source_file` under `captures/YYYY-MM-DD-<slug>.md`. No file is written to disk; `prune` is aware and skips these rows.
-
-**Retrieval:**
-- `query` finds transcript chunks like any other chunk.
-- `context` expands retrieved transcript chunks with ±1 turn neighbors so the agent sees surrounding dialogue, not an orphan line. Neighbors are marked `is_neighbor: true` in JSON and carry the parent's score for ranking stability.
-
-### Distill
-
-| Command | Purpose | Brain | Agent use | Terminal use |
-|---------|---------|:-----:|-----------|-------------|
-| `distill` | List recent active notes + transcripts in a time window; suggest a promotion scaffold | — | `--json` | rich tables |
-
-`distill` is a **scanner**, not a promoter. Hafiz does not call an LLM — the agent or user reads the candidates and decides what (if anything) becomes a `decision` / `learning` / `pattern`. Promote via:
-
-```bash
-hafiz observe '<distilled text>' --type decision --derived-from <id1>,<id2>,...
-```
-
-**Flags:** `--since <duration>` (default `7d`), `--project` / `--workspace`, `--session`, `--task`, `--no-transcripts`, `--limit`, `--json`.
-
-The JSON shape exposes `notes`, `transcripts`, and a `promotion_hint` field with a ready-to-run `hafiz observe` command using the first five candidate ids.
+| `capture [TEXT]` | *(Phase 3b-2: not yet rewired for the new schema. Falls through with a clear error. Transcript storage will land as `chat.turn` units.)* | — | — | — |
 
 ### Sessions
 
-Per-TTY named threads of work that auto-tag subsequent `observe` / `note` / `capture` with a `session_id` and optional `task`. State lives in `~/.cache/hafiz/session-<tty>.json`, scoped to the controlling terminal so two shells don't pollute each other.
+Per-TTY named threads of work that auto-tag subsequent `observe` / `note` writes with a `session_id` and optional `task`. State lives in `~/.cache/hafiz/session-<tty>.json`, scoped to the controlling terminal so two shells don't pollute each other.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `session start "<name>"` | Start a named session for this terminal; auto-generates a slugged session id | — | `--json` | rich panel |
-| `session show` | Show the active session for this terminal | — | `--json` | rich panel |
-| `session end` | Clear the session state for this terminal | — | `--json` | rich line |
+| `session start "<name>"` | Start a named session for this terminal | — | `--json` | rich panel |
+| `session show` | Show the active session | — | `--json` | rich panel |
+| `session end` | Clear the session | — | `--json` | rich line |
 
-`session start` flags: `--task <name>` (default task for the session), `--project <name>` (display only — does not filter).
+`session start` flags: `--task <name>`, `--project <name>`.
 
-**Auto-tagging** on `observe` / `note` / `capture`:
-- If no flag is given and a session is active, `session_id` and `task` are inherited.
-- `--session <id>` / `--task <name>` on the command always win over the active session.
-- Storage columns: `observations.session_id` / `observations.task` / `observations.commit_hash`; `chunks.session_id` / `chunks.task` (set only on transcripts today).
-
-**No TTY (piped, CI)** → sessions are ignored; commands still work, just untagged.
+**Auto-tagging** on `observe` / `note`: session state inherited when no flag is given; explicit `--session` / `--task` always win. Columns: `annotations.session_id` / `annotations.task` / `annotations.commit_hash`.
 
 ### Review
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `review` | Analyze observation quality, graph coverage, extraction gaps, staleness | — | `--json` | rich panel |
+| `review` | *(Phase 3b-4: still on the old schema. Fails cleanly until rewired.)* | — | — | — |
 
 ## Common Flags
 
@@ -177,24 +167,24 @@ Per-TTY named threads of work that auto-tag subsequent `observe` / `note` / `cap
 | `--json` / `-j` | Most commands | Machine-readable output for agents |
 | `--project` / `-p` | Most commands | Filter or tag by project name |
 | `--workspace` / `-w` | `context`, `query`, `journal` | Scope to sibling projects in parent directory |
-| `--type` / `-t` | `query`, `observe`, `journal` | Filter by type (chunk type or observation type with --recall) |
-| `--limit` / `-l` | `query`, `extract export`, `journal` | Maximum number of results |
-| `--recall` | `query` | Search observations instead of code chunks |
-| `--since` | `journal` | Duration window ending now (default `7d`). Accepts `30d`, `2w`, `6h`, `3m`, `1y` |
+| `--type` / `-t` | `query`, `observe`, `journal` | Unit kind or annotation kind depending on context |
+| `--limit` / `-l` | `query`, `extract export`, `journal` | Maximum results |
+| `--recall` | `query` | Search annotations instead of content |
+| `--since` | `journal` / `distill` | Duration window ending now (default `7d`) |
 | `--day` | `journal` | Specific UTC day (ISO date). Exclusive with `--since` |
-| `--expires-in` | `observe`, `note` | Expire after duration (e.g. `30d`). Exclusive with `--expires` |
-| `--expires` | `observe`, `note` | Expire at ISO date/datetime. Exclusive with `--expires-in` |
-| `--source` | `observe`, `note`, `journal` | Origin tag (e.g. `agent:claude-code`, `user:<name>`) |
-| `--session` | `observe`, `note`, `capture`, `journal`, `distill` | Explicit session id — overrides active `hafiz session` for writes; filter for reads |
-| `--task` | `observe`, `note`, `capture`, `journal`, `distill` | Explicit task label — same override / filter semantics as `--session` |
-| `--supersedes` | `observe`, `note` | UUID of observation being replaced; marks target inactive atomically |
-| `--derived-from` | `observe`, `note` | Comma-separated UUIDs this row was distilled from (stored in `metadata`) |
-| `--include-superseded` | `query --recall` | Also return superseded / expired rows, dimmed in output |
-| `--diagnose` | `status` | Run full diagnostic checks (config, DB, pgvector, embeddings) |
+| `--expires-in` | `observe`, `note` | Expire after duration. Exclusive with `--expires` |
+| `--expires` | `observe`, `note` | Expire at ISO date. Exclusive with `--expires-in` |
+| `--source` | `observe`, `note`, `journal` | Origin tag (`agent:<name>`, `user:<name>`) |
+| `--session` | `observe`, `note`, `journal`, `distill` | Explicit session id |
+| `--task` | `observe`, `note`, `journal`, `distill` | Explicit task label |
+| `--supersedes` | `observe`, `note` | UUID of annotation being replaced |
+| `--derived-from` | `observe`, `note` | UUIDs this row was distilled from |
+| `--include-superseded` | `query --recall` | Return superseded / expired rows |
+| `--diagnose` | `status` | Full diagnostic checks including parser registry |
 
 ## Architecture Note
 
-Hafiz has two stability layers:
+Two stability layers:
 
-- **Layer 1 (stable):** `skills.md` installed via `hafiz agent install` — the contract between hafiz and AI agents. Changes here affect all agent integrations.
-- **Layer 2 (evolving):** `hafiz review` — self-improvement mechanism. Evolves independently without breaking the agent contract.
+- **Layer 1 (stable contract):** `skills.md` v2 installed via `hafiz agent install`. Ownership rule (parsers own structure, agents own meaning) is load-bearing. `hafiz agent install` detects version drift and warns when refreshing an older splice.
+- **Layer 2 (evolving):** `hafiz review`, `hafiz parsers list`, Phase 7 observability surfaces. Free to iterate; not referenced from `skills.md`.
