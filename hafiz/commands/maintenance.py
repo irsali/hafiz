@@ -85,57 +85,109 @@ def run_status(*, output_json: bool = False) -> None:
     async def _status():
         try:
             from sqlalchemy import func, select
-            from hafiz.core.database import Chunk, Entity, Relation, Observation
+            from hafiz.core.database import (
+                Annotation,
+                Commit,
+                Edge,
+                Embedding,
+                File,
+                Unit,
+                UnitRevision,
+            )
 
             session_factory = get_session_factory()
             async with session_factory() as session:
-                # Count all tables
-                chunk_count = (
-                    await session.execute(select(func.count()).select_from(Chunk))
+                # ── Current-state counts (tombstoned / superseded excluded) ─
+                files_count = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(File)
+                        .where(File.valid_until.is_(None))
+                    )
                 ).scalar() or 0
-                entity_count = (
-                    await session.execute(select(func.count()).select_from(Entity))
+                units_count = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(Unit)
+                        .where(Unit.valid_until.is_(None))
+                    )
                 ).scalar() or 0
-                relation_count = (
-                    await session.execute(select(func.count()).select_from(Relation))
+                current_revisions_count = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(UnitRevision)
+                        .where(UnitRevision.superseded_at.is_(None))
+                    )
                 ).scalar() or 0
-                observation_count = (
-                    await session.execute(select(func.count()).select_from(Observation))
+                embeddings_count = (
+                    await session.execute(
+                        select(func.count()).select_from(Embedding)
+                    )
+                ).scalar() or 0
+                edges_count = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(Edge)
+                        .where(Edge.superseded_at.is_(None))
+                    )
+                ).scalar() or 0
+                annotations_count = (
+                    await session.execute(
+                        select(func.count()).select_from(Annotation)
+                    )
+                ).scalar() or 0
+                commits_count = (
+                    await session.execute(
+                        select(func.count()).select_from(Commit)
+                    )
                 ).scalar() or 0
 
-                # Chunks by project
-                project_counts = (
+                # ── Historical totals (include tombstoned for context) ──
+                total_units = (
                     await session.execute(
-                        select(Chunk.project, func.count())
-                        .group_by(Chunk.project)
+                        select(func.count()).select_from(Unit)
+                    )
+                ).scalar() or 0
+                total_revisions = (
+                    await session.execute(
+                        select(func.count()).select_from(UnitRevision)
+                    )
+                ).scalar() or 0
+
+                # ── Breakdowns by project and kind (current only) ──
+                project_rows = (
+                    await session.execute(
+                        select(File.project, func.count())
+                        .where(File.valid_until.is_(None))
+                        .group_by(File.project)
                         .order_by(func.count().desc())
                     )
                 ).all()
 
-                # Chunks by type
-                type_counts = (
+                kind_rows = (
                     await session.execute(
-                        select(Chunk.chunk_type, func.count())
-                        .group_by(Chunk.chunk_type)
+                        select(Unit.kind, func.count())
+                        .where(Unit.valid_until.is_(None))
+                        .group_by(Unit.kind)
                         .order_by(func.count().desc())
                     )
                 ).all()
-
-                # Unique source files
-                file_count = (
-                    await session.execute(
-                        select(func.count(func.distinct(Chunk.source_file)))
-                    )
-                ).scalar() or 0
 
             stats = {
-                "chunks": chunk_count,
-                "entities": entity_count,
-                "relations": relation_count,
-                "observations": observation_count,
-                "files": file_count,
-                "by_project": {p or "(none)": c for p, c in project_counts},
-                "by_type": {t or "(none)": c for t, c in type_counts},
+                "files": files_count,
+                "units": units_count,
+                "revisions_current": current_revisions_count,
+                "revisions_total": total_revisions,
+                "units_total": total_units,
+                "units_tombstoned": total_units - units_count,
+                "embeddings": embeddings_count,
+                "edges": edges_count,
+                "annotations": annotations_count,
+                "commits": commits_count,
+                "by_project": {
+                    p or "(none)": c for p, c in project_rows
+                },
+                "by_kind": {k or "(none)": c for k, c in kind_rows},
             }
             return stats
         finally:
@@ -149,16 +201,25 @@ def run_status(*, output_json: bool = False) -> None:
         console.print_json(json.dumps(stats))
         return
 
-    # Rich display
     table = Table(title="Hafiz Status", show_header=False, border_style="cyan")
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
 
-    table.add_row("Chunks", str(stats["chunks"]))
-    table.add_row("Source files", str(stats["files"]))
-    table.add_row("Entities", str(stats["entities"]))
-    table.add_row("Relations", str(stats["relations"]))
-    table.add_row("Observations", str(stats["observations"]))
+    table.add_row("Files (current)", str(stats["files"]))
+    table.add_row("Units (current)", str(stats["units"]))
+    if stats["units_tombstoned"]:
+        table.add_row(
+            "  [dim]tombstoned[/dim]",
+            f"[dim]{stats['units_tombstoned']}[/dim]",
+        )
+    table.add_row(
+        "Revisions",
+        f"{stats['revisions_current']} current / {stats['revisions_total']} total",
+    )
+    table.add_row("Embeddings", str(stats["embeddings"]))
+    table.add_row("Edges (current)", str(stats["edges"]))
+    table.add_row("Annotations", str(stats["annotations"]))
+    table.add_row("Commits (indexed)", str(stats["commits"]))
     dev = stats["embedding_device"]
     table.add_row(
         "Embedding device",
@@ -170,21 +231,21 @@ def run_status(*, output_json: bool = False) -> None:
 
     if stats["by_project"]:
         console.print()
-        proj_table = Table(title="Chunks by Project", border_style="cyan")
+        proj_table = Table(title="Files by Project", border_style="cyan")
         proj_table.add_column("Project")
-        proj_table.add_column("Chunks", justify="right")
+        proj_table.add_column("Files", justify="right")
         for proj, count in stats["by_project"].items():
             proj_table.add_row(proj, str(count))
         console.print(proj_table)
 
-    if stats["by_type"]:
+    if stats["by_kind"]:
         console.print()
-        type_table = Table(title="Chunks by Type", border_style="cyan")
-        type_table.add_column("Type")
-        type_table.add_column("Chunks", justify="right")
-        for ctype, count in stats["by_type"].items():
-            type_table.add_row(ctype, str(count))
-        console.print(type_table)
+        kind_table = Table(title="Units by Kind", border_style="cyan")
+        kind_table.add_column("Kind")
+        kind_table.add_column("Units", justify="right")
+        for kind, count in stats["by_kind"].items():
+            kind_table.add_row(kind, str(count))
+        console.print(kind_table)
 
 
 def run_config_show(*, output_json: bool = False) -> None:
@@ -279,8 +340,16 @@ def run_doctor(*, output_json: bool = False) -> None:
     # Async checks
     async def _async_checks():
         try:
-            from sqlalchemy import func, inspect, select, text
-            from hafiz.core.database import Chunk, Entity, Relation, Observation
+            from sqlalchemy import func, select, text
+            from hafiz.core.database import (
+                Annotation,
+                Commit,
+                Edge,
+                Embedding,
+                File,
+                Unit,
+                UnitRevision,
+            )
 
             # 4. Database connectivity
             try:
@@ -320,13 +389,17 @@ def run_doctor(*, output_json: bool = False) -> None:
                     fix="Run: hafiz init",
                 )
 
-            # 6. Tables exist
-            expected_tables = {"chunks", "entities", "relations", "observations"}
+            # 6. Tables exist (structural-grounding schema)
+            expected_tables = {
+                "files",
+                "units",
+                "unit_revisions",
+                "embeddings",
+                "edges",
+                "annotations",
+                "commits",
+            }
             try:
-                from sqlalchemy import inspect as sa_inspect
-
-                engine = session_factory.kw.get("bind") or get_session_factory().kw.get("bind")
-                # Use a raw connection to inspect tables
                 async with session_factory() as session:
                     result = await session.execute(
                         text(
@@ -352,23 +425,50 @@ def run_doctor(*, output_json: bool = False) -> None:
                     fix="Run: hafiz init",
                 )
 
-            # 7. Table row counts
+            # 7. Table row counts (current state)
             try:
                 async with session_factory() as session:
-                    chunk_count = (
-                        await session.execute(select(func.count()).select_from(Chunk))
-                    ).scalar() or 0
-                    entity_count = (
-                        await session.execute(select(func.count()).select_from(Entity))
-                    ).scalar() or 0
-                    relation_count = (
+                    files_count = (
                         await session.execute(
-                            select(func.count()).select_from(Relation)
+                            select(func.count())
+                            .select_from(File)
+                            .where(File.valid_until.is_(None))
                         )
                     ).scalar() or 0
-                    observation_count = (
+                    units_count = (
                         await session.execute(
-                            select(func.count()).select_from(Observation)
+                            select(func.count())
+                            .select_from(Unit)
+                            .where(Unit.valid_until.is_(None))
+                        )
+                    ).scalar() or 0
+                    rev_count = (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(UnitRevision)
+                            .where(UnitRevision.superseded_at.is_(None))
+                        )
+                    ).scalar() or 0
+                    emb_count = (
+                        await session.execute(
+                            select(func.count()).select_from(Embedding)
+                        )
+                    ).scalar() or 0
+                    edge_count = (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(Edge)
+                            .where(Edge.superseded_at.is_(None))
+                        )
+                    ).scalar() or 0
+                    ann_count = (
+                        await session.execute(
+                            select(func.count()).select_from(Annotation)
+                        )
+                    ).scalar() or 0
+                    commit_count = (
+                        await session.execute(
+                            select(func.count()).select_from(Commit)
                         )
                     ).scalar() or 0
 
@@ -376,8 +476,10 @@ def run_doctor(*, output_json: bool = False) -> None:
                     "Table row counts",
                     True,
                     detail=(
-                        f"chunks={chunk_count}, entities={entity_count}, "
-                        f"relations={relation_count}, observations={observation_count}"
+                        f"files={files_count}, units={units_count}, "
+                        f"revisions={rev_count}, embeddings={emb_count}, "
+                        f"edges={edge_count}, annotations={ann_count}, "
+                        f"commits={commit_count}"
                     ),
                 )
             except Exception as e:
