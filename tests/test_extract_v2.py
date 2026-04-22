@@ -352,5 +352,10 @@ def test_installed_skills_version_none_when_no_managed_region(tmp_path: Path):
     assert installed_skills_version(target) is None
 
 
-def test_contract_version_constant_matches_skills_marker():
-    assert current_skills_version() == EXTRACT_CONTRACT_VERSION
+def test_skills_version_not_behind_extract_contract():
+    """Agents must always know about at least the current extract-payload
+    version. Skills.md can legitimately advance beyond it — e.g., when
+    a capability outside the extract contract gets added — but falling
+    behind would leave agents sending older payloads than the importer
+    accepts."""
+    assert current_skills_version() >= EXTRACT_CONTRACT_VERSION

@@ -1,7 +1,7 @@
 # Hafiz Command Map
 
 > Source of truth for all hafiz commands. Update this file when commands change.
-> Post-structural-grounding: parsers own structure, agents own meaning — see skills.md v2.
+> Post-structural-grounding: parsers own structure, agents own meaning — see skills.md v3 (adds the self-tuning surface to the agent contract).
 
 ## Brain Types
 
