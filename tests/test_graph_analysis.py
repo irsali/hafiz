@@ -46,15 +46,15 @@ def test_cache_path_preserves_safe_chars():
 
 def test_signature_equality_same_values():
     t = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
-    s1 = ga.GraphSignature(max_updated=t, entity_count=5, relation_count=7)
-    s2 = ga.GraphSignature(max_updated=t, entity_count=5, relation_count=7)
+    s1 = ga.GraphSignature(max_observed=t, unit_count=5, edge_count=7)
+    s2 = ga.GraphSignature(max_observed=t, unit_count=5, edge_count=7)
     assert s1 == s2
 
 
 def test_signature_inequality_on_count_change():
     t = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
-    s1 = ga.GraphSignature(max_updated=t, entity_count=5, relation_count=7)
-    s2 = ga.GraphSignature(max_updated=t, entity_count=4, relation_count=7)
+    s1 = ga.GraphSignature(max_observed=t, unit_count=5, edge_count=7)
+    s2 = ga.GraphSignature(max_observed=t, unit_count=4, edge_count=7)
     # Deletion scenario: count drops but max_updated is unchanged
     assert s1 != s2
 
@@ -62,8 +62,8 @@ def test_signature_inequality_on_count_change():
 def test_signature_inequality_on_timestamp_change():
     t1 = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
     t2 = datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc)
-    s1 = ga.GraphSignature(max_updated=t1, entity_count=5, relation_count=7)
-    s2 = ga.GraphSignature(max_updated=t2, entity_count=5, relation_count=7)
+    s1 = ga.GraphSignature(max_observed=t1, unit_count=5, edge_count=7)
+    s2 = ga.GraphSignature(max_observed=t2, unit_count=5, edge_count=7)
     assert s1 != s2
 
 
@@ -74,16 +74,16 @@ def test_cache_write_and_read_roundtrip(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ga, "CACHE_DIR", tmp_path)
 
     G = nx.MultiDiGraph()
-    G.add_node("a", name="Alpha", entity_type="function")
-    G.add_node("b", name="Beta", entity_type="function")
+    G.add_node("a", name="Alpha", kind="function")
+    G.add_node("b", name="Beta", kind="function")
     # Two parallel edges between a → b — verifies multi-edge semantics survive pickling
-    G.add_edge("a", "b", key="r1", relation_type="calls", weight=1.0, evidence=None)
-    G.add_edge("a", "b", key="r2", relation_type="imports", weight=1.0, evidence=None)
+    G.add_edge("a", "b", key="r1", relation="calls", weight=1.0, evidence=None)
+    G.add_edge("a", "b", key="r2", relation="imports", weight=1.0, evidence=None)
 
     sig = ga.GraphSignature(
-        max_updated=datetime(2026, 4, 21, tzinfo=timezone.utc),
-        entity_count=2,
-        relation_count=2,
+        max_observed=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        unit_count=2,
+        edge_count=2,
     )
     meta = ga.GraphMeta(
         project="demo",
@@ -107,8 +107,8 @@ def test_cache_write_and_read_roundtrip(tmp_path: Path, monkeypatch):
     # MultiDiGraph edge access: G[u][v] returns {key: attrs}
     edges_between = loaded_G["a"]["b"]
     assert set(edges_between.keys()) == {"r1", "r2"}
-    assert edges_between["r1"]["relation_type"] == "calls"
-    assert edges_between["r2"]["relation_type"] == "imports"
+    assert edges_between["r1"]["relation"] == "calls"
+    assert edges_between["r2"]["relation"] == "imports"
     assert loaded_meta.signature == sig
     assert loaded_meta.project == "demo"
 
@@ -166,11 +166,11 @@ async def test_get_cached_graph_uses_cache_when_signature_matches(
 
     # Seed a cache
     G_cached = nx.MultiDiGraph()
-    G_cached.add_node("a", name="Cached", entity_type="function")
+    G_cached.add_node("a", name="Cached", kind="function")
     sig = ga.GraphSignature(
-        max_updated=datetime(2026, 4, 21, tzinfo=timezone.utc),
-        entity_count=1,
-        relation_count=0,
+        max_observed=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        unit_count=1,
+        edge_count=0,
     )
     meta = ga.GraphMeta(
         project=None,
@@ -209,9 +209,9 @@ async def test_get_cached_graph_rebuilds_on_signature_mismatch(
     G_cached = nx.MultiDiGraph()
     G_cached.add_node("old")
     old_sig = ga.GraphSignature(
-        max_updated=datetime(2026, 4, 20, tzinfo=timezone.utc),
-        entity_count=1,
-        relation_count=0,
+        max_observed=datetime(2026, 4, 20, tzinfo=timezone.utc),
+        unit_count=1,
+        edge_count=0,
     )
     meta = ga.GraphMeta(
         project=None,
@@ -225,9 +225,9 @@ async def test_get_cached_graph_rebuilds_on_signature_mismatch(
 
     # Current signature differs — should rebuild
     new_sig = ga.GraphSignature(
-        max_updated=datetime(2026, 4, 21, tzinfo=timezone.utc),
-        entity_count=2,
-        relation_count=1,
+        max_observed=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        unit_count=2,
+        edge_count=1,
     )
 
     async def fake_signature(project=None):
@@ -237,7 +237,7 @@ async def test_get_cached_graph_rebuilds_on_signature_mismatch(
     G_fresh.add_node("new-a")
     G_fresh.add_node("new-b")
     G_fresh.add_edge(
-        "new-a", "new-b", key="r1", relation_type="calls", weight=1.0, evidence=None
+        "new-a", "new-b", key="r1", relation="calls", weight=1.0, evidence=None
     )
 
     async def fake_load(project=None):
@@ -345,19 +345,19 @@ def _toy_graph() -> nx.MultiDiGraph:
         DUPLICATE (proj=A), DUPLICATE (proj=B)  (name collision across projects)
     """
     G = nx.MultiDiGraph()
-    G.add_node("n-alpha", name="alpha", entity_type="function", project="A")
-    G.add_node("n-beta", name="beta", entity_type="function", project="A")
-    G.add_node("n-gamma", name="gamma", entity_type="function", project="B")
-    G.add_node("n-delta", name="delta", entity_type="function", project="A")
-    G.add_node("n-iso", name="isolated", entity_type="function", project="A")
-    G.add_node("n-dup1", name="DUPLICATE", entity_type="function", project="A")
-    G.add_node("n-dup2", name="DUPLICATE", entity_type="class", project="B")
+    G.add_node("n-alpha", name="alpha", kind="function", project="A")
+    G.add_node("n-beta", name="beta", kind="function", project="A")
+    G.add_node("n-gamma", name="gamma", kind="function", project="B")
+    G.add_node("n-delta", name="delta", kind="function", project="A")
+    G.add_node("n-iso", name="isolated", kind="function", project="A")
+    G.add_node("n-dup1", name="DUPLICATE", kind="function", project="A")
+    G.add_node("n-dup2", name="DUPLICATE", kind="class", project="B")
 
-    G.add_edge("n-alpha", "n-beta", key="r1", relation_type="calls")
-    G.add_edge("n-alpha", "n-beta", key="r2", relation_type="imports")
-    G.add_edge("n-beta", "n-gamma", key="r3", relation_type="calls")
-    G.add_edge("n-delta", "n-beta", key="r4", relation_type="calls")
-    G.add_edge("n-gamma", "n-alpha", key="r5", relation_type="calls")
+    G.add_edge("n-alpha", "n-beta", key="r1", relation="calls")
+    G.add_edge("n-alpha", "n-beta", key="r2", relation="imports")
+    G.add_edge("n-beta", "n-gamma", key="r3", relation="calls")
+    G.add_edge("n-delta", "n-beta", key="r4", relation="calls")
+    G.add_edge("n-gamma", "n-alpha", key="r5", relation="calls")
     return G
 
 
@@ -465,7 +465,7 @@ def test_walk_isolated_node():
 def test_edges_between_returns_all_parallel_edges():
     G = _toy_graph()
     edges = ga.edges_between(G, "n-alpha", "n-beta")
-    rel_types = {e["relation_type"] for e in edges}
+    rel_types = {e["relation"] for e in edges}
     assert rel_types == {"calls", "imports"}
 
 
@@ -473,7 +473,7 @@ def test_edges_between_single_edge():
     G = _toy_graph()
     edges = ga.edges_between(G, "n-beta", "n-gamma")
     assert len(edges) == 1
-    assert edges[0]["relation_type"] == "calls"
+    assert edges[0]["relation"] == "calls"
 
 
 def test_edges_between_no_edge():
@@ -623,23 +623,23 @@ def test_graph_stats_components_include_isolated_nodes():
     assert stats.largest_component_size == 4
 
 
-def test_graph_stats_entity_type_counts_sorted_desc():
+def test_graph_stats_kind_counts_sorted_desc():
     G = _toy_graph()
     stats = ga.graph_stats(G)
     # 6 functions + 1 class
-    assert stats.entity_type_counts["function"] == 6
-    assert stats.entity_type_counts["class"] == 1
+    assert stats.kind_counts["function"] == 6
+    assert stats.kind_counts["class"] == 1
     # Sorted by count desc
-    counts = list(stats.entity_type_counts.values())
+    counts = list(stats.kind_counts.values())
     assert counts == sorted(counts, reverse=True)
 
 
-def test_graph_stats_relation_type_counts():
+def test_graph_stats_relation_counts():
     G = _toy_graph()
     stats = ga.graph_stats(G)
     # 4 calls, 1 imports
-    assert stats.relation_type_counts["calls"] == 4
-    assert stats.relation_type_counts["imports"] == 1
+    assert stats.relation_counts["calls"] == 4
+    assert stats.relation_counts["imports"] == 1
 
 
 def test_graph_stats_top_central_respects_limit():

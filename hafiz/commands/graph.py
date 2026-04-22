@@ -36,19 +36,19 @@ def _node_payload(G: nx.MultiDiGraph, node_id: str) -> dict[str, Any]:
     return {
         "id": node_id,
         "name": attrs.get("name"),
-        "entity_type": attrs.get("entity_type"),
-        "description": attrs.get("description"),
+        "kind": attrs.get("kind"),
+        "parent_name": attrs.get("parent_name"),
         "project": attrs.get("project"),
         "source_file": attrs.get("source_file"),
     }
 
 
 def _entity_label(G: nx.MultiDiGraph, node_id: str) -> str:
-    """Rich-formatted one-line label for an entity."""
+    """Rich-formatted one-line label for a unit node."""
     attrs = G.nodes[node_id]
     name = attrs.get("name") or "(unnamed)"
-    etype = attrs.get("entity_type") or "?"
-    return f"[bold]{name}[/bold] [dim]({etype})[/dim]"
+    kind = attrs.get("kind") or "?"
+    return f"[bold]{name}[/bold] [dim]({kind})[/dim]"
 
 
 def _resolve_or_exit(
@@ -72,11 +72,11 @@ def _resolve_or_exit(
         raise SystemExit(1)
     if len(matches) > 1:
         alternatives = ", ".join(
-            f"{G.nodes[n].get('name')} ({G.nodes[n].get('entity_type')})"
+            f"{G.nodes[n].get('name')} ({G.nodes[n].get('kind')})"
             for n in matches
         )
         console.print(
-            f"[yellow]Warning: {len(matches)} entities share the name "
+            f"[yellow]Warning: {len(matches)} units share the name "
             f"{name!r} — using the first. Candidates: {alternatives}[/yellow]",
             highlight=False,
         )
@@ -118,12 +118,12 @@ def run_graph_show(
     # Rich display
     console.print()
     attrs = G.nodes[node]
-    info = f"[bold cyan]{attrs.get('name')}[/bold cyan] [dim]({attrs.get('entity_type')})[/dim]"
-    if attrs.get("description"):
-        info += f"\n{attrs['description']}"
+    info = f"[bold cyan]{attrs.get('name')}[/bold cyan] [dim]({attrs.get('kind')})[/dim]"
+    if attrs.get("parent_name"):
+        info += f"\n[dim]Parent: {attrs['parent_name']}[/dim]"
     if attrs.get("source_file"):
         info += f"\n[dim]Source: {attrs['source_file']}[/dim]"
-    console.print(Panel(info, title="Entity", border_style="cyan"))
+    console.print(Panel(info, title="Unit", border_style="cyan"))
 
     neighbors = [(n, d) for n, d in distances.items() if n != node]
     if not neighbors:
@@ -175,14 +175,14 @@ def _walk_and_render(
     if output_json:
         key = "dependencies" if direction == "out" else "dependents"
         payload = {
-            "entity": _node_payload(G, node),
+            "unit": _node_payload(G, node),
             "direction": direction,
             "depth": depth,
             key: [
                 {
                     **_node_payload(G, n),
                     "distance": d,
-                    "relation_types": _direct_relation_types(G, node, n, direction),
+                    "relations": _direct_relations(G, node, n, direction),
                 }
                 for n, d in reachable
             ],
@@ -196,22 +196,22 @@ def _walk_and_render(
         console.print()
         return
 
-    entity_name = G.nodes[node].get("name")
+    unit_name = G.nodes[node].get("name")
     table = Table(
-        title=f"{title_verb} {entity_name} (depth ≤ {depth}, {len(reachable)} results)",
+        title=f"{title_verb} {unit_name} (depth ≤ {depth}, {len(reachable)} results)",
         border_style="cyan",
     )
-    table.add_column("Entity", style="bold")
-    table.add_column("Type", style="dim")
+    table.add_column("Unit", style="bold")
+    table.add_column("Kind", style="dim")
     table.add_column("Distance", justify="right")
     table.add_column("Direct relations", style="yellow")
 
     for n, d in reachable:
-        rels = _direct_relation_types(G, node, n, direction)
+        rels = _direct_relations(G, node, n, direction)
         rel_cell = ", ".join(rels) if rels else "[dim]—[/dim]"
         table.add_row(
             G.nodes[n].get("name") or "(unnamed)",
-            G.nodes[n].get("entity_type") or "?",
+            G.nodes[n].get("kind") or "?",
             str(d),
             rel_cell,
         )
@@ -220,16 +220,17 @@ def _walk_and_render(
     console.print()
 
 
-def _direct_relation_types(
+def _direct_relations(
     G: nx.MultiDiGraph,
     source: str,
     other: str,
     direction: str,
 ) -> list[str]:
-    """Return relation types of the DIRECT edge(s) between `source` and `other`.
+    """Return relation names of the DIRECT edge(s) between ``source`` and
+    ``other``.
 
-    For indirect paths (distance > 1) this returns [] — the relation types along
-    the multi-hop path aren't rendered here; that's what the `path` command is for.
+    For indirect paths (distance > 1) this returns [] — multi-hop
+    relation labels are the ``path`` command's job.
     """
     if direction == "out":
         edges = ga.edges_between(G, source, other)
@@ -237,14 +238,13 @@ def _direct_relation_types(
         edges = ga.edges_between(G, other, source)
     else:
         edges = ga.edges_between(G, source, other) + ga.edges_between(G, other, source)
-    # Deduplicate while preserving insertion order
     seen: set[str] = set()
     result: list[str] = []
     for e in edges:
-        rt = e.get("relation_type")
-        if rt and rt not in seen:
-            seen.add(rt)
-            result.append(rt)
+        rel = e.get("relation")
+        if rel and rel not in seen:
+            seen.add(rel)
+            result.append(rel)
     return result
 
 
@@ -319,7 +319,7 @@ def run_graph_path(
                     {
                         **_node_payload(G, path[i]),
                         "next_relations": (
-                            _direct_relation_types(G, path[i], path[i + 1], "out")
+                            _direct_relations(G, path[i], path[i + 1], "out")
                             if i + 1 < len(path)
                             else []
                         ),
@@ -349,7 +349,7 @@ def run_graph_path(
     for i, nid in enumerate(path):
         label = _entity_label(G, nid)
         if i + 1 < len(path):
-            rels = _direct_relation_types(G, nid, path[i + 1], "out")
+            rels = _direct_relations(G, nid, path[i + 1], "out")
             rel_str = f" [yellow]--({', '.join(rels)})-->[/yellow]" if rels else " -->"
             label = f"{label}{rel_str}"
         tree.add(label)
@@ -403,8 +403,8 @@ def run_graph_rank(
         border_style="cyan",
     )
     table.add_column("#", justify="right", style="dim")
-    table.add_column("Entity", style="bold")
-    table.add_column("Type", style="dim")
+    table.add_column("Unit", style="bold")
+    table.add_column("Kind", style="dim")
     table.add_column("Project", style="dim")
     table.add_column("Score", justify="right")
 
@@ -413,7 +413,7 @@ def run_graph_rank(
         table.add_row(
             str(idx),
             attrs.get("name") or "(unnamed)",
-            attrs.get("entity_type") or "?",
+            attrs.get("kind") or "?",
             attrs.get("project") or "—",
             f"{score:.4f}",
         )
@@ -458,20 +458,20 @@ def run_graph_stats(
     summary.add_row("Isolated nodes", str(stats.isolated_nodes))
     console.print(summary)
 
-    if stats.entity_type_counts:
-        etable = Table(title="Entity types", border_style="cyan")
-        etable.add_column("Type")
+    if stats.kind_counts:
+        etable = Table(title="Unit kinds", border_style="cyan")
+        etable.add_column("Kind")
         etable.add_column("Count", justify="right")
-        for t, c in stats.entity_type_counts.items():
+        for t, c in stats.kind_counts.items():
             etable.add_row(t, str(c))
         console.print()
         console.print(etable)
 
-    if stats.relation_type_counts:
-        rtable = Table(title="Relation types", border_style="cyan")
-        rtable.add_column("Type")
+    if stats.relation_counts:
+        rtable = Table(title="Edge relations", border_style="cyan")
+        rtable.add_column("Relation")
         rtable.add_column("Count", justify="right")
-        for t, c in stats.relation_type_counts.items():
+        for t, c in stats.relation_counts.items():
             rtable.add_row(t, str(c))
         console.print()
         console.print(rtable)
@@ -481,15 +481,15 @@ def run_graph_stats(
             title=f"Top {len(stats.top_by_pagerank)} by PageRank",
             border_style="cyan",
         )
-        ttable.add_column("Entity", style="bold")
-        ttable.add_column("Type", style="dim")
+        ttable.add_column("Unit", style="bold")
+        ttable.add_column("Kind", style="dim")
         ttable.add_column("Project", style="dim")
         ttable.add_column("Score", justify="right")
         for nid, score in stats.top_by_pagerank:
             attrs = G.nodes[nid]
             ttable.add_row(
                 attrs.get("name") or "(unnamed)",
-                attrs.get("entity_type") or "?",
+                attrs.get("kind") or "?",
                 attrs.get("project") or "—",
                 f"{score:.4f}",
             )

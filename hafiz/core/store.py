@@ -38,6 +38,7 @@ from hafiz.core.chunker import (
     prepare_embedding_parts,
 )
 from hafiz.core.database import (
+    Edge,
     Embedding,
     File,
     Unit,
@@ -45,7 +46,7 @@ from hafiz.core.database import (
     get_session_factory,
 )
 from hafiz.core.embeddings import embed_texts
-from hafiz.core.parsers import ParsedUnit, Parser, get_registry
+from hafiz.core.parsers import ParsedEdge, ParsedUnit, Parser, get_registry
 
 
 EmbedFn = Callable[[list[str]], Awaitable[list[list[float]]]]
@@ -62,6 +63,8 @@ class IndexedFileResult:
     revisions_created: int
     embeddings_written: int
     units_tombstoned: int
+    edges_written: int = 0
+    edges_superseded: int = 0
 
 
 def compute_identity_key(
@@ -317,6 +320,16 @@ async def index_file(
                 current.superseded_at = now
             units_tombstoned += 1
 
+        # Edges — same-file resolution, append-only with supersession.
+        edges_written, edges_superseded = await _sync_edges(
+            session,
+            file=file,
+            parsed_edges=parse_result.edges,
+            source_tag=source_tag,
+            commit_hash=commit_hash,
+            now=now,
+        )
+
         if owns_session:
             await session.commit()
 
@@ -327,10 +340,143 @@ async def index_file(
             revisions_created=len(changed_revisions),
             embeddings_written=embeddings_written,
             units_tombstoned=units_tombstoned,
+            edges_written=edges_written,
+            edges_superseded=edges_superseded,
         )
     finally:
         if owns_session:
             await session.close()
+
+
+async def _sync_edges(
+    session: AsyncSession,
+    *,
+    file: File,
+    parsed_edges: list[ParsedEdge],
+    source_tag: str,
+    commit_hash: str | None,
+    now: datetime,
+) -> tuple[int, int]:
+    """Reconcile the edges table against a fresh parse of ``file``.
+
+    Same-file resolution only: ``target_name`` binds to a local Unit's id
+    if the name exactly matches; otherwise ``target_unit_id`` stays null
+    and ``target_name`` carries the unresolved (probably external)
+    reference. Cross-file / cross-project resolution is a later concern
+    (scoped to Phase 4b).
+
+    Edges are compared by their identity tuple ``(source_unit_id,
+    target_unit_id, target_name, relation)``. Edges in the new parse but
+    not in the current edge set are inserted; edges in the current set
+    but not in the new parse get ``superseded_at = now``. Edges that
+    appear in both are untouched — zero DB churn on re-ingest of
+    unchanged content.
+
+    Edges whose ``source_name`` can't be resolved to a unit are dropped
+    silently. That only happens for parser bugs or edges synthesised
+    outside the parsed file — genuine code edges always have a resolvable
+    source.
+
+    The ``edges`` CHECK constraint restricts ``source`` to
+    ``{'ast','agent','user'}``. Parser callers with ``source_tag ==
+    'parser'`` (prose / whole-file) produce no edges in practice — their
+    :class:`~hafiz.core.parsers.ParseResult.edges` is empty. Guard here
+    anyway: map ``'parser'`` → skip entirely so we don't violate the CHECK.
+    """
+    if source_tag not in ("ast", "agent", "user"):
+        # Non-edge-producing parsers (prose, whole_file) — skip cleanly.
+        if parsed_edges:
+            # This would be a parser bug; fail loudly so it's caught in tests.
+            raise ValueError(
+                f"Parser with source_tag={source_tag!r} produced "
+                f"{len(parsed_edges)} edges; only 'ast' may write to edges."
+            )
+        # Still supersede any stale edges from a previous run.
+        parsed_edges = []
+        source_tag_for_writes = "ast"  # unreachable; placate type checker
+    else:
+        source_tag_for_writes = source_tag
+
+    # ── Resolve source_name / target_name against the file's current units ──
+    file_unit_stmt = select(Unit).where(
+        Unit.file_id == file.id, Unit.valid_until.is_(None)
+    )
+    file_units = (await session.execute(file_unit_stmt)).scalars().all()
+    by_name: dict[str, Unit] = {u.name: u for u in file_units}
+
+    new_edges: list[dict] = []
+    for pe in parsed_edges:
+        src = by_name.get(pe.source_name)
+        if src is None:
+            # Source didn't resolve — probably a parser quirk. Drop.
+            continue
+        tgt = by_name.get(pe.target_name)
+        new_edges.append(
+            {
+                "source_unit_id": src.id,
+                "target_unit_id": tgt.id if tgt is not None else None,
+                "target_name": pe.target_name,
+                "relation": pe.relation,
+                "evidence": pe.evidence,
+                "line": pe.line,
+            }
+        )
+
+    # Dedupe new edges by identity tuple — two syntactically identical
+    # edges from the parser (e.g. the same import emitted twice) collapse.
+    def _fp(e: dict) -> tuple:
+        return (e["source_unit_id"], e["target_unit_id"], e["target_name"], e["relation"])
+
+    new_by_fp: dict[tuple, dict] = {}
+    for e in new_edges:
+        new_by_fp.setdefault(_fp(e), e)
+
+    # ── Fetch current (non-superseded) edges whose source is in this file ──
+    if file_units:
+        current_stmt = select(Edge).where(
+            Edge.source_unit_id.in_([u.id for u in file_units]),
+            Edge.superseded_at.is_(None),
+        )
+        current_edges = (await session.execute(current_stmt)).scalars().all()
+    else:
+        current_edges = []
+
+    current_by_fp: dict[tuple, Edge] = {}
+    for e in current_edges:
+        fp = (e.source_unit_id, e.target_unit_id, e.target_name, e.relation)
+        current_by_fp[fp] = e
+
+    # ── Supersede edges that no longer appear in the parse ──
+    superseded = 0
+    for fp, edge in current_by_fp.items():
+        if fp not in new_by_fp:
+            edge.superseded_at = now
+            superseded += 1
+
+    # ── Insert edges that aren't in the current set ──
+    written = 0
+    for fp, e in new_by_fp.items():
+        if fp in current_by_fp:
+            continue
+        session.add(
+            Edge(
+                id=uuid.uuid4(),
+                source_unit_id=e["source_unit_id"],
+                target_unit_id=e["target_unit_id"],
+                target_name=e["target_name"],
+                relation=e["relation"],
+                source=source_tag_for_writes,
+                evidence=e["evidence"],
+                commit_hash=commit_hash,
+                observed_at=now,
+                metadata_={"line": e["line"]} if e["line"] else {},
+            )
+        )
+        written += 1
+
+    if written or superseded:
+        await session.flush()
+    return written, superseded
 
 
 async def tombstone_vanished_files(

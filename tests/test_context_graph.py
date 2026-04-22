@@ -19,18 +19,21 @@ from hafiz.core.search import SearchResult
 
 
 def _chunk(source_file: str, score: float = 0.9) -> SearchResult:
-    """Minimal SearchResult for testing — only `source_file` is used downstream."""
+    """Minimal SearchResult for testing — only ``source_file`` is used
+    downstream by ``_graph_from_chunks``."""
     return SearchResult(
-        id=f"chunk-{source_file}",
+        id=f"emb-{source_file}",
+        unit_id=f"unit-{source_file}",
+        unit_name=source_file.rsplit(".", 1)[0],
+        kind="code.function",
         content="irrelevant",
         source_file=source_file,
         line_start=1,
         line_end=10,
-        chunk_type="code",
         language="python",
         project="demo",
+        part_index=0,
         score=score,
-        metadata={},
     )
 
 
@@ -51,31 +54,31 @@ def _context_graph() -> nx.MultiDiGraph:
     project "other" and shares a file with `handler` (used for project-filter tests).
     """
     G = nx.MultiDiGraph()
-    G.add_node("n-handler", name="handler", entity_type="function",
+    G.add_node("n-handler", name="handler", kind="function",
                source_file="api.py", project="demo")
-    G.add_node("n-router", name="router", entity_type="function",
+    G.add_node("n-router", name="router", kind="function",
                source_file="router.py", project="demo")
-    G.add_node("n-auth", name="auth", entity_type="function",
+    G.add_node("n-auth", name="auth", kind="function",
                source_file="auth.py", project="demo")
-    G.add_node("n-secrets", name="secrets", entity_type="module",
+    G.add_node("n-secrets", name="secrets", kind="module",
                source_file="sec.py", project="demo")
-    G.add_node("n-vault", name="vault", entity_type="service",
+    G.add_node("n-vault", name="vault", kind="service",
                source_file="v.py", project="demo")
-    G.add_node("n-db", name="db_client", entity_type="class",
+    G.add_node("n-db", name="db_client", kind="class",
                source_file="db.py", project="demo")
-    G.add_node("n-pool", name="pool", entity_type="class",
+    G.add_node("n-pool", name="pool", kind="class",
                source_file="db.py", project="demo")
-    G.add_node("n-orphan", name="orphan", entity_type="function",
+    G.add_node("n-orphan", name="orphan", kind="function",
                source_file="other.py", project="demo")
-    G.add_node("n-oos", name="out_of_scope", entity_type="function",
+    G.add_node("n-oos", name="out_of_scope", kind="function",
                source_file="api.py", project="other")
 
-    G.add_edge("n-handler", "n-router", key="r1", relation_type="calls", weight=1.0)
-    G.add_edge("n-router", "n-auth", key="r2", relation_type="calls", weight=1.0)
-    G.add_edge("n-auth", "n-secrets", key="r3", relation_type="reads", weight=1.0)
-    G.add_edge("n-secrets", "n-vault", key="r4", relation_type="depends_on", weight=1.0)
-    G.add_edge("n-handler", "n-db", key="r5", relation_type="calls", weight=1.0)
-    G.add_edge("n-db", "n-pool", key="r6", relation_type="depends_on", weight=1.0)
+    G.add_edge("n-handler", "n-router", key="r1", relation="calls", weight=1.0)
+    G.add_edge("n-router", "n-auth", key="r2", relation="calls", weight=1.0)
+    G.add_edge("n-auth", "n-secrets", key="r3", relation="reads", weight=1.0)
+    G.add_edge("n-secrets", "n-vault", key="r4", relation="depends_on", weight=1.0)
+    G.add_edge("n-handler", "n-db", key="r5", relation="calls", weight=1.0)
+    G.add_edge("n-db", "n-pool", key="r6", relation="depends_on", weight=1.0)
     return G
 
 

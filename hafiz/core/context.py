@@ -1,7 +1,20 @@
-"""Context synthesizer — combines chunks, graph, and observations into a unified bundle.
+"""Context synthesizer — combines retrieved chunks, graph neighborhood,
+and annotations into a unified bundle.
 
-The killer feature: `hafiz context "task description"` pulls together everything
-Hafiz knows that's relevant to a task.
+The killer feature: ``hafiz context "task description"`` pulls together
+everything Hafiz knows that's relevant to a task. Post-structural-grounding:
+
+  - "Chunks" are ``embeddings`` rows joined back to ``unit_revisions →
+    units → files``. Each result is one embedding part (typically the
+    whole unit, sometimes a sub-part for oversized content).
+  - "Entities" are current ``Unit`` rows (``kind``, ``name``,
+    ``parent_name``, ``source_file``, ``project``). Graph expansion
+    walks current ``Edge`` rows.
+  - "Observations" are ``Annotation`` rows — same wisdom layer, renamed.
+
+Transcript-neighbor expansion is temporarily disabled: Phase 3b-2 rewires
+``hafiz.core.capture`` onto the new schema. Until then, retrieved chunks
+pass through unchanged.
 """
 
 from __future__ import annotations
@@ -13,10 +26,9 @@ import networkx as nx
 from sqlalchemy import select
 
 from hafiz.core import graph_analysis as ga
-from hafiz.core.capture import expand_transcript_neighbors
+from hafiz.core.annotations import AnnotationResult, search_annotations
 from hafiz.core.config import get_settings
-from hafiz.core.database import Chunk, get_session_factory
-from hafiz.core.observations import ObservationResult, search_observations
+from hafiz.core.database import File, get_session_factory
 from hafiz.core.search import SearchResult, vector_search
 
 
@@ -27,76 +39,81 @@ class ContextBundle:
     query: str
     chunks: list[SearchResult] = field(default_factory=list)
     entities: list[dict] = field(default_factory=list)
-    observations: list[ObservationResult] = field(default_factory=list)
+    annotations: list[AnnotationResult] = field(default_factory=list)
     project_distribution: dict[str, int] | None = None
 
     def to_markdown(self) -> str:
         """Render the context bundle as Markdown."""
         sections = [f"# Context: {self.query}"]
 
-        # Relevant Code
-        sections.append("\n## Relevant Code")
+        # ── Relevant Code / Content ──
+        sections.append("\n## Relevant Content")
         if self.chunks:
             for c in self.chunks:
-                location = c.source_file
+                location = f"{c.source_file}::{c.unit_name}"
                 if c.line_start and c.line_end:
                     location += f":{c.line_start}-{c.line_end}"
                 lang = f" ({c.language})" if c.language else ""
-                if c.is_neighbor:
-                    turn = c.metadata.get("turn_index")
-                    suffix = f" — transcript neighbor (turn {turn})" if turn is not None else " — transcript neighbor"
-                    sections.append(f"\n### {location}{lang}{suffix}")
-                else:
-                    sections.append(f"\n### {location}{lang}  — similarity {c.score:.2%}")
+                part_marker = (
+                    f" — part {c.part_index}" if c.part_index > 0 else ""
+                )
+                sections.append(
+                    f"\n### {location}{lang}{part_marker}"
+                    f"  — similarity {c.score:.2%}"
+                )
                 sections.append(f"```{c.language or ''}\n{c.content}\n```")
         else:
-            sections.append("\n_No relevant code chunks found._")
+            sections.append("\n_No relevant content found._")
 
-        # Knowledge Graph
+        # ── Knowledge Graph ──
         sections.append("\n## Knowledge Graph")
         if self.entities:
             for ent in self.entities:
                 badges = []
                 if ent.get("is_seed"):
                     badges.append("seed")
-                if (dist := ent.get("distance")) is not None and not ent.get("is_seed"):
+                if (dist := ent.get("distance")) is not None and not ent.get(
+                    "is_seed"
+                ):
                     badges.append(f"{dist} hop{'s' if dist != 1 else ''} away")
                 if (pr := ent.get("pagerank_score")) is not None:
                     badges.append(f"PR {pr:.4f}")
                 badge_str = f" _[{' · '.join(badges)}]_" if badges else ""
                 sections.append(
-                    f"\n**{ent['name']}** ({ent['entity_type']}){badge_str}"
+                    f"\n**{ent['name']}** ({ent['kind']}){badge_str}"
                 )
-                if ent.get("description"):
-                    sections.append(f"  {ent['description']}")
+                if ent.get("parent_name"):
+                    sections.append(f"  parent: `{ent['parent_name']}`")
                 for conn in ent.get("connections", []):
                     sections.append(
-                        f"  - {conn['direction']} **{conn['entity']}** "
+                        f"  - {conn['direction']} **{conn['unit']}** "
                         f"via _{conn['relation']}_"
                     )
         else:
-            sections.append("\n_No related entities found._")
+            sections.append("\n_No related units found._")
 
-        # Project Distribution (workspace mode)
+        # ── Project Distribution (workspace mode) ──
         if self.project_distribution:
             sections.append("\n## Project Distribution")
             for proj, count in sorted(
-                self.project_distribution.items(), key=lambda x: x[1], reverse=True
+                self.project_distribution.items(),
+                key=lambda x: x[1],
+                reverse=True,
             ):
-                sections.append(f"- **{proj}**: {count} chunks")
+                sections.append(f"- **{proj}**: {count} matches")
 
-        # Decisions & Facts
+        # ── Annotations ──
         sections.append("\n## Decisions & Facts")
-        if self.observations:
-            for o in self.observations:
-                source = f" (source: {o.source})" if o.source else ""
+        if self.annotations:
+            for a in self.annotations:
+                source = f" (source: {a.source})" if a.source else ""
                 sections.append(
-                    f"\n- **[{o.obs_type}]** {o.content}  "
-                    f"— confidence {o.confidence:.0%}, "
-                    f"similarity {o.score:.2%}{source}"
+                    f"\n- **[{a.kind}]** {a.content}  "
+                    f"— confidence {a.confidence:.0%}, "
+                    f"similarity {a.score:.2%}{source}"
                 )
         else:
-            sections.append("\n_No matching observations._")
+            sections.append("\n_No matching annotations._")
 
         return "\n".join(sections)
 
@@ -107,33 +124,34 @@ class ContextBundle:
             "chunks": [
                 {
                     "id": c.id,
+                    "unit_id": c.unit_id,
+                    "unit_name": c.unit_name,
+                    "kind": c.kind,
                     "content": c.content,
                     "source_file": c.source_file,
                     "line_start": c.line_start,
                     "line_end": c.line_end,
-                    "chunk_type": c.chunk_type,
                     "language": c.language,
                     "project": c.project,
+                    "part_index": c.part_index,
                     "score": c.score,
-                    "is_neighbor": c.is_neighbor,
-                    "transcript_id": c.metadata.get("transcript_id"),
-                    "turn_index": c.metadata.get("turn_index"),
                 }
                 for c in self.chunks
             ],
             "entities": self.entities,
-            "observations": [
+            "annotations": [
                 {
-                    "id": o.id,
-                    "content": o.content,
-                    "obs_type": o.obs_type,
-                    "source": o.source,
-                    "project": o.project,
-                    "tags": o.tags,
-                    "confidence": o.confidence,
-                    "score": o.score,
+                    "id": a.id,
+                    "content": a.content,
+                    "kind": a.kind,
+                    "source": a.source,
+                    "project": a.project,
+                    "tags": a.tags,
+                    "confidence": a.confidence,
+                    "unit_id": a.unit_id,
+                    "score": a.score,
                 }
-                for o in self.observations
+                for a in self.annotations
             ],
         }
         if self.project_distribution is not None:
@@ -146,78 +164,53 @@ async def build_context(
     *,
     project: str | None = None,
     limit_chunks: int = 5,
-    limit_observations: int = 5,
+    limit_annotations: int = 5,
 ) -> ContextBundle:
-    """Build a context bundle by combining chunks, graph, and observations.
+    """Build a context bundle by combining embeddings, graph, and annotations.
 
-    1. Vector search over chunks
-    2. Find entities mentioned in top chunk source files, load their connections
-    3. Semantic search over observations
-
-    Args:
-        query: The task description or question.
-        project: Filter all sources by project.
-        limit_chunks: Max code chunks to include.
-        limit_observations: Max observations to include.
-
-    Returns:
-        A ContextBundle with all relevant context.
+    1. Vector search over embeddings (current revisions of current units).
+    2. Graph neighborhood seeded by the files that produced those hits.
+    3. Semantic search over annotations.
     """
-    # 1. Relevant chunks
-    chunks = await vector_search(
-        query, limit=limit_chunks, project=project
-    )
-
-    # 1b. Transcript neighbour expansion — when a transcript chunk wins,
-    # surface ±1 surrounding turn so agents see context, not an orphan line.
-    chunks = await expand_transcript_neighbors(chunks)
-
-    # 2. Graph neighbours — find entities in files that produced top chunks
+    chunks = await vector_search(query, limit=limit_chunks, project=project)
     entities = await _graph_from_chunks(chunks, project=project)
-
-    # 3. Matching observations
-    observations = await search_observations(
-        query, limit=limit_observations, project=project
+    annotations = await search_annotations(
+        query, limit=limit_annotations, project=project
     )
 
     return ContextBundle(
         query=query,
         chunks=chunks,
         entities=entities,
-        observations=observations,
+        annotations=annotations,
     )
 
 
 async def _all_indexed_projects() -> set[str]:
-    """Return the set of all project names that have indexed chunks."""
+    """Return the set of all project names with at least one current file."""
     session_factory = get_session_factory()
     async with session_factory() as session:
         result = await session.execute(
-            select(Chunk.project)
-            .where(Chunk.project.isnot(None))
-            .group_by(Chunk.project)
+            select(File.project)
+            .where(File.project.isnot(None))
+            .where(File.valid_until.is_(None))
+            .group_by(File.project)
         )
         return {row[0] for row in result.all()}
 
 
 def _normalize(name: str) -> str:
-    """Normalize a name for fuzzy matching: lowercase, strip spaces/hyphens/underscores."""
+    """Fuzzy-match helper: lowercase, strip spaces/hyphens/underscores."""
     return name.lower().replace(" ", "").replace("-", "").replace("_", "")
 
 
-def _match_dirs_to_projects(dir_names: set[str], indexed: set[str]) -> list[str]:
-    """Match directory names to indexed project names.
-
-    Tries exact match first, then normalized (case-insensitive, ignore
-    spaces/hyphens/underscores) to handle common mismatches like
-    'Admin Portal' dir -> 'AdminPortal' project tag.
-    """
+def _match_dirs_to_projects(
+    dir_names: set[str], indexed: set[str]
+) -> list[str]:
+    """Match directory names to indexed project names. Exact then normalized."""
     matched: set[str] = set()
-
-    # Exact matches
     matched |= dir_names & indexed
 
-    # Normalized matching for the rest
     remaining = indexed - matched
     if remaining:
         norm_to_project = {_normalize(p): p for p in remaining}
@@ -232,18 +225,12 @@ def _match_dirs_to_projects(dir_names: set[str], indexed: set[str]) -> list[str]
 async def resolve_workspace_projects(cwd: Path | None = None) -> list[str]:
     """Resolve workspace-sibling projects from the filesystem.
 
-    Logic:
-    1. Get the parent directory of cwd (the "workspace root").
+    1. Get cwd.parent (the "workspace root").
     2. List its subdirectories (sibling projects).
-    3. Match directory names against indexed project tags in the DB,
-       using normalized matching (case-insensitive, ignore spaces/hyphens).
+    3. Match directory names against indexed project tags in the DB.
 
-    Edge case: if cwd itself has no matching project in the DB but its
-    children do, treat cwd as the workspace root (use children instead
-    of siblings).
-
-    Returns:
-        List of matched project names (DB names, not dir names).
+    Fallback: if no sibling matches but cwd's own children do, treat cwd
+    as the workspace root (use children instead of siblings).
     """
     if cwd is None:
         cwd = Path.cwd()
@@ -252,23 +239,23 @@ async def resolve_workspace_projects(cwd: Path | None = None) -> list[str]:
     if not indexed:
         return []
 
-    # Try siblings first: parent's children
     parent = cwd.parent
     sibling_names = {
-        d.name for d in parent.iterdir() if d.is_dir() and not d.name.startswith(".")
+        d.name
+        for d in parent.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
     }
     matched = _match_dirs_to_projects(sibling_names, indexed)
 
     if matched:
         return matched
 
-    # Fallback: maybe cwd IS the workspace root — check its children
     child_names = {
-        d.name for d in cwd.iterdir() if d.is_dir() and not d.name.startswith(".")
+        d.name
+        for d in cwd.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
     }
-    matched = _match_dirs_to_projects(child_names, indexed)
-
-    return matched
+    return _match_dirs_to_projects(child_names, indexed)
 
 
 async def build_workspace_context(
@@ -276,35 +263,15 @@ async def build_workspace_context(
     *,
     projects: list[str],
     limit_chunks: int = 10,
-    limit_observations: int = 10,
+    limit_annotations: int = 10,
 ) -> ContextBundle:
-    """Build context scoped to workspace-sibling projects.
-
-    Searches chunks and observations filtered to the given project list.
-    Includes project distribution to show which projects contributed.
-
-    Args:
-        query: The task description or question.
-        projects: Project names to search across (resolved from filesystem).
-        limit_chunks: Max code chunks (higher default for cross-project).
-        limit_observations: Max observations (higher default for cross-project).
-
-    Returns:
-        A ContextBundle with cross-project context and distribution info.
-    """
-    # Search across workspace projects
+    """Build context scoped to workspace-sibling projects."""
     chunks = await vector_search(query, limit=limit_chunks, project=projects)
-    chunks = await expand_transcript_neighbors(chunks)
-
-    # Graph neighbours from matched chunks
     entities = await _graph_from_chunks(chunks, project=projects)
-
-    # Observations across workspace projects
-    observations = await search_observations(
-        query, limit=limit_observations, project=projects
+    annotations = await search_annotations(
+        query, limit=limit_annotations, project=projects
     )
 
-    # Compute project distribution from the returned chunks
     distribution: dict[str, int] = {}
     for c in chunks:
         proj = c.project or "(untagged)"
@@ -314,40 +281,40 @@ async def build_workspace_context(
         query=query,
         chunks=chunks,
         entities=entities,
-        observations=observations,
+        annotations=annotations,
         project_distribution=distribution,
     )
 
 
 def _in_project(attrs: dict, project: str | list[str] | None) -> bool:
-    """True if entity `attrs` passes the project scope filter."""
+    """True if a graph node's attrs pass the project scope filter."""
     if project is None:
         return True
-    ent_project = attrs.get("project")
+    unit_project = attrs.get("project")
     if isinstance(project, str):
-        return ent_project == project
-    return ent_project in project
+        return unit_project == project
+    return unit_project in project
 
 
 def _connections_for(G: nx.MultiDiGraph, node_id: str) -> list[dict]:
-    """Flatten a node's incoming + outgoing parallel edges into display dicts."""
+    """Flatten a node's in + out parallel edges into display dicts."""
     out: list[dict] = []
     for _, target, data in G.out_edges(node_id, data=True):
         out.append(
             {
                 "direction": "-->",
-                "relation": data.get("relation_type"),
-                "entity": G.nodes[target].get("name"),
-                "entity_type": G.nodes[target].get("entity_type"),
+                "relation": data.get("relation"),
+                "unit": G.nodes[target].get("name"),
+                "kind": G.nodes[target].get("kind"),
             }
         )
     for source, _, data in G.in_edges(node_id, data=True):
         out.append(
             {
                 "direction": "<--",
-                "relation": data.get("relation_type"),
-                "entity": G.nodes[source].get("name"),
-                "entity_type": G.nodes[source].get("entity_type"),
+                "relation": data.get("relation"),
+                "unit": G.nodes[source].get("name"),
+                "kind": G.nodes[source].get("kind"),
             }
         )
     return out
@@ -362,15 +329,10 @@ async def _graph_from_chunks(
 ) -> list[dict]:
     """Expand from retrieved chunks into the knowledge graph.
 
-    Algorithm:
-      1. Seed: every entity whose `source_file` matches one of the chunks'.
-      2. Multi-source BFS up to `depth` hops (undirected) — distance tracked as
-         min distance to any seed.
-      3. Rank by (distance asc, PageRank desc) — nearest + most central first.
-      4. Cap to `max_entities` so a hub entity can't flood the bundle.
-
-    Each returned entity carries `distance`, `is_seed`, `pagerank_score`, and
-    its 1-hop `connections` list (preserving the existing display contract).
+    1. Seed: every unit whose ``source_file`` matches one of the chunks'.
+    2. Multi-source BFS up to ``depth`` hops (undirected).
+    3. Rank by (distance asc, PageRank desc).
+    4. Cap to ``max_entities`` so a hub unit can't flood the bundle.
     """
     settings = get_settings().graph
     if depth is None:
@@ -382,46 +344,41 @@ async def _graph_from_chunks(
     if not source_files:
         return []
 
-    # Load the cached graph. A project-scoped cache is only possible for a single
-    # string project; list or None falls back to the global graph and filters
-    # via `_in_project`. (See Hafiz observation "graph cache scoping" for context
-    # on future multi-project cache scopes.)
     cache_scope = project if isinstance(project, str) else None
     G, _ = await ga.get_cached_graph(project=cache_scope)
     if G.number_of_nodes() == 0:
         return []
 
-    # Seed: entities in the retrieved source files, respecting project scope
     seed_ids = [
         nid
         for nid, attrs in G.nodes(data=True)
-        if attrs.get("source_file") in source_files and _in_project(attrs, project)
+        if attrs.get("source_file") in source_files
+        and _in_project(attrs, project)
     ]
     if not seed_ids:
         return []
 
-    # Multi-source BFS — distance = min over seeds
     distances: dict[str, int] = {}
     for seed in seed_ids:
-        for nid, dist in ga.walk(G, seed, depth=depth, direction="both").items():
+        for nid, dist in ga.walk(
+            G, seed, depth=depth, direction="both"
+        ).items():
             prev = distances.get(nid)
             if prev is None or dist < prev:
                 distances[nid] = dist
 
-    # For workspace (list) mode we're using the global graph, so drop walked
-    # neighbors that landed outside the project scope.
     if isinstance(project, list):
         distances = {
-            nid: d for nid, d in distances.items() if _in_project(G.nodes[nid], project)
+            nid: d
+            for nid, d in distances.items()
+            if _in_project(G.nodes[nid], project)
         }
 
-    # PageRank on the (scope-appropriate) graph
     if G.number_of_edges() > 0:
         pr = nx.pagerank(G, weight="weight")
     else:
         pr = {}
 
-    # Rank: nearest first, then most structurally central
     ranked = sorted(
         distances.items(),
         key=lambda kv: (kv[1], -pr.get(kv[0], 0.0)),
@@ -431,8 +388,8 @@ async def _graph_from_chunks(
     return [
         {
             "name": G.nodes[nid].get("name"),
-            "entity_type": G.nodes[nid].get("entity_type"),
-            "description": G.nodes[nid].get("description"),
+            "kind": G.nodes[nid].get("kind"),
+            "parent_name": G.nodes[nid].get("parent_name"),
             "source_file": G.nodes[nid].get("source_file"),
             "project": G.nodes[nid].get("project"),
             "distance": dist,

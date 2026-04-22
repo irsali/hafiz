@@ -18,10 +18,4 @@ collect_ignore = [
     # hafiz/core/capture.py still imports ChunkResult from chunker and
     # Chunk from database. Un-quarantine when capture is rewired.
     "test_capture.py",
-    # hafiz/core/context.py still imports from the old observations module
-    # and indirectly from graph_analysis → Entity/Relation.
-    "test_context_graph.py",
-    # hafiz/core/graph_analysis.py uses Entity/Relation at module scope.
-    # Un-quarantine when Phase 4 (edge resolver + graph) rewires it.
-    "test_graph_analysis.py",
 ]

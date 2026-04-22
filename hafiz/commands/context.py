@@ -20,7 +20,7 @@ def run_context(
     project: str | None = None,
     workspace: bool = False,
     limit_chunks: int = 5,
-    limit_observations: int = 5,
+    limit_annotations: int = 5,
     output_json: bool = False,
 ) -> None:
     """Build and display a context bundle for a task description."""
@@ -44,24 +44,16 @@ def run_context(
                     query,
                     projects=projects,
                     limit_chunks=limit_chunks * 2,
-                    limit_observations=limit_observations * 2,
-                )
-            elif project:
-                from hafiz.core.context import build_context
-
-                bundle = await build_context(
-                    query,
-                    project=project,
-                    limit_chunks=limit_chunks,
-                    limit_observations=limit_observations,
+                    limit_annotations=limit_annotations * 2,
                 )
             else:
                 from hafiz.core.context import build_context
 
                 bundle = await build_context(
                     query,
+                    project=project,
                     limit_chunks=limit_chunks,
-                    limit_observations=limit_observations,
+                    limit_annotations=limit_annotations,
                 )
             return bundle
         finally:
@@ -73,7 +65,11 @@ def run_context(
         console.print_json(json.dumps(bundle.to_dict(), default=str))
         return
 
-    title = f"Context (workspace): {query[:50]}" if workspace else f"Context: {query[:60]}"
+    title = (
+        f"Context (workspace): {query[:50]}"
+        if workspace
+        else f"Context: {query[:60]}"
+    )
     console.print()
     md = Markdown(bundle.to_markdown())
     console.print(
@@ -86,11 +82,10 @@ def run_context(
     )
     console.print()
 
-    # Summary line
     summary = (
         f"  [dim]Chunks: {len(bundle.chunks)} | "
-        f"Entities: {len(bundle.entities)} | "
-        f"Observations: {len(bundle.observations)}"
+        f"Units: {len(bundle.entities)} | "
+        f"Annotations: {len(bundle.annotations)}"
     )
     if bundle.project_distribution:
         projects_involved = len(bundle.project_distribution)

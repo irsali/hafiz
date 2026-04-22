@@ -1,10 +1,24 @@
-"""Graph analysis — load entities + relations from Postgres into NetworkX.
+"""Graph analysis — load units + edges from Postgres into NetworkX.
 
 Builds a directed graph suitable for multi-hop traversal, centrality, and
 community detection. Caches the graph as a pickle with automatic staleness
-detection based on a three-part signature: (max_updated_at, entity_count,
-relation_count). The signature catches both mutations and deletions without
+detection based on a three-part signature: (max_observed_at, unit_count,
+edge_count). The signature catches both mutations and deletions without
 requiring explicit invalidation hooks.
+
+Graph model (post-structural-grounding):
+
+  Nodes — Units with ``valid_until IS NULL`` (currently present).
+    Attributes: ``name``, ``kind``, ``parent_name``, ``project``,
+    ``source_file``.
+
+  Edges — Edges with ``superseded_at IS NULL`` where both
+    ``source_unit_id`` and ``target_unit_id`` resolved to in-scope units.
+    External references (``target_unit_id IS NULL``, ``target_name`` set)
+    are excluded from the graph — they're visible via raw DB queries
+    but don't participate in traversal / centrality.
+    Attributes: ``relation`` (e.g. ``calls``, ``imports``, ``inherits``),
+    ``weight``, ``evidence``, ``source`` (``ast`` / ``agent`` / ``user``).
 """
 
 from __future__ import annotations
@@ -18,11 +32,13 @@ from pathlib import Path
 import networkx as nx
 from sqlalchemy import func, select
 
-from hafiz.core.database import Entity, Relation, get_session_factory
+from hafiz.core.database import Edge, File, Unit, UnitRevision, get_session_factory
 
 
 CACHE_DIR = Path.home() / ".cache" / "hafiz"
-CACHE_VERSION = 2  # bump when pickle format or meta schema changes (v2: MultiDiGraph)
+# Bump when pickle payload shape changes. v3: post-structural-grounding
+# (Unit/Edge instead of Entity/Relation; attrs renamed).
+CACHE_VERSION = 3
 
 
 # ── Cache signature ─────────────────────────────────────────────────────────
@@ -32,14 +48,14 @@ CACHE_VERSION = 2  # bump when pickle format or meta schema changes (v2: MultiDi
 class GraphSignature:
     """Three-part fingerprint of the graph state in the database.
 
-    A cache is valid iff its signature equals the current DB signature. Including
-    counts (not just max_updated_at) catches deletions, which don't bump any
-    remaining row's timestamp.
+    A cache is valid iff its signature equals the current DB signature.
+    Including counts (not just max_observed) catches deletions, which
+    don't bump any remaining row's timestamp.
     """
 
-    max_updated: datetime | None
-    entity_count: int
-    relation_count: int
+    max_observed: datetime | None
+    unit_count: int
+    edge_count: int
 
 
 @dataclass
@@ -61,81 +77,112 @@ async def load_graph(project: str | None = None) -> nx.MultiDiGraph:
     """Build a fresh NetworkX MultiDiGraph from the database.
 
     A multigraph is used so that multiple relations between the same
-    (source, target) pair are preserved faithfully — e.g. entity A both
-    `calls` and `imports` entity B becomes two parallel edges rather than a
-    single edge with lossy last-wins semantics.
+    (source, target) pair are preserved — e.g. unit A both ``calls`` and
+    ``imports`` unit B becomes two parallel edges rather than a single
+    edge with lossy last-wins semantics.
 
-    Node attributes: name, entity_type, description, project, source_file
-    Edge attributes: relation_type, weight, evidence
-    Edge key: the relation's UUID (stringified), so each DB relation maps to a
-        distinct edge key and can be retrieved or removed deterministically.
-
-    Project scoping: when `project` is given, only entities tagged to that project
-    are included, and only relations whose BOTH endpoints fall inside that scope.
+    Project scoping filters units through ``File.project`` and drops
+    edges whose endpoints fall outside the resulting scope.
     """
     session_factory = get_session_factory()
 
     async with session_factory() as session:
-        ent_stmt = select(Entity)
+        unit_stmt = (
+            select(Unit, File)
+            .join(File, File.id == Unit.file_id)
+            .where(Unit.valid_until.is_(None))
+            .where(File.valid_until.is_(None))
+        )
         if project is not None:
-            ent_stmt = ent_stmt.where(Entity.project == project)
-        entities = (await session.execute(ent_stmt)).scalars().all()
-        entity_ids = {e.id for e in entities}
+            unit_stmt = unit_stmt.where(File.project == project)
+        unit_rows = (await session.execute(unit_stmt)).all()
+        unit_ids = {u.id for u, _ in unit_rows}
 
-        rel_stmt = select(Relation)
-        relations = (await session.execute(rel_stmt)).scalars().all()
+        edge_stmt = select(Edge).where(
+            Edge.superseded_at.is_(None),
+            Edge.target_unit_id.is_not(None),
+        )
+        edges = (await session.execute(edge_stmt)).scalars().all()
 
     G: nx.MultiDiGraph = nx.MultiDiGraph()
-    for e in entities:
+    for unit, file in unit_rows:
         G.add_node(
-            str(e.id),
-            name=e.name,
-            entity_type=e.entity_type,
-            description=e.description,
-            project=e.project,
-            source_file=e.source_file,
+            str(unit.id),
+            name=unit.name,
+            kind=unit.kind,
+            parent_name=unit.parent_name,
+            project=file.project,
+            source_file=file.path,
         )
-    for r in relations:
-        if r.source_id in entity_ids and r.target_id in entity_ids:
+    for edge in edges:
+        if edge.source_unit_id in unit_ids and edge.target_unit_id in unit_ids:
             G.add_edge(
-                str(r.source_id),
-                str(r.target_id),
-                key=str(r.id),
-                relation_type=r.relation_type,
-                weight=r.weight,
-                evidence=r.evidence,
+                str(edge.source_unit_id),
+                str(edge.target_unit_id),
+                key=str(edge.id),
+                relation=edge.relation,
+                weight=edge.weight,
+                evidence=edge.evidence,
+                source=edge.source,
             )
     return G
 
 
 async def current_signature(project: str | None = None) -> GraphSignature:
-    """Compute the current (max_updated, entity_count, relation_count) signature.
+    """Compute the current (max_observed, unit_count, edge_count) signature.
 
-    Relations aren't tagged with a project directly — we treat their timestamps
-    as global. This over-invalidates a project-scoped cache when an unrelated
-    project's relations change, which is a cheap price for correctness.
+    ``max_observed`` samples the newest revision ``observed_at`` and the
+    newest edge ``observed_at``. Edges aren't project-tagged directly —
+    their timestamps are treated as global; a project-scoped cache
+    therefore over-invalidates when an unrelated project's edges change.
+    Cheap correctness.
     """
     session_factory = get_session_factory()
     async with session_factory() as session:
-        ent_upd_stmt = select(func.max(Entity.updated_at))
-        ent_cnt_stmt = select(func.count()).select_from(Entity)
+        unit_count_stmt = (
+            select(func.count())
+            .select_from(Unit)
+            .join(File, File.id == Unit.file_id)
+            .where(Unit.valid_until.is_(None))
+            .where(File.valid_until.is_(None))
+        )
+        rev_max_stmt = (
+            select(func.max(UnitRevision.observed_at))
+            .select_from(UnitRevision)
+            .join(Unit, Unit.id == UnitRevision.unit_id)
+            .join(File, File.id == Unit.file_id)
+            .where(UnitRevision.superseded_at.is_(None))
+            .where(Unit.valid_until.is_(None))
+            .where(File.valid_until.is_(None))
+        )
         if project is not None:
-            ent_upd_stmt = ent_upd_stmt.where(Entity.project == project)
-            ent_cnt_stmt = ent_cnt_stmt.where(Entity.project == project)
+            unit_count_stmt = unit_count_stmt.where(File.project == project)
+            rev_max_stmt = rev_max_stmt.where(File.project == project)
 
-        max_e = (await session.execute(ent_upd_stmt)).scalar()
-        max_r = (await session.execute(select(func.max(Relation.updated_at)))).scalar()
-        ent_count = (await session.execute(ent_cnt_stmt)).scalar() or 0
-        rel_count = (
-            await session.execute(select(func.count()).select_from(Relation))
+        unit_count = (await session.execute(unit_count_stmt)).scalar() or 0
+        max_rev = (await session.execute(rev_max_stmt)).scalar()
+        max_edge = (
+            await session.execute(
+                select(func.max(Edge.observed_at)).where(
+                    Edge.superseded_at.is_(None)
+                )
+            )
+        ).scalar()
+        edge_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(Edge)
+                .where(Edge.superseded_at.is_(None))
+                .where(Edge.target_unit_id.is_not(None))
+            )
         ).scalar() or 0
 
-    candidates = [t for t in (max_e, max_r) if t is not None]
-    max_updated = max(candidates) if candidates else None
+    candidates = [t for t in (max_rev, max_edge) if t is not None]
+    max_observed = max(candidates) if candidates else None
     return GraphSignature(
-        max_updated=max_updated,
-        entity_count=ent_count,
-        relation_count=rel_count,
+        max_observed=max_observed,
+        unit_count=unit_count,
+        edge_count=edge_count,
     )
 
 
@@ -144,12 +191,7 @@ async def get_cached_graph(
     *,
     force_rebuild: bool = False,
 ) -> tuple[nx.MultiDiGraph, GraphMeta]:
-    """Return the NetworkX graph, using a disk-cached pickle when fresh.
-
-    Staleness is detected by comparing the cached signature against the current
-    DB signature. On mismatch (or `force_rebuild=True`, or corrupt cache), the
-    graph is rebuilt and the cache is rewritten atomically via a temp file.
-    """
+    """Return the NetworkX graph, using a disk-cached pickle when fresh."""
     cache_path = _cache_path(project)
     signature = await current_signature(project)
 
@@ -181,18 +223,14 @@ async def get_cached_graph(
 
 
 def invalidate_cache(project: str | None = None) -> None:
-    """Delete the cache file for a project scope (or global cache if None).
-
-    Not normally needed — auto-staleness detection handles mutation and deletion.
-    Exposed for manual use (tests, debugging, schema migrations).
-    """
+    """Delete the cache file for a project scope (or global cache if None)."""
     cache_path = _cache_path(project)
     if cache_path.exists():
         cache_path.unlink()
 
 
 def invalidate_all_caches() -> None:
-    """Delete every cached graph file. Safe to call if CACHE_DIR doesn't exist."""
+    """Delete every cached graph file. Safe if CACHE_DIR doesn't exist."""
     if not CACHE_DIR.exists():
         return
     for p in CACHE_DIR.glob("graph-*.pkl"):
@@ -210,7 +248,7 @@ def _cache_path(project: str | None) -> Path:
 
 
 def _write_cache_atomic(path: Path, G: nx.MultiDiGraph, meta: GraphMeta) -> None:
-    """Write (G, meta) to `path` via temp file + rename. Failures are non-fatal."""
+    """Write (G, meta) to `path` via temp file + rename. Failures non-fatal."""
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".pkl.tmp")
@@ -218,7 +256,6 @@ def _write_cache_atomic(path: Path, G: nx.MultiDiGraph, meta: GraphMeta) -> None
             pickle.dump((G, meta), f)
         tmp.replace(path)
     except OSError:
-        # Cache write is best-effort; we still return the graph to the caller.
         if "tmp" in locals() and tmp.exists():
             try:
                 tmp.unlink()
@@ -226,15 +263,12 @@ def _write_cache_atomic(path: Path, G: nx.MultiDiGraph, meta: GraphMeta) -> None
                 pass
 
 
-# ── Sync wrapper for convenience in CLI commands ────────────────────────────
-
-
 def get_cached_graph_sync(
     project: str | None = None,
     *,
     force_rebuild: bool = False,
 ) -> tuple[nx.MultiDiGraph, GraphMeta]:
-    """Blocking wrapper over `get_cached_graph` for synchronous CLI code paths."""
+    """Blocking wrapper over ``get_cached_graph`` for synchronous CLI code."""
     return asyncio.run(get_cached_graph(project, force_rebuild=force_rebuild))
 
 
@@ -247,11 +281,11 @@ def find_nodes_by_name(
     *,
     project: str | None = None,
 ) -> list[str]:
-    """Return node IDs whose `name` attribute matches (case-insensitive).
+    """Return node IDs whose ``name`` attribute matches (case-insensitive).
 
-    If `project` is given, only nodes tagged to that project are returned. Names
-    are not unique in Hafiz — two entities of different types can share a name
-    across files — so this always returns a list.
+    Names are not unique — two units of different kinds can share a name
+    across files — so this always returns a list. Scoped by project when
+    given.
     """
     needle = name.lower()
     return [
@@ -269,19 +303,19 @@ def walk(
     depth: int = 1,
     direction: str = "out",
 ) -> dict[str, int]:
-    """BFS from `source` up to `depth` hops, returning `{node_id: distance}`.
+    """BFS from ``source`` up to ``depth`` hops, returning ``{node_id: distance}``.
 
     direction:
-      - "out"  → follow outgoing edges (A depends on B → walk from A finds B)
-      - "in"   → follow incoming edges (blast-radius / impact analysis)
-      - "both" → undirected walk (show mode)
-
-    The source is always included at distance 0. `depth=0` returns only the source.
+      - ``"out"``  → follow outgoing edges (A depends on B → walk from A finds B)
+      - ``"in"``   → follow incoming edges (blast-radius / impact analysis)
+      - ``"both"`` → undirected walk (show mode)
     """
     if source not in G:
         raise ValueError(f"source node {source!r} not in graph")
     if direction not in ("out", "in", "both"):
-        raise ValueError(f"direction must be 'out', 'in', or 'both' — got {direction!r}")
+        raise ValueError(
+            f"direction must be 'out', 'in', or 'both' — got {direction!r}"
+        )
     if depth < 0:
         raise ValueError(f"depth must be >= 0 — got {depth}")
 
@@ -294,7 +328,7 @@ def walk(
                 neighbors = (v for _, v in G.out_edges(node))
             elif direction == "in":
                 neighbors = (u for u, _ in G.in_edges(node))
-            else:  # both
+            else:
                 neighbors = (
                     n
                     for n in (
@@ -317,10 +351,9 @@ def edges_between(
     u: str,
     v: str,
 ) -> list[dict]:
-    """Return all parallel edge attribute dicts from `u` → `v`. Empty if none."""
+    """Return all parallel edge attribute dicts from ``u`` → ``v``."""
     if not G.has_edge(u, v):
         return []
-    # MultiDiGraph: G[u][v] is a dict keyed by edge-key
     return [dict(attrs) for attrs in G[u][v].values()]
 
 
@@ -329,7 +362,7 @@ def shortest_path_between(
     source: str,
     target: str,
 ) -> list[str] | None:
-    """Directed shortest path as a list of node IDs. Returns None if no path exists."""
+    """Directed shortest path. Returns None if no path exists."""
     try:
         return nx.shortest_path(G, source=source, target=target)
     except (nx.NetworkXNoPath, nx.NodeNotFound):
@@ -339,7 +372,13 @@ def shortest_path_between(
 # ── Centrality (importance ranking) ─────────────────────────────────────────
 
 
-VALID_METRICS: tuple[str, ...] = ("pagerank", "betweenness", "degree", "in_degree", "out_degree")
+VALID_METRICS: tuple[str, ...] = (
+    "pagerank",
+    "betweenness",
+    "degree",
+    "in_degree",
+    "out_degree",
+)
 
 
 def rank_nodes(
@@ -348,22 +387,9 @@ def rank_nodes(
     metric: str = "pagerank",
     top_n: int | None = None,
 ) -> list[tuple[str, float]]:
-    """Rank nodes by a centrality metric. Returns `[(node_id, score), ...]` sorted desc.
-
-    Supported metrics:
-      - "pagerank"   — weighted PageRank (uses edge `weight` attribute)
-      - "betweenness"— fraction of shortest paths that pass through each node
-      - "degree"     — total degree (in + out), normalized to [0, 1]
-      - "in_degree"  — incoming edges only
-      - "out_degree" — outgoing edges only
-
-    Betweenness is O(V·E) and may be slow on graphs larger than a few thousand
-    nodes; the caller should gate it behind a flag or sampling for large inputs.
-    """
+    """Rank nodes by a centrality metric. ``[(node_id, score), ...]`` desc."""
     if metric not in VALID_METRICS:
-        raise ValueError(
-            f"metric must be one of {VALID_METRICS} — got {metric!r}"
-        )
+        raise ValueError(f"metric must be one of {VALID_METRICS} — got {metric!r}")
     if G.number_of_nodes() == 0:
         return []
 
@@ -375,7 +401,7 @@ def rank_nodes(
         scores = nx.degree_centrality(G)
     elif metric == "in_degree":
         scores = nx.in_degree_centrality(G)
-    else:  # out_degree
+    else:
         scores = nx.out_degree_centrality(G)
 
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
@@ -397,37 +423,33 @@ class GraphStats:
     weakly_connected_components: int
     largest_component_size: int
     isolated_nodes: int
-    entity_type_counts: dict[str, int]
-    relation_type_counts: dict[str, int]
-    top_by_pagerank: list[tuple[str, float]]  # [(node_id, score), ...]
+    kind_counts: dict[str, int]
+    relation_counts: dict[str, int]
+    top_by_pagerank: list[tuple[str, float]]
 
 
 def graph_stats(G: nx.MultiDiGraph, *, top_central: int = 5) -> GraphStats:
-    """Compute overall graph statistics in a single pass.
-
-    `top_central` controls how many top-PageRank nodes are returned. PageRank
-    is skipped when the graph is empty.
-    """
+    """Compute overall graph statistics in a single pass."""
     node_count = G.number_of_nodes()
     edge_count = G.number_of_edges()
 
-    # Type distributions
-    entity_types: dict[str, int] = {}
+    kinds: dict[str, int] = {}
     for _, attrs in G.nodes(data=True):
-        t = attrs.get("entity_type") or "(none)"
-        entity_types[t] = entity_types.get(t, 0) + 1
+        k = attrs.get("kind") or "(none)"
+        kinds[k] = kinds.get(k, 0) + 1
 
-    relation_types: dict[str, int] = {}
+    relations: dict[str, int] = {}
     for _, _, attrs in G.edges(data=True):
-        t = attrs.get("relation_type") or "(none)"
-        relation_types[t] = relation_types.get(t, 0) + 1
+        r = attrs.get("relation") or "(none)"
+        relations[r] = relations.get(r, 0) + 1
 
-    # Connectivity
     if node_count > 0:
         components = list(nx.weakly_connected_components(G))
         wcc_count = len(components)
         largest = max((len(c) for c in components), default=0)
-        isolated = sum(1 for n in G.nodes if G.in_degree(n) == 0 and G.out_degree(n) == 0)
+        isolated = sum(
+            1 for n in G.nodes if G.in_degree(n) == 0 and G.out_degree(n) == 0
+        )
         density = nx.density(G)
     else:
         wcc_count = 0
@@ -435,8 +457,9 @@ def graph_stats(G: nx.MultiDiGraph, *, top_central: int = 5) -> GraphStats:
         isolated = 0
         density = 0.0
 
-    # Centrality preview
-    top_ranked = rank_nodes(G, metric="pagerank", top_n=top_central) if node_count else []
+    top_ranked = (
+        rank_nodes(G, metric="pagerank", top_n=top_central) if node_count else []
+    )
 
     return GraphStats(
         node_count=node_count,
@@ -445,11 +468,11 @@ def graph_stats(G: nx.MultiDiGraph, *, top_central: int = 5) -> GraphStats:
         weakly_connected_components=wcc_count,
         largest_component_size=largest,
         isolated_nodes=isolated,
-        entity_type_counts=dict(
-            sorted(entity_types.items(), key=lambda kv: kv[1], reverse=True)
+        kind_counts=dict(
+            sorted(kinds.items(), key=lambda kv: kv[1], reverse=True)
         ),
-        relation_type_counts=dict(
-            sorted(relation_types.items(), key=lambda kv: kv[1], reverse=True)
+        relation_counts=dict(
+            sorted(relations.items(), key=lambda kv: kv[1], reverse=True)
         ),
         top_by_pagerank=top_ranked,
     )
