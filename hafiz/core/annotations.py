@@ -146,6 +146,7 @@ async def search_annotations(
     limit: int = 10,
     project: str | list[str] | None = None,
     kind: str | None = None,
+    source: str | None = None,
     active_only: bool = True,
 ) -> list[AnnotationResult]:
     """Search annotations by vector similarity."""
@@ -171,6 +172,8 @@ async def search_annotations(
             stmt = stmt.where(Annotation.project == project)
         if kind:
             stmt = stmt.where(Annotation.kind == kind)
+        if source:
+            stmt = stmt.where(Annotation.source == source)
         if active_only:
             now = datetime.now(timezone.utc)
             stmt = stmt.where(Annotation.valid_from <= now)

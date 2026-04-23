@@ -146,6 +146,11 @@ def query(
     recall: bool = typer.Option(
         False, "--recall", help="Search observations instead of code chunks."
     ),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        help="(with --recall) Filter by source (e.g. user:anjum, agent:claude-code).",
+    ),
     include_superseded: bool = typer.Option(
         False,
         "--include-superseded",
@@ -170,6 +175,7 @@ def query(
             project=project,
             workspace=workspace,
             kind=type,
+            source=source,
             include_superseded=include_superseded,
             output_json=json_output,
         )

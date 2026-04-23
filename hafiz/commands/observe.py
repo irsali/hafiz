@@ -240,6 +240,7 @@ def run_recall(
     project: str | None = None,
     workspace: bool = False,
     kind: str | None = None,
+    source: str | None = None,
     include_superseded: bool = False,
     output_json: bool = False,
 ) -> None:
@@ -264,6 +265,7 @@ def run_recall(
                 limit=limit,
                 project=search_project,
                 kind=kind,
+                source=source,
                 active_only=not include_superseded,
             )
             return results

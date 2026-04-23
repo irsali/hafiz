@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 6 -->
-# Hafiz — Workspace Intelligence (v6)
+<!-- SKILLS_VERSION: 7 -->
+# Hafiz — Workspace Intelligence (v7)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -82,7 +82,7 @@ You MUST follow these rules in every session:
    "remembers" shape your behavior without the user re-asking:
 
    ```bash
-   hafiz journal --since 1y --source user:<name> --limit 50 --json
+   hafiz query --recall --source user:<name> --limit 50 --json
    ```
 
    Carve-out: truly harness-specific preferences (slash commands, hook

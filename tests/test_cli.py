@@ -36,6 +36,7 @@ def test_query_help():
     assert result.exit_code == 0
     assert "json" in result.output.lower()
     assert "--recall" in result.output
+    assert "--source" in result.output
 
 
 def test_query_mutual_exclusion():
