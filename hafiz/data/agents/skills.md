@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 4 -->
-# Hafiz — Workspace Intelligence (v4)
+<!-- SKILLS_VERSION: 6 -->
+# Hafiz — Workspace Intelligence (v6)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -48,6 +48,46 @@ You MUST follow these rules in every session:
    ```bash
    hafiz observe "<the gotcha>" --type warning --source agent:<your-name>
    ```
+
+5. **Before implementing a significant change, record the decision driving it.**
+   Trigger: you've decided on an approach and are about to start editing. For
+   agents with a pre-implementation review step (multi-perspective gate, plan
+   approval, etc.), fire this right after the user approves the synthesized
+   plan and before the first edit.
+
+   ```bash
+   hafiz observe "<what we're doing and why — include the alternative rejected>" \
+     --type decision --source agent:<your-name>
+   ```
+
+   When the approach shifts mid-task, observe the pivot. When it replaces an
+   earlier recorded decision, use `--supersedes <old-id>`.
+
+   Carve-out: mechanical edits the user explicitly scoped ("rename X to Y",
+   "apply this diff") don't need an observe — no real decision is being made.
+
+6. **Route "remember" writes to hafiz — the sovereign memory layer.**
+   When the user says "remember X", "save this", "don't forget", or similar,
+   write it to hafiz (never to an agent-local memory store):
+
+   ```bash
+   hafiz observe "<what to remember>" \
+     --type <decision|fact|learning|warning> --source user:<name>
+   ```
+
+   Pick the kind from content: preference/rule → `learning`; claim/truth →
+   `fact`; architectural choice → `decision`; gotcha → `warning`.
+
+   At session start, pull durable user-scoped preferences so prior
+   "remembers" shape your behavior without the user re-asking:
+
+   ```bash
+   hafiz journal --since 1y --source user:<name> --limit 50 --json
+   ```
+
+   Carve-out: truly harness-specific preferences (slash commands, hook
+   configs, IDE settings) may stay in whatever agent-local store exists —
+   they won't port across agents anyway.
 
 ## Core Commands
 
