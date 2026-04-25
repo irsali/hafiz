@@ -22,6 +22,8 @@ def run_context(
     limit_chunks: int = 5,
     limit_annotations: int = 5,
     include_transcripts: bool = False,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
     output_json: bool = False,
 ) -> None:
     """Build and display a context bundle for a task description.
@@ -52,6 +54,8 @@ def run_context(
                     projects=projects,
                     limit_chunks=limit_chunks * 2,
                     limit_annotations=limit_annotations * 2,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
                 )
             else:
                 from hafiz.core.context import build_context
@@ -61,6 +65,8 @@ def run_context(
                     project=project,
                     limit_chunks=limit_chunks,
                     limit_annotations=limit_annotations,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
                 )
             transcripts = []
             if include_transcripts:

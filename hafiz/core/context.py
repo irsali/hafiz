@@ -165,14 +165,28 @@ async def build_context(
     project: str | None = None,
     limit_chunks: int = 5,
     limit_annotations: int = 5,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> ContextBundle:
     """Build a context bundle by combining embeddings, graph, and annotations.
 
     1. Vector search over embeddings (current revisions of current units).
     2. Graph neighborhood seeded by the files that produced those hits.
     3. Semantic search over annotations.
+
+    ``include_domains`` / ``exclude_domains`` are forwarded to
+    :func:`vector_search` and used to filter the seed chunks; downstream
+    graph expansion and annotation search are not domain-filtered (graph
+    walks already follow only edges from the seeded files, and
+    annotations are kind-agnostic in this layer).
     """
-    chunks = await vector_search(query, limit=limit_chunks, project=project)
+    chunks = await vector_search(
+        query,
+        limit=limit_chunks,
+        project=project,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+    )
     entities = await _graph_from_chunks(chunks, project=project)
     annotations = await search_annotations(
         query, limit=limit_annotations, project=project
@@ -264,9 +278,17 @@ async def build_workspace_context(
     projects: list[str],
     limit_chunks: int = 10,
     limit_annotations: int = 10,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> ContextBundle:
     """Build context scoped to workspace-sibling projects."""
-    chunks = await vector_search(query, limit=limit_chunks, project=projects)
+    chunks = await vector_search(
+        query,
+        limit=limit_chunks,
+        project=projects,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+    )
     entities = await _graph_from_chunks(chunks, project=projects)
     annotations = await search_annotations(
         query, limit=limit_annotations, project=projects

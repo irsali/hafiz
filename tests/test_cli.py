@@ -45,6 +45,69 @@ def test_query_mutual_exclusion():
     assert "mutually exclusive" in result.output
 
 
+def test_query_help_lists_domain_flags():
+    result = runner.invoke(app, ["query", "--help"])
+    assert result.exit_code == 0
+    assert "--include-domain" in result.output
+    assert "--exclude-domain" in result.output
+
+
+def test_context_help_lists_domain_flags():
+    result = runner.invoke(app, ["context", "--help"])
+    assert result.exit_code == 0
+    assert "--include-domain" in result.output
+    assert "--exclude-domain" in result.output
+
+
+def test_query_rejects_overlapping_domain_filters():
+    """include-domain and exclude-domain sharing a value should error
+    before any DB call — the predicate would be unsatisfiable."""
+    result = runner.invoke(
+        app,
+        [
+            "query",
+            "test",
+            "--include-domain",
+            "code,doc",
+            "--exclude-domain",
+            "doc",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "overlap" in result.output.lower()
+
+
+def test_query_rejects_dotted_domain():
+    result = runner.invoke(
+        app, ["query", "test", "--include-domain", "code.function"]
+    )
+    assert result.exit_code == 2
+    assert "single token" in result.output.lower()
+
+
+def test_context_rejects_overlapping_domain_filters():
+    result = runner.invoke(
+        app,
+        [
+            "context",
+            "test",
+            "--include-domain",
+            "code",
+            "--exclude-domain",
+            "code",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "overlap" in result.output.lower()
+
+
+def test_session_start_help_lists_domain_flags():
+    result = runner.invoke(app, ["session", "start", "--help"])
+    assert result.exit_code == 0
+    assert "--include-domain" in result.output
+    assert "--exclude-domain" in result.output
+
+
 def test_status_help():
     result = runner.invoke(app, ["status", "--help"])
     assert result.exit_code == 0

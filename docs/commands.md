@@ -144,6 +144,17 @@ Rejected at import time: `kind` starting with `code.*`; relations in `{calls, im
 
 `--project` and `--workspace` are mutually exclusive.
 
+**Domain filters** (on `context`, `query`): toggle whole data domains on/off without losing the rest of your index.
+
+| Flag | Effect |
+|------|--------|
+| `--include-domain code,doc` | Restrict results to units whose `kind` starts with one of the listed domains. Comma-separated. |
+| `--exclude-domain code` | Drop results whose `kind` starts with one of the listed domains. Comma-separated. |
+
+A "domain" is the prefix of `kind` before the first dot — `code`, `doc`, `mail`, `chat`, `file`, etc. (For exact-kind filters like `code.function`, keep using `--type`.) The two flags are mutually exclusive *per-domain*: `--include-domain code,doc --exclude-domain doc` errors out before hitting the DB. A dotted value (`--include-domain code.function`) also errors — domains are dotless tokens.
+
+When both flags are omitted on the CLI, the active session's defaults (set via `session start --include-domain` / `--exclude-domain`) are inherited. Passing *either* flag explicitly skips inheritance entirely, so a query can flip the filter without first ending the session.
+
 ### Knowledge Graph
 
 | Command | Purpose | Brain | Agent use | Terminal use |
@@ -192,7 +203,7 @@ The on-disk JSON at `~/.cache/hafiz/session-<tty>.json` is now a **cursor** — 
 | `session show` | Show the active session | — | `--json` | rich panel |
 | `session end` | Clear the cursor and stamp `ended_at` on the DB row | — | `--json` | rich line |
 
-`session start` flags: `--task <name>`, `--project <name>`.
+`session start` flags: `--task <name>`, `--project <name>`, `--include-domain <a,b>`, `--exclude-domain <a,b>`. The two domain flags persist into the per-TTY cursor JSON (not the DB row) and are inherited by `query` / `context` calls in this terminal.
 
 **Auto-tagging** on `observe` / `note`: session inherited when no flag is given; explicit `--session` / `--task` always win. ``--session <slug>`` resolves the slug to a uuid via the `sessions` table; both `annotations.session_id` (uuid FK) and `annotations.legacy_session_id` (text slug) are populated, so journal/distill display stays human-readable.
 
@@ -244,6 +255,8 @@ Defaults:
 | `--derived-from` | `observe`, `note` | UUIDs this row was distilled from |
 | `--include-superseded` | `query --recall` | Return superseded / expired rows |
 | `--include-transcripts` | `query`, `context` | Add source-layer transcript matches to results (off by default) |
+| `--include-domain` | `query`, `context`, `session start` | Comma-separated data-domain allowlist (`code`, `doc`, `chat`, …). Domain = `kind` prefix before the first dot. |
+| `--exclude-domain` | `query`, `context`, `session start` | Comma-separated data-domain denylist. Mutually exclusive *per-domain* with `--include-domain`. |
 | `--diagnose` | `status` | Full diagnostic checks including parser registry |
 
 ## Architecture Note

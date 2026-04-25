@@ -27,6 +27,8 @@ def _run_query(
     kind: str | None,
     output_json: bool,
     include_transcripts: bool = False,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> None:
     """Run the async search and display results.
 
@@ -53,6 +55,8 @@ def _run_query(
                 limit=limit,
                 project=search_project,
                 kind=kind,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
             )
             transcript_hits = []
             if include_transcripts:

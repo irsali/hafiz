@@ -25,6 +25,13 @@ console = Console()
 
 
 def _info_block(data: dict) -> str:
+    inc = data.get("include_domains")
+    exc = data.get("exclude_domains")
+    filter_lines = ""
+    if inc:
+        filter_lines += f"\n  [bold]Include:[/bold]  {', '.join(inc)}"
+    if exc:
+        filter_lines += f"\n  [bold]Exclude:[/bold]  {', '.join(exc)}"
     return (
         f"  [bold]ID:[/bold]       {data.get('session_id')}\n"
         f"  [bold]UUID:[/bold]     {data.get('session_uuid') or '—'}\n"
@@ -33,6 +40,7 @@ def _info_block(data: dict) -> str:
         f"  [bold]Project:[/bold]  {data.get('project') or '—'}\n"
         f"  [bold]Started:[/bold]  {data.get('started_at')}\n"
         f"  [bold]TTY:[/bold]      {data.get('tty')}"
+        f"{filter_lines}"
     )
 
 
@@ -41,13 +49,24 @@ def run_session_start(
     *,
     task: str | None = None,
     project: str | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
     output_json: bool = False,
 ) -> None:
     try:
-        data = start_session(name, task=task, project=project)
+        data = start_session(
+            name,
+            task=task,
+            project=project,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
     except RuntimeError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(2)
 
     if output_json:
         console.print_json(json.dumps({"action": "session_start", "session": data}))

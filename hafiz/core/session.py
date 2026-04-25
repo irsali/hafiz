@@ -190,16 +190,27 @@ def start_session(
     task: str | None = None,
     project: str | None = None,
     agent: str | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> dict:
     """Start (or replace) the session for this TTY. Returns the cursor dict.
 
     Creates a real ``sessions`` row in the DB; the on-disk cursor JSON
     holds both the uuid (for joins) and the slug (for human display).
+    ``include_domains`` / ``exclude_domains`` are persisted in the
+    cursor (not the DB) and inherited by subsequent ``hafiz query`` /
+    ``hafiz context`` calls in this terminal.
     Raises :class:`RuntimeError` if there is no controlling terminal.
     """
     path = _session_path()
     if not path:
         raise RuntimeError("No controlling terminal — `hafiz session` requires a TTY.")
+
+    from hafiz.core.search import _normalize_domains, _validate_domain_filters
+
+    inc = _normalize_domains(include_domains)
+    exc = _normalize_domains(exclude_domains)
+    _validate_domain_filters(inc, exc)
 
     slug = make_session_id(name)
     started = datetime.now(timezone.utc)
@@ -224,6 +235,10 @@ def start_session(
         "started_at": stored.started_at.isoformat(),
         "tty": stored.tty,
     }
+    if inc:
+        data["include_domains"] = inc
+    if exc:
+        data["exclude_domains"] = exc
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
 
@@ -294,6 +309,27 @@ def resolve_session_tag(
     session_id = session_override or active.get("session_id")
     task = task_override or active.get("task")
     return session_id, task
+
+
+def resolve_domain_defaults(
+    *,
+    include_override: list[str] | None,
+    exclude_override: list[str] | None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Resolve (include_domains, exclude_domains) for a query/context call.
+
+    Explicit overrides win — if the caller passed *either* flag the
+    session defaults are ignored entirely (so a user can flip the
+    filter without first ending their session). Otherwise inherit from
+    the active session cursor. Returns ``(None, None)`` when neither
+    is set.
+    """
+    if include_override is not None or exclude_override is not None:
+        return include_override, exclude_override
+    active = current_session() or {}
+    inc = active.get("include_domains") or None
+    exc = active.get("exclude_domains") or None
+    return inc, exc
 
 
 def resolve_session_uuid_sync() -> uuid.UUID | None:

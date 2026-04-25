@@ -7,6 +7,32 @@ and skips gracefully otherwise.
 
 import pytest
 
+from hafiz.core.search import _normalize_domains, _validate_domain_filters
+
+
+def test_normalize_domains_strips_lowercases_dedupes():
+    assert _normalize_domains([" Code ", "DOC", "code", ""]) == ["code", "doc"]
+
+
+def test_normalize_domains_none_and_empty_return_empty():
+    assert _normalize_domains(None) == []
+    assert _normalize_domains([]) == []
+    assert _normalize_domains(["", "  "]) == []
+
+
+def test_normalize_domains_rejects_dotted_kinds():
+    with pytest.raises(ValueError, match="single token"):
+        _normalize_domains(["code.function"])
+
+
+def test_validate_domain_filters_passes_disjoint():
+    _validate_domain_filters(["code"], ["doc"])  # no raise
+
+
+def test_validate_domain_filters_rejects_overlap():
+    with pytest.raises(ValueError, match="overlap"):
+        _validate_domain_filters(["code", "doc"], ["doc"])
+
 
 @pytest.mark.asyncio
 async def test_search_result_dataclass():

@@ -11,6 +11,19 @@ import typer
 
 from hafiz import __version__
 
+def _parse_domain_csv(value: Optional[str]) -> Optional[list[str]]:
+    """Parse a ``--include-domain a,b,c`` flag into ``["a","b","c"]``.
+
+    Returns ``None`` when the flag wasn't passed (so callers can
+    distinguish "no override" from "explicit empty"). Empty after
+    splitting also returns ``None``.
+    """
+    if value is None:
+        return None
+    items = [v.strip() for v in value.split(",") if v.strip()]
+    return items or None
+
+
 app = typer.Typer(
     name="hafiz",
     help=(
@@ -173,6 +186,24 @@ def query(
             "results. Off by default — the wisdom layer must remain primary."
         ),
     ),
+    include_domain: Optional[str] = typer.Option(
+        None,
+        "--include-domain",
+        help=(
+            "Restrict to units in these data domains (comma-separated, "
+            "e.g. 'code', 'doc,chat'). Domain = the part of `kind` before "
+            "the dot. Overrides any session default."
+        ),
+    ),
+    exclude_domain: Optional[str] = typer.Option(
+        None,
+        "--exclude-domain",
+        help=(
+            "Drop units in these data domains (comma-separated). "
+            "Overrides any session default. Mutually exclusive per-domain "
+            "with --include-domain."
+        ),
+    ),
 ) -> None:
     """Search indexed content with vector similarity.
 
@@ -200,16 +231,32 @@ def query(
         )
     else:
         from hafiz.commands.query import _run_query
+        from hafiz.core.session import resolve_domain_defaults
 
-        _run_query(
-            text,
-            limit=limit,
-            project=project,
-            workspace=workspace,
-            kind=type,
-            include_transcripts=include_transcripts,
-            output_json=json_output,
-        )
+        try:
+            inc, exc = resolve_domain_defaults(
+                include_override=_parse_domain_csv(include_domain),
+                exclude_override=_parse_domain_csv(exclude_domain),
+            )
+        except ValueError as e:
+            typer.echo(f"Error: {e}")
+            raise typer.Exit(2) from e
+
+        try:
+            _run_query(
+                text,
+                limit=limit,
+                project=project,
+                workspace=workspace,
+                kind=type,
+                include_transcripts=include_transcripts,
+                include_domains=inc,
+                exclude_domains=exc,
+                output_json=json_output,
+            )
+        except ValueError as e:
+            typer.echo(f"Error: {e}")
+            raise typer.Exit(2) from e
 
 
 # ─── RECALL ─────────────────────────────────────────────────────────
@@ -575,6 +622,22 @@ def session_start(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Default project for this session."
     ),
+    include_domain: Optional[str] = typer.Option(
+        None,
+        "--include-domain",
+        help=(
+            "Default data-domain include filter for `query`/`context` in this "
+            "terminal (comma-separated, e.g. 'code,doc')."
+        ),
+    ),
+    exclude_domain: Optional[str] = typer.Option(
+        None,
+        "--exclude-domain",
+        help=(
+            "Default data-domain exclude filter for `query`/`context` in this "
+            "terminal (comma-separated)."
+        ),
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -582,7 +645,14 @@ def session_start(
     """Start a named session for this terminal."""
     from hafiz.commands.session import run_session_start
 
-    run_session_start(name, task=task, project=project, output_json=json_output)
+    run_session_start(
+        name,
+        task=task,
+        project=project,
+        include_domains=_parse_domain_csv(include_domain),
+        exclude_domains=_parse_domain_csv(exclude_domain),
+        output_json=json_output,
+    )
 
 
 @session_app.command("end")
@@ -992,6 +1062,23 @@ def context(
             "Off by default — wisdom layer stays primary."
         ),
     ),
+    include_domain: Optional[str] = typer.Option(
+        None,
+        "--include-domain",
+        help=(
+            "Restrict context chunks to these data domains "
+            "(comma-separated, e.g. 'code,doc'). Overrides any session "
+            "default. Domain = `kind` prefix before the dot."
+        ),
+    ),
+    exclude_domain: Optional[str] = typer.Option(
+        None,
+        "--exclude-domain",
+        help=(
+            "Drop chunks in these data domains (comma-separated). "
+            "Overrides any session default."
+        ),
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -1002,14 +1089,30 @@ def context(
         raise typer.Exit(1)
 
     from hafiz.commands.context import run_context
+    from hafiz.core.session import resolve_domain_defaults
 
-    run_context(
-        query,
-        project=project,
-        workspace=workspace,
-        include_transcripts=include_transcripts,
-        output_json=json_output,
-    )
+    try:
+        inc, exc = resolve_domain_defaults(
+            include_override=_parse_domain_csv(include_domain),
+            exclude_override=_parse_domain_csv(exclude_domain),
+        )
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(2) from e
+
+    try:
+        run_context(
+            query,
+            project=project,
+            workspace=workspace,
+            include_transcripts=include_transcripts,
+            include_domains=inc,
+            exclude_domains=exc,
+            output_json=json_output,
+        )
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(2) from e
 
 
 # ─── REVIEW ──────────────────────────────────────────────────────────

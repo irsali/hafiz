@@ -115,6 +115,7 @@ You MUST follow these rules in every session:
 | `hafiz context "<task>" --include-transcripts` | Same as above, plus matching turns from imported transcripts (opt-in source layer) |
 | `hafiz query "<text>" --json` | Semantic search over indexed content (knowledge layer) |
 | `hafiz query "<text>" --include-transcripts --json` | Add matching transcript turns to results, tagged ``layer="source"`` |
+| `hafiz query "<text>" --include-domain code --json` | Restrict to a data domain (``code``, ``doc``, ``chat``, …). Inverse: ``--exclude-domain``. Comma-separated for multiple. |
 | `hafiz query "<topic>" --recall --type decision --json` | Search annotations (decisions, facts, learnings, patterns, warnings) |
 | `hafiz recall <session-or-comm-id>` | List ordered messages from a session/communication. Add ``--query "<text>"`` for similarity search across the session's turns. Source-layer access — use deliberately. |
 | `hafiz graph deps <name> --json` | What this unit depends on (outgoing edges) |
@@ -362,9 +363,11 @@ workstation is a no-op, not a hazard.
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--project`, `--workspace`, `--json` |
-| `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
+| `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--limit`, `--json` |
 | `hafiz query "<text>" --recall` | Semantic search over annotations | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
+
+- **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the TTY.
 
 ### Knowledge Graph
 
@@ -385,7 +388,7 @@ workstation is a no-op, not a hazard.
 | `hafiz note "<text>"` | Low-bar capture — `kind="note"` | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
-| `hafiz session start "<name>"` | Per-TTY session; subsequent writes auto-tag | `--task`, `--project`, `--json` |
+| `hafiz session start "<name>"` | Per-TTY session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` in this terminal | `--task`, `--project`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz session show` / `end` | Inspect / clear | `--json` |
 
 - **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`
