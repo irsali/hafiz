@@ -236,8 +236,18 @@ async def append_messages(
             )
             existing_seqs = {row for (row,) in result.all()}
 
+        # Track in-memory ids that we *won't* write (existing-seq skip).
+        # If a later message uses one of these as its
+        # parent_message_id, that pointer is invalid (the prescribed
+        # uuid never lands in the DB; the previously-imported row has
+        # a different id). Reset such pointers to None — parent
+        # linkage is best-effort per the work item.
+        skipped_ids: set[uuid.UUID] = set()
+
         for msg in messages:
             if msg.seq in existing_seqs:
+                if msg.id is not None:
+                    skipped_ids.add(msg.id)
                 continue
             embedding = None
             if embed and should_embed_message(
@@ -247,6 +257,10 @@ async def append_messages(
             ):
                 embedding = await embed_query(msg.content)
                 embedded += 1
+
+            parent_id = msg.parent_message_id
+            if parent_id is not None and parent_id in skipped_ids:
+                parent_id = None
 
             session.add(
                 CommunicationMessage(
@@ -258,7 +272,7 @@ async def append_messages(
                     content=msg.content,
                     content_type=msg.content_type,
                     tool_calls=msg.tool_calls,
-                    parent_message_id=msg.parent_message_id,
+                    parent_message_id=parent_id,
                     ts=msg.ts,
                     embedding=embedding,
                     marked_salient=msg.marked_salient,

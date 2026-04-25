@@ -168,6 +168,63 @@ async def test_append_messages_is_idempotent_per_seq():
 
 
 @pytest.mark.asyncio
+async def test_reimport_with_parent_pointer_to_skipped_seq_resets_to_null():
+    """Regression: on re-import, an existing seq is skipped (idempotent),
+    but a later message in the same batch that prescribes the skipped
+    message's in-memory uuid as its ``parent_message_id`` would fail
+    FK if we didn't null it out. Best-effort linkage; null on second
+    pass is fine."""
+    comm, _ = await upsert_communication(
+        agent="test-agent",
+        external_id=f"reimport-parent-{uuid.uuid4().hex[:8]}",
+    )
+    now = datetime.now(timezone.utc)
+    parent_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    batch1 = [
+        MessageInput(
+            id=parent_id, seq=0, role="user", content="parent turn", ts=now,
+        ),
+        MessageInput(
+            id=child_id,
+            seq=1,
+            role="assistant",
+            content="child turn referencing parent",
+            ts=now,
+            parent_message_id=parent_id,
+        ),
+    ]
+    w1, _ = await append_messages(comm.id, batch1, embed=False)
+    assert w1 == 2
+
+    # Re-import: same payload but with FRESH in-memory ids (importer
+    # generates new uuids each run). Both seqs are existing →
+    # skipped. The child's parent_message_id points at a uuid that
+    # would never land in the DB. Must not raise.
+    fresh_parent = uuid.uuid4()
+    fresh_child = uuid.uuid4()
+    batch2 = [
+        MessageInput(
+            id=fresh_parent,
+            seq=0,
+            role="user",
+            content="parent turn",
+            ts=now,
+        ),
+        MessageInput(
+            id=fresh_child,
+            seq=1,
+            role="assistant",
+            content="child turn referencing parent",
+            ts=now,
+            parent_message_id=fresh_parent,
+        ),
+    ]
+    w2, _ = await append_messages(comm.id, batch2, embed=False)
+    assert w2 == 0  # both skipped, no FK error
+
+
+@pytest.mark.asyncio
 async def test_role_check_constraint_rejects_unknown_role():
     comm, _ = await upsert_communication(
         agent="test-agent",
