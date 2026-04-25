@@ -609,6 +609,42 @@ def session_show(
     run_session_show(output_json=json_output)
 
 
+@session_app.command("list")
+def session_list(
+    agent: Optional[str] = typer.Option(
+        None, "--agent", help="Filter by agent (claude-code, cursor, ...)."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter to sessions scoped to a project."
+    ),
+    active: bool = typer.Option(
+        False,
+        "--active",
+        help="Only show sessions whose ended_at is NULL.",
+    ),
+    limit: int = typer.Option(
+        50, "--limit", "-l", help="Maximum sessions to return (default 50)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """List recent sessions, newest first.
+
+    Useful for finding a slug without dropping into psql, e.g. before
+    `hafiz recall <slug>` or `hafiz forget <slug>`.
+    """
+    from hafiz.commands.session import run_session_list
+
+    run_session_list(
+        agent=agent,
+        project=project,
+        include_ended=not active,
+        limit=limit,
+        output_json=json_output,
+    )
+
+
 # ─── OBSERVE ──────────────────────────────────────────────────────────
 
 @app.command()
