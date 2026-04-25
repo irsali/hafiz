@@ -10,7 +10,7 @@
 
 Every tool and agent you use — Claude Code, Cursor, Copilot, Aider, a research assistant, a writing assistant, or anything tomorrow — connects to **one shared second brain**. Not just your code: your notes, decisions, research, conversations, clips, and anything else you want to remember. No more scattered `.md` files, no more "I forgot what we decided last week." Hafiz is always on, always fresh, and always yours.
 
-> **Status (2026-04-21):** Phases 1–5 shipped, plus the temporal/capture/distill layer (journal, note, capture, session, distill, expiry, supersession — see [workitems/done/temporal-session-awareness.md](../workitems/done/temporal-session-awareness.md)). Core CLI surface is stable; the product is dogfooded daily. One-time migration scripts are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
+> **Status (2026-04-25):** Phases 1–6 shipped, plus the temporal/capture/distill layer (journal, note, capture, session, distill, expiry, supersession — see [workitems/done/temporal-session-awareness.md](../workitems/done/temporal-session-awareness.md)) and the tunable registry / self-tuning surface (see [workitems/done/tunable-registry.md](../workitems/done/tunable-registry.md)). Core CLI surface is stable; the product is dogfooded daily. One-time migration scripts are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
 >
 > **Dropped from scope (as of 2026-04-21):** REST API layer and MCP server. Hafiz is intentionally CLI-only; agents integrate via `hafiz` + `--json`. This decision replaces the earlier "future" positioning of those surfaces.
 >
@@ -237,13 +237,23 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 - [x] [`docs/agents.md`](agents.md) — universal agent integration playbook (stale; see `architecture.md` + `skills.md`)
 - [x] [`hafiz/data/agents/skills.md`](../hafiz/data/agents/skills.md) — **Layer 1 stable contract** (see [Two-Layer Stability Model](../CLAUDE.md))
 
+### Phase 6 — Structural Grounding (AST layer + greenfield schema + second-brain scope)
+See [workitems/done/structural-grounding.md](../workitems/done/structural-grounding.md) for the full design + closure record.
+- [x] **Greenfield seven-table schema** — `files`, `units`, `unit_revisions`, `embeddings`, `edges`, `annotations`, `commits`. Identity/body/embedding split into three concerns; partial edits to long documents re-embed only the changed parts.
+- [x] **Parser Protocol + concrete parsers** — `python_ast`, `prose` (Markdown), `whole_file` fallback. Third-party parsers plug in via Python entry points (`hafiz.parsers` group); no config edits required.
+- [x] **Diff-driven ingest** — parser-driven, hash-aligned, skips unchanged units. Re-ingests parse only files changed since `last_seen_commit`.
+- [x] **Edge resolver + graph rewire** — `hafiz graph show / deps / impact / path / rank / stats` reshaped onto the new edges table; NetworkX caching layer.
+- [x] **Git-axis as first class** — `commits` table populated on every ingest; rewrite resilience (rebase/amend/squash/force-push) via `post-rewrite` hook + reconcile-on-ingest. `commit_hash` advisory, never load-bearing.
+- [x] **Agent contract v2** — `skills.md` v3 → v7. `hafiz extract export/import` enforce non-duplication: AST-territory kinds/relations rejected; structural facts have one owner (the parser).
+- [x] **Observability** — `hafiz parsers list`, `hafiz status --diagnose` extended with parser coverage and tombstone counts.
+- **Carry-overs (own follow-ups, not Phase 6 debt):** `hafiz capture` / `watch` / `prune` / `context` still raise on use against the new schema (Phase 3b fallbacks accepted by design); `hafiz review` rewire owned by [self-review-curation-loop](../workitems/active/self-review-curation-loop.md); README "install additional language parsers via pip" tutorial pending.
+
 ---
 
 ## Open work
 
 Items actively on deck — a mix of leftovers from the original roadmap and newer structural work:
 
-- [ ] **Phase 6 — Structural Grounding (AST layer + schema restructure + second-brain scope)** — see [workitems/active/structural-grounding.md](../workitems/active/structural-grounding.md). Splits structure from meaning: AST parsers own code entities/edges, agents own semantic annotations. Greenfield schema (`units` / `unit_revisions` / `edges` / `annotations` / `files` / `commits`). Branch-switching becomes a delta. Agent contract bumps to v2. Opens the pipeline to non-code domains via a Parser Protocol.
 - [ ] **One-time migration scripts** — `import_memory.py` (MEMORY.md → observations), `import_knowledgehub.py`, `import_chromadb.py`. No top-level `scripts/` directory exists today.
 - [ ] **ChromaDB hard cutover** — not executed; no ChromaDB dependency to decommission in this repo
 - [ ] **Retention policies** for stale data — `prune` is on-demand only; no age-based policy
@@ -265,6 +275,7 @@ Ideas, not committed — most are unblocked by the Structural Grounding work (Ph
 - [ ] **Embedding Model Migration** — install-time model choice + `hafiz embeddings migrate` to re-embed corpus when switching models (enforce one model per DB).
 - [ ] **Markdown Dump/Export** — export captures, transcripts, observations, and journal entries as `.md` files for portability, backup, and human review.
 - [ ] **DB export/import** — `hafiz export --format json` / `hafiz import` for backup and portability.
+- [ ] **Unify `device_state` onto the Tunable registry** — collapse the GPU/CPU sticky-fallback into the same `Tunable` resolution chain as `embedding.max_part_chars`. Deferred from [workitems/done/tunable-registry.md](../workitems/done/tunable-registry.md) Phase 4 until post-2.0.0; revisit when adding the third tunable forces a decision.
 
 ---
 
