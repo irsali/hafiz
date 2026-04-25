@@ -132,6 +132,13 @@ hafiz status --diagnose
 
 All checks should pass (database connection, pgvector, embeddings, config).
 
+For a deeper health check that also surfaces host capabilities (RAM, GPU, ONNX providers) and per-tunable defaults, run:
+
+```bash
+hafiz doctor --probe        # show recommended values for this machine
+hafiz doctor --apply        # persist them to the sticky tuning cache
+```
+
 ### 5. Index your first project
 
 ```bash
@@ -153,8 +160,8 @@ hafiz context "implement rate limiting" --workspace
 # Store a decision
 hafiz observe "JWT preferred over sessions" --type decision
 
-# Explore the knowledge graph
-hafiz graph dependents AuthController
+# Explore the knowledge graph (blast radius — what depends on this)
+hafiz graph impact AuthController
 ```
 
 ## The Capture → Distill Loop
@@ -246,9 +253,12 @@ Recall also shows each row's age (e.g. `3mo ago`) and dims results older than 90
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz graph show <name>` | Show entity and its direct connections | `--project/-p`, `--json/-j` |
-| `hafiz graph deps <name>` | Show outgoing dependencies (what it needs) | `--project/-p`, `--json/-j` |
-| `hafiz graph dependents <name>` | Show incoming dependencies (what needs it) | `--project/-p`, `--json/-j` |
+| `hafiz graph show <name>` | Show entity and its N-hop neighborhood (undirected walk) | `--depth/-d`, `--project/-p`, `--json/-j` |
+| `hafiz graph deps <name>` | What this entity depends on (outgoing walk) | `--depth/-d`, `--project/-p`, `--json/-j` |
+| `hafiz graph impact <name>` | Blast radius — what breaks if this entity changes (incoming walk) | `--depth/-d`, `--project/-p`, `--json/-j` |
+| `hafiz graph path <from> <to>` | Shortest directed path between two entities | `--project/-p`, `--json/-j` |
+| `hafiz graph rank` | Rank entities by centrality (`pagerank` / `betweenness` / `degree` / …) | `--metric/-m`, `--top/-n`, `--project/-p`, `--json/-j` |
+| `hafiz graph stats` | Overall graph health — counts, density, components, top-central nodes | `--top-central`, `--project/-p`, `--json/-j` |
 
 ### Observations & Capture
 
@@ -292,9 +302,42 @@ Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` wi
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
 | `hafiz init` | Create database tables and pgvector extension | |
-| `hafiz status` | Show database statistics | `--json/-j`, `--diagnose` |
-| `hafiz config show` | Display current configuration | `--json/-j` |
+| `hafiz status` | Show database statistics and index health | `--diagnose`, `--json/-j` |
+| `hafiz doctor` | Install health + host capabilities + tunable registry. With `--probe` recommends per-tunable values for this host; with `--apply` persists them to the sticky cache. | `--probe`, `--apply`, `--json/-j` |
+| `hafiz parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage | `--json/-j` |
 | `hafiz review` | Review knowledge quality and get improvement suggestions | `--project/-p`, `--json/-j` |
+
+#### Configuration tunables
+
+`hafiz config` is the user-facing knob layer. Resolution order (lowest precedence wins on the right): env (`HAFIZ_*__*`) → `hafiz.toml` → sticky probed cache → built-in default.
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `hafiz config show` | Current values + per-tunable resolution source layer | `--json/-j` |
+| `hafiz config get <key>` | One tunable's effective value and source | `--json/-j` |
+| `hafiz config set <key> <value>` | Persist to user-scope `~/.config/hafiz/hafiz.toml` (or `--local` for `./hafiz.toml`) | `--local`, `--json/-j` |
+| `hafiz config unset <key>` | Remove from `hafiz.toml`; falls through to sticky / default | `--local`, `--json/-j` |
+| `hafiz config apply` | Run all probers and persist recommendations to the sticky cache (same as `hafiz doctor --apply`) | `--json/-j` |
+| `hafiz config clear-sticky` | Wipe the sticky tuning-state cache | `--json/-j` |
+
+#### Embedding device
+
+`hafiz embedding` inspects and retries the GPU/CPU selection that powers all embedding work. See [Embedding device (GPU vs CPU)](#embedding-device-gpu-vs-cpu) for the full picture.
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `hafiz embedding status` | Current device + provenance (config / sticky / probe) | `--json/-j` |
+| `hafiz embedding retry` | Clear sticky state and re-probe (after freeing VRAM, upgrading drivers, etc.) | `--json/-j` |
+
+#### Error reporting
+
+Hafiz captures every unhandled exception into `~/.cache/hafiz/errors.log` (NDJSON, capped at 1000 entries). Useful when something feels broken or you want to see what a recent command actually hit.
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `hafiz errors list` | Recent errors, newest first | `--since`, `--limit/-n`, `--json/-j` |
+| `hafiz errors show <id>` | Full structured record (traceback, cwd, git branch, host fingerprint). Accepts a unique-prefix id. | `--json/-j` |
+| `hafiz errors clear` | Wipe the log; returns the count discarded | `--json/-j` |
 
 ### Common Flags
 
@@ -465,57 +508,69 @@ pytest
 
 ```
 hafiz/
-  cli.py              -- Typer CLI entry point
-  commands/            -- Command implementations
+  cli.py               -- Typer CLI entry point + global error backstop
+  commands/            -- Presentation layer (thin — delegate to core/)
     agent.py           -- hafiz agent install/uninstall/list
     capture.py         -- hafiz capture (transcripts / multi-page dumps)
-    context.py         -- hafiz context
     chunks.py          -- chunk export logic (used by extract export)
+    context.py         -- hafiz context
     distill.py         -- hafiz distill (promotable-candidate scanner)
+    embedding.py       -- hafiz embedding status/retry
+    errors.py          -- hafiz errors list/show/clear
     extract.py         -- hafiz extract export/import
-    graph.py           -- hafiz graph show/deps/dependents
+    graph.py           -- hafiz graph show/deps/impact/path/rank/stats
     hooks.py           -- hafiz hooks install
     ingest.py          -- hafiz ingest (with JSON progress)
     journal.py         -- hafiz journal (time-bounded digest)
-    maintenance.py     -- hafiz init/status/config (status --diagnose for diagnostics)
+    maintenance.py     -- hafiz init/status/doctor/config
     observe.py         -- hafiz observe / note (recall via query --recall)
+    parsers.py         -- hafiz parsers list
     prune.py           -- hafiz prune
     query.py           -- hafiz query
     review.py          -- hafiz review
     session.py         -- hafiz session start/show/end
     watch.py           -- hafiz watch
-  core/                -- Business logic
+  core/                -- Business logic; no Typer/Rich imports
     agents.py          -- Agent registry & file operations
+    annotations.py     -- Free-floating annotation store (facts/decisions/learnings)
     capture.py         -- Transcript splitter + neighbor expansion
     chunker.py         -- File walking & chunking (.gitignore aware)
-    config.py          -- Configuration (TOML + env vars)
-    context.py         -- Context synthesis
-    database.py        -- SQLAlchemy models
+    config.py          -- Configuration (TOML + env vars + sticky resolution)
+    context.py         -- Context bundle synthesis
+    database.py        -- SQLAlchemy 2.0 async models
+    device_state.py    -- Sticky GPU/CPU device verdict
     distill.py         -- Distill-candidate scanner
     durations.py       -- Human-readable duration parser (30d, 2w, 6m, 1y)
-    embeddings.py      -- FastEmbed wrapper
-    extractor.py       -- Agent-driven entity/relation extraction
+    embeddings.py      -- fastembed wrapper
+    error_log.py       -- ~/.cache/hafiz/errors.log writer + recognizer rules
+    extractor.py       -- Agent-driven entity/relation extraction (v2 contract)
     git_context.py     -- Per-observation git HEAD capture
     git_hooks.py       -- Git hook utilities
+    graph_analysis.py  -- Centrality metrics + graph stats
+    host_probe.py      -- RAM / CPU / GPU / ONNX provider detection
     journal.py         -- Time-bounded digest assembly
     observations.py    -- Observations store & search (supersession)
+    parsers/           -- AST parsers (Python, etc.) + registry
+    probers.py         -- Per-tunable probers driving doctor --probe
     review.py          -- Self-review engine (knowledge quality analysis)
-    search.py          -- Vector similarity search
+    search.py          -- Vector similarity search + scoping
     session.py         -- Per-TTY session state
     store.py           -- Database store operations
+    tunables.py        -- Tunable registry (knob definitions + defaults)
+    tuning_state.py    -- Sticky probed-recommendation cache
     watcher.py         -- File system watcher
   data/agents/         -- Distributable agent skill files
     skills.md          -- Universal hafiz skill (installed by hafiz agent install)
 tests/                 -- pytest test suite
 alembic/               -- Database migrations
 hafiz.toml.example     -- Configuration template
-CLAUDE.md              -- Claude Code instructions (project-local)
+CLAUDE.md              -- Project development guide (Claude Code, local agents)
 docs/                  -- All narrative documentation
   README.md            -- Docs index
   architecture.md      -- System, data model, key flows, capture gap analysis
   commands.md          -- Authoritative CLI surface + JSON shapes
   roadmap.md           -- Architecture & vision
-  agents.md            -- Universal agent guide (stale; see architecture.md + skills.md)
+  agents.md            -- Agent integration playbook (stale; see architecture.md + skills.md)
 ```
 
 ## License

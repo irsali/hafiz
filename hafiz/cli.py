@@ -13,7 +13,15 @@ from hafiz import __version__
 
 app = typer.Typer(
     name="hafiz",
-    help="Hafiz — sovereign intelligence layer for your workspace.",
+    help=(
+        "Hafiz — sovereign intelligence layer for your workspace.\n\n"
+        "[bold]Getting started:[/bold] hafiz init  →  hafiz status --diagnose"
+        "  →  hafiz doctor --probe  →  hafiz ingest <path> --project <name>\n"
+        "[bold]Day-to-day:[/bold]    hafiz context \"<task>\"  ·  hafiz query \"<text>\""
+        "  ·  hafiz observe \"<decision>\" --type decision  ·  hafiz note \"<thought>\"\n"
+        "[bold]When stuck:[/bold]    hafiz errors list  ·  hafiz status --diagnose"
+        "  ·  hafiz doctor"
+    ),
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
