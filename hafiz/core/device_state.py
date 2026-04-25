@@ -9,7 +9,8 @@ State schema:
   device              "cpu" | "gpu"
   reason              human-facing message (None when device=gpu and all clear)
   reason_category     "out_of_memory" | "provider_unavailable" |
-                      "unsupported_arch" | "unknown" | None
+                      "unsupported_arch" | "non_finite_output" |
+                      "unknown" | None
   probed_at           ISO-8601 UTC timestamp (seconds precision)
   onnxruntime_version ORT version stamped at probe time; drives auto-invalidation
   gpu_name            first CUDA device name if known, else None
@@ -142,6 +143,9 @@ def classify_exception(exc: BaseException) -> tuple[str, str]:
             "unsupported_arch",
             "GPU architecture not supported by this ORT build.",
         )
+    if "non-finite" in low or "nan/inf" in low:
+        first_line = text.strip().splitlines()[0] if text.strip() else ""
+        return ("non_finite_output", first_line[:400])
     if "cuda driver version" in low and "insufficient" in low:
         return (
             "provider_unavailable",

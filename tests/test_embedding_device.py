@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -85,6 +86,13 @@ class TestClassifyException:
         assert cat == "unknown"
         assert "weird" in msg
 
+    def test_non_finite_output(self):
+        cat, msg = dstate.classify_exception(
+            RuntimeError("GPU probe returned non-finite values (NaN/Inf).")
+        )
+        assert cat == "non_finite_output"
+        assert "non-finite" in msg.lower()
+
 
 # ─── state file I/O ─────────────────────────────────────────────────────
 
@@ -127,6 +135,74 @@ class TestStateFile:
         monkeypatch.setattr(dstate, "_ort_version", lambda: "1.24.4")
         state = dstate.build_state("gpu", reason=None, category=None, gpu_name=None)
         assert dstate.is_stale(state) is False
+
+
+# ─── _build_gpu_model probe validation ─────────────────────────────────
+
+
+class TestGpuBuilderProbe:
+    """The un-mocked _build_gpu_model: verify the NaN guard and TRT preference."""
+
+    def _fake_fastembed(self, vector):
+        """Return a class that mimics FastEmbedEmbedding for the probe call."""
+
+        class _Fake:
+            def __init__(self, **kwargs):
+                self.providers = kwargs.get("providers")
+
+            def get_text_embedding(self, _text):
+                return vector
+
+        return _Fake
+
+    def test_raises_when_probe_returns_nan(self, monkeypatch):
+        monkeypatch.setattr(
+            embeddings,
+            "FastEmbedEmbedding",
+            self._fake_fastembed([float("nan")] * 4 + [0.1] * 764),
+        )
+        monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: False)
+        with pytest.raises(RuntimeError, match="non-finite"):
+            embeddings._build_gpu_model("any-model")
+
+    def test_raises_when_probe_returns_inf(self, monkeypatch):
+        monkeypatch.setattr(
+            embeddings,
+            "FastEmbedEmbedding",
+            self._fake_fastembed([float("inf")] + [0.0] * 767),
+        )
+        monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: False)
+        with pytest.raises(RuntimeError, match="non-finite"):
+            embeddings._build_gpu_model("any-model")
+
+    def test_passes_through_valid_probe(self, monkeypatch):
+        monkeypatch.setattr(
+            embeddings,
+            "FastEmbedEmbedding",
+            self._fake_fastembed([0.01] * 768),
+        )
+        monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: False)
+        model = embeddings._build_gpu_model("any-model")
+        assert model.providers == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    def test_trt_available_uses_trt_and_skips_cuda_ep(self, monkeypatch, tmp_path):
+        # When TRT is available, CUDA EP is deliberately omitted from providers.
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.delenv("ORT_TENSORRT_ENGINE_CACHE_ENABLE", raising=False)
+        monkeypatch.delenv("ORT_TENSORRT_CACHE_PATH", raising=False)
+        monkeypatch.setattr(
+            embeddings,
+            "FastEmbedEmbedding",
+            self._fake_fastembed([0.01] * 768),
+        )
+        monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: True)
+
+        model = embeddings._build_gpu_model("any-model")
+
+        assert model.providers == ["TensorrtExecutionProvider", "CPUExecutionProvider"]
+        assert "CUDAExecutionProvider" not in model.providers
+        assert os.environ.get("ORT_TENSORRT_ENGINE_CACHE_ENABLE") == "1"
+        assert os.environ.get("ORT_TENSORRT_CACHE_PATH", "").endswith("trt_engines")
 
 
 # ─── probe_device ──────────────────────────────────────────────────────

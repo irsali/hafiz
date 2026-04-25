@@ -17,7 +17,10 @@ Inspect or override via ``hafiz embedding status`` / ``hafiz embedding retry``.
 from __future__ import annotations
 
 import logging
+import math
+import os
 import subprocess
+from pathlib import Path
 
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from rich.console import Console
@@ -59,15 +62,60 @@ def _build_cpu_model(model_name: str) -> FastEmbedEmbedding:
     return FastEmbedEmbedding(model_name=model_name, providers=["CPUExecutionProvider"])
 
 
+def _tensorrt_available() -> bool:
+    """True iff TensorRT is importable AND ORT's TRT EP is registered.
+
+    Importing tensorrt is what loads libnvinfer.so into the process; without
+    that side effect, ORT can't dlopen the EP at session creation. The pip
+    package isn't a hafiz dependency — users opt in by installing it.
+    """
+    try:
+        import tensorrt  # noqa: F401
+    except ImportError:
+        return False
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return False
+    return "TensorrtExecutionProvider" in ort.get_available_providers()
+
+
+def _trt_cache_dir() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base) if base else Path.home() / ".cache"
+    return root / "hafiz" / "trt_engines"
+
+
 def _build_gpu_model(model_name: str) -> FastEmbedEmbedding:
-    """Build a GPU-preferring model and exercise it to surface lazy init failures."""
-    model = FastEmbedEmbedding(
-        model_name=model_name,
-        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-    )
+    """Build a GPU-preferring model and exercise it to surface lazy init failures.
+
+    When TensorRT is installed, prefer it and skip the CUDA EP entirely:
+    falling through from a missing TRT engine to a CUDA EP whose kernels lack
+    support for newer compute capabilities (e.g. Blackwell sm_120) would just
+    re-introduce the silent-NaN failure mode this function is guarding against.
+    """
+    if _tensorrt_available():
+        cache = _trt_cache_dir()
+        cache.mkdir(parents=True, exist_ok=True)
+        # ORT TRT EP reads these at session creation; setdefault leaves
+        # operator-set values alone for advanced users.
+        os.environ.setdefault("ORT_TENSORRT_ENGINE_CACHE_ENABLE", "1")
+        os.environ.setdefault("ORT_TENSORRT_CACHE_PATH", str(cache))
+        providers = ["TensorrtExecutionProvider", "CPUExecutionProvider"]
+    else:
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    model = FastEmbedEmbedding(model_name=model_name, providers=providers)
     # FastEmbed defers ORT session creation until first use; force it now so
-    # CUDA OOM / missing-kernel errors surface during probe, not mid-ingest.
-    model.get_text_embedding("probe")
+    # OOM / missing-kernel errors surface during probe, not mid-ingest.
+    probe = model.get_text_embedding("probe")
+    if not all(math.isfinite(v) for v in probe):
+        raise RuntimeError(
+            "GPU probe returned non-finite values (NaN/Inf). This onnxruntime "
+            "build likely lacks kernels for your GPU's compute capability. "
+            "On Blackwell (sm_120), `pip install tensorrt` enables TensorRT "
+            "EP as an alternative GPU path; otherwise hafiz will use CPU."
+        )
     return model
 
 
