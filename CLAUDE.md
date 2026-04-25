@@ -139,8 +139,9 @@ In-session todos use the in-conversation task list, not workitems.
 ### Layout
 
 - `workitems/active/<slug>.md` — proposed or in-progress.
+- `workitems/archive/<slug>.md` — deferred (decided not now, but not abandoned). Set `revisit_when:` so a future read knows what would justify reopening.
 - `workitems/done/<slug>.md` — shipped or abandoned; kept for audit.
-- Slug-based filenames (kebab-case). Move on completion; **never delete**.
+- Slug-based filenames (kebab-case). Move between folders as state changes; **never delete**.
 
 ### Standard template
 
@@ -150,10 +151,11 @@ YAML frontmatter for machine-parseable state, then body:
 ---
 title: Short title
 description: One-line hook — what this is, in a sentence. Required.
-status: active            # proposed | active | blocked | done | abandoned
+status: active            # proposed | active | blocked | deferred | done | abandoned
 created: 2026-04-21
 updated: 2026-04-21
 owner: irshad
+# revisit_when: <signal that would justify reopening>   # required when status: deferred
 related:
   - docs/roadmap.md#open-work
   - workitems/active/other-item.md
@@ -189,6 +191,7 @@ Append-only session log, latest on top.
 2. Flip to `active` when work starts.
 3. Update `Notes` + `Plan` checkboxes at the end of each session that touches it; bump `updated`.
 4. On completion, move to `done/`, set `status: done` or `abandoned`, append a short outcome.
+5. To shelve without abandoning, move to `archive/`, set `status: deferred`, fill in `revisit_when:`, and append a Notes entry explaining the deferral. Reopening = move back to `active/` and bump status.
 
 ### Session handover
 

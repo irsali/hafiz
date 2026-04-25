@@ -182,17 +182,40 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 
 ### Sessions
 
-Per-TTY named threads of work that auto-tag subsequent `observe` / `note` writes with a `session_id` and optional `task`. State lives in `~/.cache/hafiz/session-<tty>.json`, scoped to the controlling terminal so two shells don't pollute each other.
+Per-TTY named threads of work that auto-tag subsequent `observe` / `note` writes with a `session_id` and optional `task`.
+
+The on-disk JSON at `~/.cache/hafiz/session-<tty>.json` is now a **cursor** — the canonical record lives in the `sessions` table. The cursor carries both `session_uuid` (FK target) and `session_id` (slug) so display continuity is preserved.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `session start "<name>"` | Start a named session for this terminal | — | `--json` | rich panel |
+| `session start "<name>"` | Start a named session: creates a `sessions` row and writes the per-TTY cursor | — | `--json` | rich panel |
 | `session show` | Show the active session | — | `--json` | rich panel |
-| `session end` | Clear the session | — | `--json` | rich line |
+| `session end` | Clear the cursor and stamp `ended_at` on the DB row | — | `--json` | rich line |
 
 `session start` flags: `--task <name>`, `--project <name>`.
 
-**Auto-tagging** on `observe` / `note`: session state inherited when no flag is given; explicit `--session` / `--task` always win. Columns: `annotations.session_id` / `annotations.task` / `annotations.commit_hash`.
+**Auto-tagging** on `observe` / `note`: session inherited when no flag is given; explicit `--session` / `--task` always win. ``--session <slug>`` resolves the slug to a uuid via the `sessions` table; both `annotations.session_id` (uuid FK) and `annotations.legacy_session_id` (text slug) are populated, so journal/distill display stays human-readable.
+
+### Source layer (transcripts)
+
+Hafiz can ingest agent-harness transcripts into a dedicated source layer (see [architecture.md "Storage layers"](./architecture.md#storage-layers--knowledge-vs-source)). Source rows are **hidden from default `query` / `context`** — surfacing them is opt-in.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `import claude-code [PATH]` | Idempotent post-hoc import of Claude Code session JSONL into `communications` + messages | — | `--json` | rich table |
+| `recall <target>` | Ordered messages for a session (slug or uuid) or communication; or vector search via `--query` | — | `--json` | rich table |
+| `query --include-transcripts` | Add matching source-layer turns to results, tagged `layer="source"` | — | `--json` | rich panel (separate transcript section) |
+| `context --include-transcripts` | Append matching transcript turns under a `transcripts` field | — | `--json` | rich panel |
+| `forget <target>` | Targeted redaction: soft tombstone by default, `--hard` deletes content | — | `--json` | rich line |
+| `forget --all-expired` | Sweep mode — tombstone every communication past its `retention_until` | — | `--json` | rich table |
+
+Defaults:
+- `import claude-code` source path: `~/.claude/projects/`. Idempotent by `(agent='claude-code', external_id=<jsonl session uuid>)`.
+- `import claude-code` flags: `--project`, `--limit`, `--since 7d`, `--dry-run`, `--no-embed`.
+- `recall` flags: `--query`, `--role`, `--from`, `--to`, `--has-tool-call` / `--no-tool-call`, `--limit`.
+- `forget` flags: `--hard`, `--all-expired`, `--dry-run`.
+- Retention: 90 days from `started_at` unless explicitly overridden at insert time.
+- Selective embedding: skip messages under ~30 tokens; skip pure tool-result echoes; embed when `marked_salient=true` regardless of length.
 
 ### Review
 
@@ -220,6 +243,7 @@ Per-TTY named threads of work that auto-tag subsequent `observe` / `note` writes
 | `--supersedes` | `observe`, `note` | UUID of annotation being replaced |
 | `--derived-from` | `observe`, `note` | UUIDs this row was distilled from |
 | `--include-superseded` | `query --recall` | Return superseded / expired rows |
+| `--include-transcripts` | `query`, `context` | Add source-layer transcript matches to results (off by default) |
 | `--diagnose` | `status` | Full diagnostic checks including parser registry |
 
 ## Architecture Note

@@ -1,4 +1,9 @@
-"""hafiz session start / end / show — per-TTY session state management."""
+"""hafiz session start / end / show — DB-backed session lifecycle.
+
+Phase 2 of workitems/active/communications-and-sessions.md. The
+on-disk JSON is now a per-TTY *cursor* pointing at a real ``sessions``
+table row; both layers are kept in sync by :mod:`hafiz.core.session`.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,18 @@ from rich.panel import Panel
 from hafiz.core.session import current_session, end_session, start_session
 
 console = Console()
+
+
+def _info_block(data: dict) -> str:
+    return (
+        f"  [bold]ID:[/bold]       {data.get('session_id')}\n"
+        f"  [bold]UUID:[/bold]     {data.get('session_uuid') or '—'}\n"
+        f"  [bold]Name:[/bold]     {data.get('name')}\n"
+        f"  [bold]Task:[/bold]     {data.get('task') or '—'}\n"
+        f"  [bold]Project:[/bold]  {data.get('project') or '—'}\n"
+        f"  [bold]Started:[/bold]  {data.get('started_at')}\n"
+        f"  [bold]TTY:[/bold]      {data.get('tty')}"
+    )
 
 
 def run_session_start(
@@ -30,13 +47,8 @@ def run_session_start(
         return
 
     info = (
-        f"[bold green]Session started[/bold green]\n\n"
-        f"  [bold]ID:[/bold]       {data['session_id']}\n"
-        f"  [bold]Name:[/bold]     {data['name']}\n"
-        f"  [bold]Task:[/bold]     {data.get('task') or '—'}\n"
-        f"  [bold]Project:[/bold]  {data.get('project') or '—'}\n"
-        f"  [bold]Started:[/bold]  {data['started_at']}\n"
-        f"  [bold]TTY:[/bold]      {data['tty']}\n\n"
+        "[bold green]Session started[/bold green]\n\n"
+        f"{_info_block(data)}\n\n"
         "Subsequent `hafiz observe` / `note` / `capture` in this terminal will\n"
         "auto-tag with this session + task unless overridden per-call."
     )
@@ -51,15 +63,7 @@ def run_session_show(output_json: bool = False) -> None:
     if not data:
         console.print("[dim]No active session for this terminal.[/dim]")
         return
-    info = (
-        f"[bold]Active session[/bold]\n\n"
-        f"  [bold]ID:[/bold]       {data.get('session_id')}\n"
-        f"  [bold]Name:[/bold]     {data.get('name')}\n"
-        f"  [bold]Task:[/bold]     {data.get('task') or '—'}\n"
-        f"  [bold]Project:[/bold]  {data.get('project') or '—'}\n"
-        f"  [bold]Started:[/bold]  {data.get('started_at')}\n"
-        f"  [bold]TTY:[/bold]      {data.get('tty')}"
-    )
+    info = f"[bold]Active session[/bold]\n\n{_info_block(data)}"
     console.print(Panel(info, border_style="cyan"))
 
 

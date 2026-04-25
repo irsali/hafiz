@@ -26,8 +26,16 @@ def _run_query(
     workspace: bool = False,
     kind: str | None,
     output_json: bool,
+    include_transcripts: bool = False,
 ) -> None:
-    """Run the async search and display results."""
+    """Run the async search and display results.
+
+    When ``include_transcripts`` is set, additionally vector-search the
+    source-layer ``communication_messages`` and merge the results into
+    the output, clearly tagged with ``layer="source"`` so consumers
+    (agents) can distinguish them from knowledge-layer hits. Default
+    (off): the wisdom layer is primary.
+    """
 
     async def _search():
         try:
@@ -46,17 +54,28 @@ def _run_query(
                 project=search_project,
                 kind=kind,
             )
-            return results
+            transcript_hits = []
+            if include_transcripts:
+                from hafiz.core.communications import search_messages
+
+                # Source-layer search has no project filter today;
+                # users scope by passing --include-transcripts only
+                # when they actually want them. Limit is shared so a
+                # transcript-heavy query doesn't blow past the cap.
+                rows = await search_messages(text, limit=limit)
+                transcript_hits = [(r, score) for r, score in rows]
+            return results, transcript_hits
         finally:
             await close_engine()
 
-    results = asyncio.run(_search())
+    results, transcript_hits = asyncio.run(_search())
 
     if output_json:
         data = {
             "query": text,
             "results": [
                 {
+                    "layer": "knowledge",
                     "id": r.id,
                     "unit_id": r.unit_id,
                     "unit_name": r.unit_name,
@@ -72,12 +91,28 @@ def _run_query(
                 }
                 for r in results
             ],
-            "total": len(results),
+            "transcripts": [
+                {
+                    "layer": "source",
+                    "kind": "chat.turn",
+                    "id": msg.id,
+                    "communication_id": msg.communication_id,
+                    "seq": msg.seq,
+                    "role": msg.role,
+                    "author": msg.author,
+                    "content": msg.content,
+                    "ts": msg.ts.isoformat(),
+                    "score": score,
+                }
+                for msg, score in transcript_hits
+            ],
+            "total": len(results) + len(transcript_hits),
+            "include_transcripts": include_transcripts,
         }
         console.print_json(json.dumps(data))
         return
 
-    if not results:
+    if not results and not transcript_hits:
         console.print("[yellow]No results found.[/yellow]")
         return
 
@@ -104,10 +139,37 @@ def _run_query(
         panel_content.append("")
 
     panel_text = "\n".join(panel_content)
-    console.print(
-        Panel(
-            panel_text,
-            title=f"Results ({len(results)} matches)",
-            border_style="cyan",
+    if results:
+        console.print(
+            Panel(
+                panel_text,
+                title=f"Knowledge-layer results ({len(results)} matches)",
+                border_style="cyan",
+            )
         )
-    )
+
+    if transcript_hits:
+        ts_panel = []
+        for msg, score in transcript_hits:
+            score_color = (
+                "green" if score > 0.7 else "yellow" if score > 0.5 else "red"
+            )
+            preview = msg.content[:200].replace("\n", " ").strip()
+            if len(msg.content) > 200:
+                preview += "..."
+            ts_panel.append(
+                f"  [dim]chat.turn[/dim] [bold]{msg.role}[/bold] "
+                f"seq {msg.seq}  [{score_color}]{score:.2%}[/{score_color}]"
+            )
+            ts_panel.append(f"  [dim]{preview}[/dim]")
+            ts_panel.append("")
+        console.print(
+            Panel(
+                "\n".join(ts_panel),
+                title=(
+                    f"Source-layer transcripts "
+                    f"({len(transcript_hits)} matches, opt-in)"
+                ),
+                border_style="magenta",
+            )
+        )

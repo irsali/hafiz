@@ -164,11 +164,22 @@ def query(
         "--include-superseded",
         help="(with --recall) Also return superseded/expired observations, dimmed.",
     ),
+    include_transcripts: bool = typer.Option(
+        False,
+        "--include-transcripts",
+        help=(
+            "Opt in to source-layer search: include matching messages "
+            "from imported agent transcripts alongside knowledge-layer "
+            "results. Off by default — the wisdom layer must remain primary."
+        ),
+    ),
 ) -> None:
     """Search indexed content with vector similarity.
 
     By default, searches code chunks. Use --recall to search observations
-    (decisions, facts, learnings, patterns, warnings).
+    (decisions, facts, learnings, patterns, warnings). Use
+    --include-transcripts to additionally search the source layer
+    (imported agent transcripts).
     """
     if project and workspace:
         typer.echo("Error: --project and --workspace are mutually exclusive.")
@@ -190,7 +201,73 @@ def query(
     else:
         from hafiz.commands.query import _run_query
 
-        _run_query(text, limit=limit, project=project, workspace=workspace, kind=type, output_json=json_output)
+        _run_query(
+            text,
+            limit=limit,
+            project=project,
+            workspace=workspace,
+            kind=type,
+            include_transcripts=include_transcripts,
+            output_json=json_output,
+        )
+
+
+# ─── RECALL ─────────────────────────────────────────────────────────
+
+@app.command()
+def recall(
+    target: str = typer.Argument(
+        ...,
+        help=(
+            "Session slug, session uuid, or communication uuid to recall."
+        ),
+    ),
+    role: Optional[str] = typer.Option(
+        None, "--role", help="Filter to a single role (user/assistant/tool/system)."
+    ),
+    seq_from: Optional[int] = typer.Option(
+        None, "--from", help="Start at this seq (inclusive)."
+    ),
+    seq_to: Optional[int] = typer.Option(
+        None, "--to", help="Stop at this seq (inclusive)."
+    ),
+    has_tool_call: Optional[bool] = typer.Option(
+        None,
+        "--has-tool-call/--no-tool-call",
+        help="Filter to messages that do (or don't) carry tool_calls.",
+    ),
+    query_text: Optional[str] = typer.Option(
+        None,
+        "--query",
+        "-q",
+        help="Vector search across the session's messages instead of a linear walk.",
+    ),
+    limit: int = typer.Option(
+        1000, "--limit", "-l", help="Maximum messages to return."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Surface source-layer messages from a session or communication.
+
+    Source-layer rows are hidden from default `hafiz query` /
+    `hafiz context`; this command is the explicit, opt-in path. Pass
+    `--query` to vector-search across the session's turns; otherwise
+    the result is a linear, ordered walk.
+    """
+    from hafiz.commands.recall import run_recall as run_messages_recall
+
+    run_messages_recall(
+        target,
+        role=role,
+        has_tool_call=has_tool_call,
+        seq_from=seq_from,
+        seq_to=seq_to,
+        limit=limit,
+        query_text=query_text,
+        output_json=json_output,
+    )
 
 
 # ─── STATUS ─────────────────────────────────────────────────────────────
@@ -871,6 +948,14 @@ def context(
     workspace: bool = typer.Option(
         False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
     ),
+    include_transcripts: bool = typer.Option(
+        False,
+        "--include-transcripts",
+        help=(
+            "Append top source-layer transcript matches to the bundle. "
+            "Off by default — wisdom layer stays primary."
+        ),
+    ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (for agents)."
     ),
@@ -882,7 +967,13 @@ def context(
 
     from hafiz.commands.context import run_context
 
-    run_context(query, project=project, workspace=workspace, output_json=json_output)
+    run_context(
+        query,
+        project=project,
+        workspace=workspace,
+        include_transcripts=include_transcripts,
+        output_json=json_output,
+    )
 
 
 # ─── REVIEW ──────────────────────────────────────────────────────────
@@ -1073,6 +1164,126 @@ def parsers_list_cmd(
 
     run_parsers_list(output_json=json_output)
 
+
+
+# ─── FORGET ───────────────────────────────────────────────────────────
+
+@app.command()
+def forget(
+    target: Optional[str] = typer.Argument(
+        None,
+        help=(
+            "Communication uuid, session uuid, or session slug to redact. "
+            "Omit when using --all-expired."
+        ),
+    ),
+    hard: bool = typer.Option(
+        False,
+        "--hard",
+        help=(
+            "Permanently delete the communication and its messages. "
+            "Default is soft tombstone (sets valid_until = now)."
+        ),
+    ),
+    all_expired: bool = typer.Option(
+        False,
+        "--all-expired",
+        help=(
+            "Sweep mode: tombstone every communication past its "
+            "retention_until. Use without a target."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="(with --all-expired) Report counts without modifying rows.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Redact source-layer rows.
+
+    Two modes:
+
+    * Targeted: ``hafiz forget <id>`` — soft tombstone by default;
+      ``--hard`` deletes content. Works on a communication uuid,
+      a session uuid, or a session slug.
+    * Sweep: ``hafiz forget --all-expired`` — tombstones every
+      communication past its retention window (default 90 days).
+    """
+    if all_expired and target:
+        typer.echo("Error: --all-expired and a target are mutually exclusive.")
+        raise typer.Exit(1)
+    if not all_expired and not target:
+        typer.echo("Error: provide a target or use --all-expired.")
+        raise typer.Exit(1)
+
+    if all_expired:
+        from hafiz.commands.forget import run_forget_sweep
+
+        run_forget_sweep(dry_run=dry_run, output_json=json_output)
+    else:
+        from hafiz.commands.forget import run_forget_target
+
+        run_forget_target(target, hard=hard, output_json=json_output)
+
+
+# ─── IMPORT ───────────────────────────────────────────────────────────
+
+import_app = typer.Typer(
+    name="import",
+    help="Import agent transcripts and other source-layer data.",
+)
+app.add_typer(import_app)
+
+
+@import_app.command("claude-code")
+def import_claude_code_cmd(
+    path: Optional[str] = typer.Argument(
+        None,
+        help=(
+            "Path to a JSONL file or a directory of session JSONL files. "
+            "Defaults to ~/.claude/projects (every session you've ever had)."
+        ),
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Tag stored communications with this project."
+    ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-l", help="Stop after N JSONL files."
+    ),
+    since: Optional[str] = typer.Option(
+        None, "--since", help="Only import sessions ending after this duration ago (e.g. 7d)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Parse and report counts without writing."
+    ),
+    no_embed: bool = typer.Option(
+        False, "--no-embed", help="Skip embedding (text only). Useful for fast imports."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON (for agents)."
+    ),
+) -> None:
+    """Import Claude Code session JSONL files into the source layer.
+
+    Idempotent — re-running is a no-op for already-seen sessions.
+    Source-layer rows are hidden from default `hafiz query` /
+    `hafiz context`; surface them with `hafiz recall <session>` or the
+    `--include-transcripts` flag.
+    """
+    from hafiz.commands.import_cmd import run_import_claude_code
+
+    run_import_claude_code(
+        path,
+        project=project,
+        limit=limit,
+        since=since,
+        dry_run=dry_run,
+        no_embed=no_embed,
+        output_json=json_output,
+    )
 
 
 # ─── ERRORS ───────────────────────────────────────────────────────────

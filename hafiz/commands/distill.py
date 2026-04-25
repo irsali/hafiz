@@ -70,6 +70,7 @@ def run_distill(
 def _print_json(bundle: DistillBundle) -> None:
     note_ids = [n.id for n in bundle.notes]
     transcript_ids = [t.transcript_id for t in bundle.transcripts]
+    message_ids = [m.id for m in bundle.messages]
     payload = {
         "window": {
             "start": bundle.window_start.isoformat(),
@@ -77,6 +78,7 @@ def _print_json(bundle: DistillBundle) -> None:
         },
         "total_notes": len(bundle.notes),
         "total_transcripts": len(bundle.transcripts),
+        "total_messages": len(bundle.messages),
         "notes": [
             {
                 "id": n.id,
@@ -105,26 +107,57 @@ def _print_json(bundle: DistillBundle) -> None:
             }
             for t in bundle.transcripts
         ],
-        "promotion_hint": _promotion_hint(note_ids, transcript_ids),
+        "messages": [
+            {
+                "id": m.id,
+                "communication_id": m.communication_id,
+                "seq": m.seq,
+                "role": m.role,
+                "author": m.author,
+                "content": m.content,
+                "ts": m.ts.isoformat(),
+                "marked_salient": m.marked_salient,
+            }
+            for m in bundle.messages
+        ],
+        "promotion_hint": _promotion_hint(note_ids, transcript_ids, message_ids),
     }
     console.print_json(json.dumps(payload))
 
 
 def _promotion_hint(
-    note_ids: list[str], transcript_ids: list[str]
+    note_ids: list[str],
+    transcript_ids: list[str],
+    message_ids: list[str] | None = None,
 ) -> str | None:
-    """Human / agent-oriented scaffold for the follow-up promote call."""
-    if not note_ids and not transcript_ids:
+    """Human / agent-oriented scaffold for the follow-up promote call.
+
+    Phase 5 enrichment: ``--derived-from`` accepts message ids as well
+    as annotation ids — the polymorphic ``annotation_targets`` pivot
+    classifies each id at write time. We prefer message ids in the
+    hint when they're available, since they're typically the load-
+    bearing source of a distilled decision; notes / transcripts are
+    fallbacks.
+    """
+    candidates: list[str] = []
+    if message_ids:
+        candidates = message_ids
+    elif note_ids:
+        candidates = note_ids
+    elif transcript_ids:
+        candidates = transcript_ids
+    if not candidates:
         return None
-    ids = note_ids or transcript_ids
     return (
         "hafiz observe '<distilled text>' --type decision "
-        f"--derived-from {','.join(ids[:5])}"
+        f"--derived-from {','.join(candidates[:5])}"
     )
 
 
 def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
-    total = len(bundle.notes) + len(bundle.transcripts)
+    total = (
+        len(bundle.notes) + len(bundle.transcripts) + len(bundle.messages)
+    )
     if total == 0:
         console.print(
             f"[yellow]No distill candidates in the last "
@@ -137,7 +170,8 @@ def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
     console.print(
         f"[bold]Distill candidates — {window_label}[/bold]  "
         f"[dim]({len(bundle.notes)} notes, "
-        f"{len(bundle.transcripts)} transcripts)[/dim]"
+        f"{len(bundle.transcripts)} transcripts, "
+        f"{len(bundle.messages)} messages)[/dim]"
     )
 
     if bundle.notes:
@@ -182,9 +216,35 @@ def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
         console.print()
         console.print(table)
 
+    if bundle.messages:
+        table = Table(
+            title="Messages (source layer)",
+            border_style="magenta",
+            title_justify="left",
+        )
+        table.add_column("ID", style="dim", width=14, no_wrap=True)
+        table.add_column("When", style="dim", width=16)
+        table.add_column("Role", width=10)
+        table.add_column("Author", style="dim", width=18)
+        table.add_column("Content", ratio=3)
+        for m in bundle.messages:
+            preview = m.content[:120]
+            if len(m.content) > 120:
+                preview += "…"
+            table.add_row(
+                m.id[:12],
+                m.ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                m.role,
+                m.author or "—",
+                preview,
+            )
+        console.print()
+        console.print(table)
+
     hint = _promotion_hint(
         [n.id for n in bundle.notes],
         [t.transcript_id for t in bundle.transcripts],
+        [m.id for m in bundle.messages],
     )
     if hint:
         console.print()

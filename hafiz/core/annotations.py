@@ -5,9 +5,16 @@ Annotations may optionally link to a unit (`unit_id`) so they survive body
 changes across revisions, or float free as project-level or session-level
 knowledge.
 
+Phase 5 adds **polymorphic ``derived_from``**: an annotation may cite
+other annotations (knowledge layer) OR communication_messages (source
+layer) OR sessions / communications. The link is recorded in the
+``annotation_targets`` pivot with ``relation='derived_from'``. The
+legacy ``metadata.derived_from`` list is also preserved during the
+transition for back-compat with existing readers.
+
 This module replaces the old ``observations.py``. The schema renamed
 `observations` → `annotations` and `obs_type` → `kind` as part of the
-structural-grounding work (see workitems/active/structural-grounding.md).
+structural-grounding work (see workitems/done/structural-grounding.md).
 The CLI verb stays `hafiz observe` — that's a user-facing name, not a
 model reference.
 """
@@ -20,9 +27,77 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from hafiz.core.database import Annotation, get_session_factory
+from hafiz.core.database import (
+    Annotation,
+    AnnotationTarget,
+    Communication,
+    CommunicationMessage,
+    Session as SessionRow,
+    get_session_factory,
+)
 from hafiz.core.embeddings import embed_query
 from hafiz.core.git_context import current_git_context
+
+
+async def _classify_target_kind(target_uuid: uuid.UUID) -> str | None:
+    """Return ``'annotation'|'message'|'communication'|'session'`` for
+    a uuid, or None if no matching row exists. Used to decide what
+    ``annotation_targets.target_kind`` to write.
+    """
+    factory = get_session_factory()
+    async with factory() as s:
+        if await s.get(Annotation, target_uuid):
+            return "annotation"
+        if await s.get(CommunicationMessage, target_uuid):
+            return "message"
+        if await s.get(Communication, target_uuid):
+            return "communication"
+        if await s.get(SessionRow, target_uuid):
+            return "session"
+    return None
+
+
+async def write_derived_from_links(
+    annotation_id: uuid.UUID, derived_from: list[str]
+) -> list[dict]:
+    """Insert annotation_targets rows for each derived_from id.
+
+    Returns one summary dict per id describing how it was classified.
+    Unknown uuids are skipped (recorded as ``target_kind=None`` with a
+    note) — write-time integrity matters less here than not blocking
+    the annotation write itself, since lineage is best-effort metadata.
+    """
+    if not derived_from:
+        return []
+    summary: list[dict] = []
+    factory = get_session_factory()
+    async with factory() as s:
+        for raw in derived_from:
+            entry: dict = {"id": raw}
+            try:
+                target_uuid = uuid.UUID(raw)
+            except ValueError:
+                entry["target_kind"] = None
+                entry["note"] = "not-a-uuid"
+                summary.append(entry)
+                continue
+            kind = await _classify_target_kind(target_uuid)
+            entry["target_kind"] = kind
+            if kind is None:
+                entry["note"] = "no-matching-row"
+                summary.append(entry)
+                continue
+            link = AnnotationTarget(
+                id=uuid.uuid4(),
+                annotation_id=annotation_id,
+                target_kind=kind,
+                target_id=target_uuid,
+                relation="derived_from",
+            )
+            s.add(link)
+            summary.append(entry)
+        await s.commit()
+    return summary
 
 
 @dataclass
@@ -54,7 +129,7 @@ async def store_annotation(
     valid_from: datetime | None = None,
     valid_until: datetime | None = None,
     unit_id: str | None = None,
-    session_id: str | None = None,
+    session_id: str | uuid.UUID | None = None,
     task: str | None = None,
     commit_hash: str | None = None,
     supersedes_id: str | None = None,
@@ -104,6 +179,43 @@ async def store_annotation(
     if derived_from:
         merged_metadata["derived_from"] = list(derived_from)
 
+    # Phase 2 session resolution. ``session_id`` may arrive as:
+    #   - a real uuid (Phase 2+ callers; importer; future code)
+    #   - a slug string (legacy CLI / per-TTY cursor)
+    # When it's a slug, look up the sessions table; if a row exists,
+    # populate the uuid FK *and* keep the slug on legacy_session_id
+    # for human-readable display in journal/distill output. If no row
+    # is found, the slug lands in legacy_session_id only.
+    legacy_session_value: str | None = None
+    session_uuid_value: uuid.UUID | None = None
+    if isinstance(session_id, uuid.UUID):
+        session_uuid_value = session_id
+        from hafiz.core.sessions import get_session_by_id
+
+        found_row = await get_session_by_id(session_id)
+        if found_row is not None:
+            legacy_session_value = found_row.slug
+    elif session_id is not None:
+        raw = str(session_id).strip()
+        if raw:
+            try:
+                session_uuid_value = uuid.UUID(raw)
+                from hafiz.core.sessions import get_session_by_id
+
+                found_row = await get_session_by_id(session_uuid_value)
+                if found_row is not None:
+                    legacy_session_value = found_row.slug
+            except ValueError:
+                # Treat as slug. Look up; if missing, keep as legacy text.
+                from hafiz.core.sessions import get_session_by_slug
+
+                found = await get_session_by_slug(raw)
+                if found is not None:
+                    session_uuid_value = found.id
+                    legacy_session_value = found.slug
+                else:
+                    legacy_session_value = raw
+
     now = datetime.now(timezone.utc)
     new_ann = Annotation(
         id=uuid.uuid4(),
@@ -117,7 +229,8 @@ async def store_annotation(
         valid_from=valid_from or now,
         valid_until=valid_until,
         unit_id=uuid.UUID(unit_id) if unit_id else None,
-        session_id=session_id,
+        legacy_session_id=legacy_session_value,
+        session_id=session_uuid_value,
         task=task,
         commit_hash=resolved_commit_hash,
         supersedes_id=uuid.UUID(supersedes_id) if supersedes_id else None,
@@ -137,7 +250,14 @@ async def store_annotation(
         session.add(new_ann)
         await session.commit()
         await session.refresh(new_ann)
-        return new_ann
+
+    # Phase 5 — polymorphic lineage. Write annotation_targets rows for
+    # each derived_from id. Done in a separate transaction so a missing
+    # target row doesn't roll back the annotation itself.
+    if derived_from:
+        await write_derived_from_links(new_ann.id, list(derived_from))
+
+    return new_ann
 
 
 async def search_annotations(

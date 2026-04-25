@@ -1,12 +1,27 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 7 -->
-# Hafiz — Workspace Intelligence (v7)
+<!-- SKILLS_VERSION: 8 -->
+# Hafiz — Workspace Intelligence (v8)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
 code structure via AST parsers, attaches agent-authored meaning via
 annotations, and preserves a git-aware history across branches and
 rewrites. Always use `--json` when parsing output programmatically.
+
+## Two storage layers (load-bearing)
+
+Hafiz separates **knowledge** (curated, identity-stable, mid-volume)
+from **source** (firehose, immutable, retention-bounded). They live
+side-by-side; agents must treat them differently.
+
+| Layer | Tables | Examples | Default visibility |
+|---|---|---|---|
+| **Knowledge** | `units` · `unit_revisions` · `embeddings` · `edges` · `annotations` · `files` · `commits` | code, docs, decisions, learnings, patterns, runbooks | surfaced by default |
+| **Source** | `sessions` · `communications` · `communication_messages` · `annotation_targets` | imported agent transcripts, future events | **hidden by default; opt-in via `hafiz recall` or `--include-transcripts`** |
+
+**Rule of thumb:** the wisdom layer is primary. Source rows surface
+only when you explicitly ask for them. Don't dilute default queries
+with raw transcripts.
 
 ## Ownership rule (load-bearing)
 
@@ -21,7 +36,10 @@ Parsers own structure. Agents own meaning.
   annotations + semantic edges.
 
 Units are namespaced by kind (`code.function`, `code.class`,
-`doc.heading`, `mail.message`, `chat.turn`, `file.raw`, …).
+`doc.heading`, `mail.message`, `file.raw`, …). Note that `chat.turn`
+is no longer a unit kind — agent transcripts live in the source layer
+(`communications` + `communication_messages`).
+
 Annotation kinds: `fact` · `decision` · `learning` · `pattern` ·
 `warning` · `note` · `concept` · `service`.
 
@@ -94,14 +112,21 @@ You MUST follow these rules in every session:
 | Command | When to use |
 |---------|-------------|
 | `hafiz context "<task>"` | **First thing** — bundle of relevant units, graph neighborhood, and annotations |
-| `hafiz query "<text>" --json` | Semantic search over indexed content (units + embedding parts) |
+| `hafiz context "<task>" --include-transcripts` | Same as above, plus matching turns from imported transcripts (opt-in source layer) |
+| `hafiz query "<text>" --json` | Semantic search over indexed content (knowledge layer) |
+| `hafiz query "<text>" --include-transcripts --json` | Add matching transcript turns to results, tagged ``layer="source"`` |
 | `hafiz query "<topic>" --recall --type decision --json` | Search annotations (decisions, facts, learnings, patterns, warnings) |
+| `hafiz recall <session-or-comm-id>` | List ordered messages from a session/communication. Add ``--query "<text>"`` for similarity search across the session's turns. Source-layer access — use deliberately. |
 | `hafiz graph deps <name> --json` | What this unit depends on (outgoing edges) |
 | `hafiz graph impact <name> --json` | Blast radius — what depends on this unit (incoming edges) |
 | `hafiz observe "<text>" --type <kind> --source agent:<name>` | Record a decision / warning / pattern / learning / fact |
+| `hafiz observe "<text>" --derived-from <id>,<id>` | Cite annotations OR messages OR sessions — polymorphic via the ``annotation_targets`` pivot |
 | `hafiz note "<text>" --source agent:<name>` | Capture a raw thought — anything below decision-grade |
 | `hafiz journal --since 7d --json` | "What did I record recently?" — annotations grouped by day |
-| `hafiz distill --since 7d --json` | Promotable notes with a ready observe scaffold |
+| `hafiz distill --since 7d --json` | Promotable notes + transcript turns with a ready observe scaffold |
+| `hafiz import claude-code --project <name>` | Post-hoc importer for Claude Code session JSONL (idempotent) |
+| `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
+| `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
 
 ## Capture → Distill Workflow
 
@@ -132,6 +157,49 @@ hafiz session start "jwt-migration" --task auth --project my-project
 # subsequent observe / note auto-tag with session_id + task
 hafiz journal --session <id>     # pull one thread of work
 ```
+
+Sessions are now **DB-backed**: the per-TTY JSON is a cursor, the
+record lives in the ``sessions`` table. Every annotation written
+inside a session links to it via FK; ``hafiz observe --session <slug>``
+resolves the slug to the uuid and populates both columns.
+
+## Source layer — agent transcripts (opt-in)
+
+Hafiz can ingest agent-harness transcripts into a dedicated source
+layer, so prior conversations are queryable without polluting default
+search. **Defaults are conservative**: source rows hide from
+``hafiz query`` and ``hafiz context`` until you opt in.
+
+```bash
+# Idempotent post-hoc import. Re-running is a no-op.
+hafiz import claude-code --project hafiz
+
+# Explicit recall of one session's turns, in order.
+hafiz recall <session-slug-or-uuid> --json
+
+# Vector search inside one session.
+hafiz recall <session> --query "auth flow" --json
+
+# Add transcript matches to a normal query (clearly tagged in output).
+hafiz query "auth flow" --include-transcripts --json
+
+# Cite specific turns when distilling — polymorphic --derived-from.
+hafiz observe "<distilled decision>" --type decision \
+  --derived-from <message-id>,<message-id>
+```
+
+Retention is bounded (default 90 days from started_at). The user's
+explicit redaction commands:
+
+```bash
+hafiz forget <comm-id-or-session-slug>          # soft tombstone
+hafiz forget <comm-id-or-session-slug> --hard   # delete content + messages
+hafiz forget --all-expired                      # sweep retention_until
+```
+
+**Selective embedding** is enforced at import time: short turns and
+pure tool-result echoes don't get embedded. Salient turns are still
+written (``content`` is canonical) — just not vector-indexed.
 
 ## Agent Extraction (v2)
 
@@ -340,10 +408,19 @@ workstation is a no-op, not a hazard.
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz ingest <path>` | Parse + embed + store. Diff-driven on re-runs. | `--project`, `--git-hook`, `--json` |
-| `hafiz status` | Counts across the seven tables; last-indexed commit per project | `--json`, `--diagnose` |
+| `hafiz status` | Counts across all tables; last-indexed commit per project | `--json`, `--diagnose` |
 | `hafiz init` | Create schema + pgvector extension | — |
 | `hafiz hooks install <repo>` | Write post-commit / post-merge / post-rewrite hooks | `--project` |
 | `hafiz agent install` | Splice this skills.md into an agent config | — |
+
+### Source layer (transcripts)
+
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `hafiz import claude-code [path]` | Idempotent import of Claude Code session JSONL into ``communications`` + messages | `--project`, `--limit`, `--since`, `--dry-run`, `--no-embed`, `--json` |
+| `hafiz recall <target>` | Ordered messages for a session/communication, optionally vector-searched | `--query`, `--role`, `--from`, `--to`, `--has-tool-call`/`--no-tool-call`, `--limit`, `--json` |
+| `hafiz forget <target>` | Targeted redaction (soft tombstone by default). | `--hard`, `--json` |
+| `hafiz forget --all-expired` | Sweep mode — tombstone every communication past `retention_until`. | `--dry-run`, `--json` |
 
 ### Error reporting
 
@@ -367,15 +444,22 @@ workstation is a no-op, not a hazard.
 | `hafiz config apply` | Run probers + persist to sticky cache. Same as `doctor --apply`, narrower JSON summary. | `--json` |
 | `hafiz config clear-sticky` | Wipe the probed recommendations cache. | `--json` |
 
-### Data model — the seven tables
+### Data model — knowledge layer (the seven tables)
 
 - `files` — one row per file ever seen (tombstoned via `valid_until`).
 - `units` — stable identity of an addressable thing (function, heading, …). `kind` is namespaced.
 - `unit_revisions` — append-only versioned body; at most one `superseded_at IS NULL` per unit.
 - `embeddings` — 1:N vector search index over revisions (oversized bodies split into parts).
 - `edges` — append-only relations; `source ∈ {ast, agent, user}`.
-- `annotations` — decisions / facts / learnings. May link to a unit or float free.
+- `annotations` — decisions / facts / learnings. May link to a unit or float free. ``session_id`` is now a uuid FK to ``sessions``; the historical text slug is preserved as ``legacy_session_id``.
 - `commits` — git axis; populated on ingest. `rewritten_at` marks orphaned commits.
+
+### Data model — source layer
+
+- `sessions` — engineer/agent threads of work. ``slug`` is the human-facing identifier; ``id`` is the canonical uuid that other tables FK against.
+- `communications` — agent transcripts, chat threads. Idempotent by ``(agent, external_id)``. ``retention_until`` defaults to ``started_at + 90 days``.
+- `communication_messages` — append-only turns. ``content`` is canonical (NOT NULL); ``embedding`` is nullable and populated only when the message clears the selective-embed policy. ``seq`` is monotonic per-communication.
+- `annotation_targets` — polymorphic pivot. An annotation may cite units, other annotations, messages, communications, or sessions via ``target_kind`` + ``target_id`` + ``relation``.
 
 </details>
 

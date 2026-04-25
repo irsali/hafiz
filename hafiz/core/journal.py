@@ -130,7 +130,9 @@ async def build_journal(
         if kind:
             stmt = stmt.where(Annotation.kind == kind)
         if session_id:
-            stmt = stmt.where(Annotation.session_id == session_id)
+            # Filter on legacy_session_id (the historical text slug). Phase 2
+            # will resolve user-supplied slugs to the new uuid FK and union.
+            stmt = stmt.where(Annotation.legacy_session_id == session_id)
         if task:
             stmt = stmt.where(Annotation.task == task)
 
@@ -147,7 +149,7 @@ async def build_journal(
             confidence=a.confidence,
             valid_from=a.valid_from,
             valid_until=a.valid_until,
-            session_id=a.session_id,
+            session_id=a.legacy_session_id or (str(a.session_id) if a.session_id else None),
             task=a.task,
             commit_hash=a.commit_hash,
             metadata=a.metadata_ or {},

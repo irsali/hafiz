@@ -149,7 +149,8 @@ def run_observe(
                 "valid_from": ann.valid_from.isoformat(),
                 "valid_until": ann.valid_until.isoformat() if ann.valid_until else None,
                 "unit_id": str(ann.unit_id) if ann.unit_id else None,
-                "session_id": ann.session_id,
+                "session_id": ann.legacy_session_id
+                or (str(ann.session_id) if ann.session_id else None),
                 "task": ann.task,
                 "commit_hash": ann.commit_hash,
                 "supersedes_id": str(ann.supersedes_id) if ann.supersedes_id else None,
@@ -160,10 +161,13 @@ def run_observe(
         return
 
     tags_str = ", ".join(ann.tags) if ann.tags else "none"
+    session_display = ann.legacy_session_id or (
+        str(ann.session_id) if ann.session_id else None
+    )
     session_line = ""
-    if ann.session_id or ann.task:
+    if session_display or ann.task:
         session_line = (
-            f"  [bold]Session:[/bold]    {ann.session_id or '—'}\n"
+            f"  [bold]Session:[/bold]    {session_display or '—'}\n"
             f"  [bold]Task:[/bold]       {ann.task or '—'}\n"
         )
     info = (

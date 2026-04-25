@@ -1,6 +1,8 @@
 """SQLAlchemy 2.0 async models and database connection for Hafiz.
 
-Seven-table model built on identity/body/embedding separation:
+Two storage layers (see docs/architecture.md "Storage layers"):
+
+**Knowledge layer** — identity-stable, mid-volume, embedding-first:
 
   files          - One row per file ever seen (tombstoned via valid_until).
   units          - Stable identity of an addressable thing (function, heading,
@@ -19,7 +21,30 @@ Seven-table model built on identity/body/embedding separation:
   commits        - Git axis as a first-class citizen. rewritten_at /
                    rewritten_to track rebase/amend/squash (Phase 5b).
 
-See workitems/active/structural-grounding.md and docs/roadmap.md for design.
+**Source layer** — high-volume, time-series, immutable, retention-bounded
+(see workitems/active/communications-and-sessions.md):
+
+  sessions               - Engineer/agent threads of work. Promoted from
+                           per-TTY JSON to a real DB row. Annotations FK
+                           against ``sessions.id`` via the new uuid
+                           ``Annotation.session_id`` column; the original
+                           text slug column is preserved as
+                           ``legacy_session_id``.
+  communications         - Agent transcripts, chat threads, email threads.
+                           One row per session-shaped exchange. Optional FK
+                           to ``sessions``.
+  communication_messages - Append-only turns within a communication. Raw
+                           ``content`` is canonical; ``embedding`` is
+                           nullable and populated only per the
+                           selective-embed policy.
+  annotation_targets     - Polymorphic pivot. Lets an annotation cite a
+                           unit, another annotation, a message, a
+                           communication, or a session. Replaces the
+                           ``metadata.derived_from`` pattern as it gets
+                           adopted; old metadata stays readable.
+
+See workitems/done/structural-grounding.md and
+workitems/active/communications-and-sessions.md for design.
 """
 
 from __future__ import annotations
@@ -29,6 +54,7 @@ from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -328,7 +354,15 @@ class Annotation(Base):
         ForeignKey("units.id", ondelete="SET NULL"),
         nullable=True,
     )
-    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The historical text slug is preserved as ``legacy_session_id`` so
+    # existing readers (journal, distill, recall filters) still work.
+    # New writes from Phase 2+ populate ``session_id`` (uuid FK) instead.
+    legacy_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     task: Mapped[str | None] = mapped_column(Text, nullable=True)
     commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     valid_from: Mapped[datetime] = mapped_column(
@@ -352,9 +386,242 @@ class Annotation(Base):
         Index("idx_annotations_unit_id", "unit_id"),
         Index("idx_annotations_project", "project"),
         Index("idx_annotations_session", "session_id"),
+        Index("idx_annotations_legacy_session", "legacy_session_id"),
         Index("idx_annotations_task", "task"),
         Index("idx_annotations_commit", "commit_hash"),
         Index("idx_annotations_supersedes", "supersedes_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Source-layer tables — high-volume, time-series, retention-bounded
+# (See docs/architecture.md "Storage layers — knowledge vs source".)
+# ---------------------------------------------------------------------------
+
+
+class Session(Base):
+    """Engineer/agent thread of work — promoted from per-TTY JSON.
+
+    The historical slug (e.g. ``"phase-3-a3f19c"``) is kept on ``slug``;
+    ``id`` is the canonical uuid that other tables FK against. Sessions
+    have a ``valid_until`` for tombstoning but no ``retention_until`` —
+    they are typically referenced by long-lived annotations and should
+    not auto-expire.
+    """
+
+    __tablename__ = "sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tty: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    valid_until: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_sessions_slug"),
+        Index("idx_sessions_agent", "agent"),
+        Index("idx_sessions_scope", "scope_kind", "scope_value"),
+        Index("idx_sessions_started_at", "started_at"),
+        Index("idx_sessions_ended_at", "ended_at"),
+        Index("idx_sessions_valid_until", "valid_until"),
+    )
+
+
+class Communication(Base):
+    """Agent transcript, chat thread, or email thread.
+
+    One row per session-shaped exchange. ``external_id`` is the
+    agent-harness's own identifier (e.g. a Claude Code session uuid)
+    and is the basis for importer idempotency — re-importing the same
+    JSONL is a no-op.
+
+    Retention is bounded: ``retention_until`` defaults in app code to
+    ``started_at + 90 days``. The retention sweeper tombstones rows
+    past their retention via ``valid_until``.
+    """
+
+    __tablename__ = "communications"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    external_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str | None] = mapped_column(Text, nullable=True)
+    participants: Mapped[list] = mapped_column(JSONB, default=list)
+    scope_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    retention_until: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    valid_until: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    messages: Mapped[list["CommunicationMessage"]] = relationship(
+        "CommunicationMessage",
+        back_populates="communication",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_communications_agent_external",
+            "agent",
+            "external_id",
+            unique=True,
+            postgresql_where=text("external_id IS NOT NULL"),
+        ),
+        Index("idx_communications_session", "session_id"),
+        Index("idx_communications_agent", "agent"),
+        Index("idx_communications_started_at", "started_at"),
+        Index("idx_communications_retention", "retention_until"),
+        Index("idx_communications_valid_until", "valid_until"),
+        Index(
+            "idx_communications_scope", "scope_kind", "scope_value"
+        ),
+    )
+
+
+class CommunicationMessage(Base):
+    """Append-only turn within a communication.
+
+    Raw ``content`` is canonical (NOT NULL); ``embedding`` is nullable
+    and populated only per the selective-embed policy (skip < 30
+    tokens; skip pure tool-result echoes; mark-salient override).
+    Storing only a vector without the source row inverts source-of-truth
+    and is forbidden — the column is required.
+    """
+
+    __tablename__ = "communication_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    communication_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("communications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(
+        Text, default="text/markdown"
+    )
+    tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    parent_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("communication_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ts: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    embedding = mapped_column(Vector(768), nullable=True)
+    chunk_window: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    marked_salient: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    communication: Mapped[Communication] = relationship(
+        "Communication", back_populates="messages"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "communication_id", "seq", name="uq_messages_comm_seq"
+        ),
+        CheckConstraint(
+            "role IN ('user', 'assistant', 'tool', 'system')",
+            name="ck_messages_role",
+        ),
+        Index("idx_messages_comm_seq", "communication_id", "seq"),
+        Index("idx_messages_ts", "ts"),
+        Index("idx_messages_role", "role"),
+        Index("idx_messages_parent", "parent_message_id"),
+        Index(
+            "idx_messages_salient",
+            "marked_salient",
+            postgresql_where=text("marked_salient = true"),
+        ),
+    )
+
+
+class AnnotationTarget(Base):
+    """Polymorphic pivot — bridges annotations to any source-layer row.
+
+    An annotation may target a unit (knowledge), another annotation
+    (knowledge), a message / communication / session (source). The
+    ``relation`` column is curated; the CHECK constraint enforces the
+    allowed vocabulary. ``metadata.derived_from`` lists on annotations
+    remain readable for back-compat; new code writes to this table.
+    """
+
+    __tablename__ = "annotation_targets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    annotation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("annotations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    relation: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    observed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "target_kind IN ('unit', 'annotation', 'message', "
+            "'communication', 'session')",
+            name="ck_annotation_targets_kind",
+        ),
+        CheckConstraint(
+            "relation IN ('derived_from', 'about', 'supersedes', "
+            "'cites', 'rebuts', 'related_to')",
+            name="ck_annotation_targets_relation",
+        ),
+        Index("idx_ann_targets_annotation", "annotation_id"),
+        Index("idx_ann_targets_target", "target_kind", "target_id"),
+        Index("idx_ann_targets_relation", "relation"),
     )
 
 

@@ -93,10 +93,24 @@ def test_extract_import_help():
     assert "--file" in result.output
 
 
-def test_removed_recall_command():
-    """recall is now query --recall, standalone recall should not exist."""
+def test_recall_command_is_source_layer_recall():
+    """Phase 4 of communications-and-sessions: ``hafiz recall`` is the
+    source-layer entry point (messages from a session/communication).
+    Annotation recall stays under ``hafiz query --recall`` — the two
+    commands intentionally cover different layers and don't collide."""
     result = runner.invoke(app, ["recall", "--help"])
-    assert result.exit_code != 0
+    assert result.exit_code == 0
+    assert "session" in result.output.lower()
+    assert "--query" in result.output
+    assert "--include-transcripts" not in result.output  # belongs on query/context
+
+
+def test_query_keeps_recall_flag_for_annotations():
+    """`query --recall` continues to search annotations (the wisdom
+    layer). The new top-level `hafiz recall` covers the source layer."""
+    result = runner.invoke(app, ["query", "--help"])
+    assert result.exit_code == 0
+    assert "--recall" in result.output
 
 
 def test_doctor_command_exists():

@@ -505,6 +505,56 @@ The shape of all three tiers is the same: **lean on the existing seven-table mod
 
 ---
 
+## Storage layers — knowledge vs source
+
+The Tier-1/2/3 framing above absorbs almost every domain into the seven-table knowledge model. But there is one shape it absorbs *poorly*: **high-volume, time-series, immutable streams** — agent transcripts, chat threads, terminal events, tool-call traces. Forcing those into `units` + `unit_revisions` works mechanically but fights the model: revisions never revise, embedding-first access is the wrong primary index, and the wisdom layer drowns under firehose volume.
+
+So Hafiz commits to **two storage layers**, not one:
+
+| | **Knowledge layer** *(the seven tables)* | **Source layer** *(promoted dedicated tables)* |
+|---|---|---|
+| Examples | functions, docs, people, projects, decisions, learnings, patterns, runbooks | conversations, messages, events, traces |
+| Volume | low–mid (1K–100K rows / project) | high (1M+ rows / project) |
+| Lifecycle | identity stable, body revises | immutable, append-only, retention-bounded |
+| Access pattern | embedding-first, identity-keyed | sequence/time-keyed, recent-N, aggregations |
+| Specialized columns | a few + JSONB metadata | many — `seq`, `ts`, `role`, `author` are first-class |
+| Survival horizon | permanent (tombstone-able) | bounded retention (auto-sweep) |
+| Default visibility | surfaced by `hafiz query` / `context` | hidden from default queries; opt-in via `hafiz recall` |
+
+**Annotations bridge the layers.** A `decision` annotation can `--derived-from` either another annotation (knowledge→knowledge) *or* a sequence of message ids (knowledge→source). Source rows are *citations*; annotations are the *citers*. This strengthens the wisdom layer rather than replacing it: distillations finally have something concrete to point at.
+
+### Promotion rule — when to add a dedicated table
+
+Default to `units.kind` namespacing. Promote to a dedicated table only when **all three** of the following hold:
+
+1. **Volume** — expected rows per project > ~100K, or growth is unbounded by user activity rather than codebase size.
+2. **First-class columns** — at least three columns warrant their own indexes (sequence numbers, foreign keys, timestamps you actually filter on, structured payloads). JSONB metadata is no longer the right home.
+3. **Lifecycle differs materially** — immutable vs revisable, bounded retention vs permanent, time-series vs identity-keyed.
+
+Communications + messages pass on all three (high volume, `seq`/`role`/`ts`/`author` are first-class, immutable + retention-bounded). Runbook executions, metric snapshots, and reports as proposed in second-brain-coverage *do not* — they stay in the knowledge layer until pain forces re-evaluation.
+
+The rule is what stops sprawl. Without it, every new domain argues for its own table.
+
+### Source-layer obligations
+
+Any table promoted to the source layer must ship with:
+
+- **Bounded retention as a column** (`retention_until` or equivalent). A single sweeper job tombstones across all source tables uniformly.
+- **Default exclusion from `hafiz query` / `hafiz context`.** Source rows surface only via dedicated commands (`hafiz recall`) or explicit opt-in flags. The wisdom layer must remain primary.
+- **Raw is canonical, embedding is derived.** Content columns are required; embedding columns are nullable, populated selectively per a documented policy. Storing a vector without the source it was derived from inverts the source-of-truth relationship and creates a write-only black box.
+- **Polymorphic annotation linkage.** Annotations may `derived_from` source rows; the link mechanism (today: `metadata.derived_from`) extends via the `annotation_targets` pivot when first-class is needed.
+
+### What this is *not*
+
+Two storage layers does not mean two databases, two query languages, or two sets of conventions. It means:
+
+- Same Postgres. Same async ORM. Same migrations.
+- Same `--project` / `--workspace` scoping.
+- Same auto-tagging discipline (commit hash, branch, session).
+- Just two qualitatively different *shapes* of table, with crisp rules about which shape new domains earn.
+
+---
+
 ## How to read this doc going forward
 
 - **Diagrams stay close to code.** When you change [core/store.py](../hafiz/core/store.py), the ingest flow diagram lies. When you add a parser, Level 5 needs a row.
