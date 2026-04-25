@@ -510,9 +510,12 @@ tests/                 -- pytest test suite
 alembic/               -- Database migrations
 hafiz.toml.example     -- Configuration template
 CLAUDE.md              -- Claude Code instructions (project-local)
-BRAIN_AGENT_GUIDE.md   -- Universal agent guide
-ROADMAP.md             -- Architecture & vision
-COMMANDS.md            -- Authoritative CLI surface + JSON shapes
+docs/                  -- All narrative documentation
+  README.md            -- Docs index
+  architecture.md      -- System, data model, key flows, capture gap analysis
+  commands.md          -- Authoritative CLI surface + JSON shapes
+  roadmap.md           -- Architecture & vision
+  agents.md            -- Universal agent guide (stale; see architecture.md + skills.md)
 ```
 
 ## License

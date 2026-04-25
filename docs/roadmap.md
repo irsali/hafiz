@@ -10,11 +10,11 @@
 
 Every tool and agent you use — Claude Code, Cursor, Copilot, Aider, a research assistant, a writing assistant, or anything tomorrow — connects to **one shared second brain**. Not just your code: your notes, decisions, research, conversations, clips, and anything else you want to remember. No more scattered `.md` files, no more "I forgot what we decided last week." Hafiz is always on, always fresh, and always yours.
 
-> **Status (2026-04-21):** Phases 1–5 shipped, plus the temporal/capture/distill layer (journal, note, capture, session, distill, expiry, supersession — see [workitems/done/temporal-session-awareness.md](workitems/done/temporal-session-awareness.md)). Core CLI surface is stable; the product is dogfooded daily. One-time migration scripts are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
+> **Status (2026-04-21):** Phases 1–5 shipped, plus the temporal/capture/distill layer (journal, note, capture, session, distill, expiry, supersession — see [workitems/done/temporal-session-awareness.md](../workitems/done/temporal-session-awareness.md)). Core CLI surface is stable; the product is dogfooded daily. One-time migration scripts are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
 >
 > **Dropped from scope (as of 2026-04-21):** REST API layer and MCP server. Hafiz is intentionally CLI-only; agents integrate via `hafiz` + `--json`. This decision replaces the earlier "future" positioning of those surfaces.
 >
-> This file is the **product vision + future backlog**. It is *not* the development guide — see [CLAUDE.md](CLAUDE.md) for conventions, layout, and how to add a command. [COMMANDS.md](COMMANDS.md) is the source of truth for command shapes and flags.
+> This file is the **product vision + future backlog**. It is *not* the development guide — see [CLAUDE.md](../CLAUDE.md) for conventions, layout, and how to add a command. [commands.md](commands.md) is the source of truth for command shapes and flags.
 
 ---
 
@@ -155,7 +155,7 @@ commits        (hash PK, project, author, committed_at, summary)
 
 ## CLI Surface
 
-`hafiz --help` is the authoritative list; [COMMANDS.md](COMMANDS.md) documents flags, JSON shapes, and when each command is agent-driven vs. human-driven. Current shape:
+`hafiz --help` is the authoritative list; [commands.md](commands.md) documents flags, JSON shapes, and when each command is agent-driven vs. human-driven. Current shape:
 
 ```bash
 # ─── SETUP ───
@@ -194,7 +194,7 @@ hafiz extract import [--file] [--project]         # or stdin
 hafiz review [--project] [--json]
 ```
 
-**Output modes.** Human (Rich panels, tables, trees) by default. `--json` on every user-facing command; shapes are stable and documented in [COMMANDS.md](COMMANDS.md).
+**Output modes.** Human (Rich panels, tables, trees) by default. `--json` on every user-facing command; shapes are stable and documented in [commands.md](commands.md).
 
 ---
 
@@ -234,8 +234,8 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 ### Phase 5 — Agent Integration
 - [x] `hafiz agent install|uninstall|list` for **claude-code**, **cursor**, **github-copilot** — a generic registry rather than a Bilal/OpenClaw-specific adapter
 - [x] **Paired-marker splicing** — `agent install` preserves user-owned content in `CLAUDE.md` / `.cursor/rules/hafiz.mdc` / `.github/copilot-instructions.md` via sentinel markers (commit `76888f6`)
-- [x] [`BRAIN_AGENT_GUIDE.md`](BRAIN_AGENT_GUIDE.md) — universal agent integration playbook
-- [x] [`hafiz/data/agents/skills.md`](hafiz/data/agents/skills.md) — **Layer 1 stable contract** (see [Two-Layer Stability Model](CLAUDE.md))
+- [x] [`docs/agents.md`](agents.md) — universal agent integration playbook (stale; see `architecture.md` + `skills.md`)
+- [x] [`hafiz/data/agents/skills.md`](../hafiz/data/agents/skills.md) — **Layer 1 stable contract** (see [Two-Layer Stability Model](../CLAUDE.md))
 
 ---
 
@@ -243,7 +243,7 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 
 Items actively on deck — a mix of leftovers from the original roadmap and newer structural work:
 
-- [ ] **Phase 6 — Structural Grounding (AST layer + schema restructure + second-brain scope)** — see [workitems/active/structural-grounding.md](workitems/active/structural-grounding.md). Splits structure from meaning: AST parsers own code entities/edges, agents own semantic annotations. Greenfield schema (`units` / `unit_revisions` / `edges` / `annotations` / `files` / `commits`). Branch-switching becomes a delta. Agent contract bumps to v2. Opens the pipeline to non-code domains via a Parser Protocol.
+- [ ] **Phase 6 — Structural Grounding (AST layer + schema restructure + second-brain scope)** — see [workitems/active/structural-grounding.md](../workitems/active/structural-grounding.md). Splits structure from meaning: AST parsers own code entities/edges, agents own semantic annotations. Greenfield schema (`units` / `unit_revisions` / `edges` / `annotations` / `files` / `commits`). Branch-switching becomes a delta. Agent contract bumps to v2. Opens the pipeline to non-code domains via a Parser Protocol.
 - [ ] **One-time migration scripts** — `import_memory.py` (MEMORY.md → observations), `import_knowledgehub.py`, `import_chromadb.py`. No top-level `scripts/` directory exists today.
 - [ ] **ChromaDB hard cutover** — not executed; no ChromaDB dependency to decommission in this repo
 - [ ] **Retention policies** for stale data — `prune` is on-demand only; no age-based policy
@@ -283,12 +283,12 @@ Ideas, not committed — most are unblocked by the Structural Grounding work (Ph
 ## Design Principles (Non-Negotiable)
 
 - **Standalone project.** Hafiz is an independent tool — not coupled to any specific agent. Any agent that can run a CLI command can use it.
-- **Two-layer stability.** Layer 1 ([skills.md](hafiz/data/agents/skills.md)) is the stable contract with every agent; Layer 2 (`hafiz review` and friends) is free to iterate. See [CLAUDE.md](CLAUDE.md).
+- **Two-layer stability.** Layer 1 ([skills.md](../hafiz/data/agents/skills.md)) is the stable contract with every agent; Layer 2 (`hafiz review` and friends) is free to iterate. See [CLAUDE.md](../CLAUDE.md).
 - **Everything is configurable.** DB connection, embedding model, workspace path — all via `hafiz.toml` or environment variables. No hardcoded values.
 - **Library-first, not library-captured.** We lean on LlamaIndex for chunking primitives and fastembed for embeddings, but we own the storage, search, graph, and CLI layers in plain SQL + NetworkX. Wrappers earn their place.
 - **No API-key-dependent paths.** Entity/relation extraction is agent-driven by design (direct-LLM path removed in `9440b3f`). The agent *is* the brain.
 - **Workspace = Unit of Knowledge.** A "workspace" is a root directory (like a VSCode workspace) that may contain multiple projects. Hafiz indexes the workspace and tags chunks/entities by project. `--workspace` scopes to sibling projects in the parent directory.
-- **CLI surface is the product.** Human output must be scannable; `--json` shapes must be stable and documented in [COMMANDS.md](COMMANDS.md).
+- **CLI surface is the product.** Human output must be scannable; `--json` shapes must be stable and documented in [commands.md](commands.md).
 - **Identity vs body is a first-class split.** Every fact that can evolve over time has a stable identity and append-only revisions. Branch switches, commit hops, and edits are diffs; nothing is destructively overwritten. Agent annotations reference units by identity, so they survive body changes without orphaning.
 - **Parsing is a Protocol, not a monolith.** New content types — new languages, new domains — are additive `Parser` implementations against a stable shape. The schema, ingest pipeline, graph, and query surface are language- and domain-agnostic by construction. Parsers register via Python entry points (`hafiz.parsers` group); installing a parser *is* enabling AST for that language — no config knob, no flag. Unregistered languages fall through to the whole-file fallback.
 - **Domain-agnostic by design.** Units don't know they're code. `code.function`, `doc.heading`, `mail.message`, `chat.turn` all live in one table with one query surface. A new domain is a parser, never a schema migration.

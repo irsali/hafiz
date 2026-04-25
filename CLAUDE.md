@@ -12,7 +12,7 @@ The north star is a **user-friendly public repo** that scales to thousands of in
 
 - **Install and first-run must be frictionless.** A new user on a fresh machine should reach a working `hafiz status` in minutes, with clear, actionable errors when something is off.
 - **Defaults beat flags.** Optimize the common case; reserve flags for genuine optionality.
-- **The CLI surface *is* the product.** Human output must be scannable; `--json` shapes must be stable and documented in [COMMANDS.md](COMMANDS.md).
+- **The CLI surface *is* the product.** Human output must be scannable; `--json` shapes must be stable and documented in [commands.md](docs/commands.md).
 - **Docs, `--help` text, and error messages are features**, not afterthoughts — treat them as first-class deliverables.
 - **Dependencies and system requirements are costs borne by users.** Justify each one; avoid heavyweight additions when a lighter path exists.
 - **Product engineering > code archaeology.** When a design has drifted, propose a clean replacement rather than layering workarounds.
@@ -69,9 +69,12 @@ hafiz/
 alembic/                # Schema migrations
 tests/                  # pytest suite (test_chunker, test_cli, test_config, test_search)
 workitems/              # Local-only backlog & planning (gitignored) — see "Work Items" below
-COMMANDS.md             # Source of truth for commands — keep in sync with code
-ROADMAP.md              # Vision + data model + future work
-BRAIN_AGENT_GUIDE.md    # Agent-integration playbook
+docs/                   # All narrative documentation
+├── README.md           # Index of this directory
+├── architecture.md     # System + data model + key flows + capture gap analysis
+├── commands.md         # Source of truth for commands — keep in sync with code
+├── roadmap.md          # Vision + data model + future work
+└── agents.md           # Agent-integration playbook (stale — see architecture.md + skills.md)
 hafiz.toml.example      # Config template
 ```
 
@@ -122,7 +125,7 @@ hafiz status --diagnose
 
 Multi-step work, deferred decisions, and "let's come back to this" ideas live in `workitems/` as individual markdown files. **Nothing discussed in one session should be lost by the next.**
 
-`workitems/` is gitignored — these are a personal backlog, not a shared artifact. [ROADMAP.md](ROADMAP.md) is the public/shared equivalent (one-liners and vision); work items are the private design docs behind them.
+`workitems/` is gitignored — these are a personal backlog, not a shared artifact. [docs/roadmap.md](docs/roadmap.md) is the public/shared equivalent (one-liners and vision); work items are the private design docs behind them.
 
 ### When to create one
 
@@ -152,7 +155,7 @@ created: 2026-04-21
 updated: 2026-04-21
 owner: irshad
 related:
-  - ROADMAP.md#open-work
+  - docs/roadmap.md#open-work
   - workitems/active/other-item.md
 ---
 
@@ -195,7 +198,7 @@ Before planning any non-trivial task, check `workitems/active/`. At session end,
 
 - **Async end-to-end.** Anything touching the DB is `async def`. Command functions in `hafiz/commands/` wrap with `asyncio.run(...)`; never call blocking DB code from a running loop.
 - **Core ↔ Commands split.** `hafiz/core/` holds business logic with no Typer/Rich imports. `hafiz/commands/` is presentation only: arg parsing, `--json` vs. rich output, exit codes.
-- **`--json` is non-negotiable on user-facing commands.** Agents parse it; keep shapes stable and document new fields in [COMMANDS.md](COMMANDS.md).
+- **`--json` is non-negotiable on user-facing commands.** Agents parse it; keep shapes stable and document new fields in [commands.md](docs/commands.md).
 - **Scoping flags.** Any new search-ish command takes `--project` and `--workspace` (mutually exclusive), following the resolution rules in [hafiz/core/search.py](hafiz/core/search.py).
 - **No API-key-dependent paths.** Extraction is agent-driven only (direct-LLM path removed in `9440b3f`). Don't reintroduce one.
 - **Error surfacing.** Human output: Rich panel + `typer.Exit(code=...)`. JSON output: `{"ok": false, "error": "..."}` to stdout + non-zero exit.
@@ -206,13 +209,14 @@ Before planning any non-trivial task, check `workitems/active/`. At session end,
 1. Implement logic in `hafiz/core/<area>.py` as an async function returning plain data.
 2. Add a thin wrapper in `hafiz/commands/<area>.py` that handles `--json` vs. rich output.
 3. Register it in [hafiz/cli.py](hafiz/cli.py) (directly or via a sub-`Typer`).
-4. Add a row to [COMMANDS.md](COMMANDS.md) — purpose, brain type, agent use, terminal use.
+4. Add a row to [commands.md](docs/commands.md) — purpose, brain type, agent use, terminal use.
 5. Add a Typer `CliRunner` test in [tests/test_cli.py](tests/test_cli.py).
 6. If it changes the agent contract, update [hafiz/data/agents/skills.md](hafiz/data/agents/skills.md) and flag it in the PR.
 
 ## Reference Docs
 
-- [COMMANDS.md](COMMANDS.md) — command map, brain types, scoping flag semantics.
-- [ROADMAP.md](ROADMAP.md) — vision and data model.
-- [BRAIN_AGENT_GUIDE.md](BRAIN_AGENT_GUIDE.md) — agent integration playbook.
+- [docs/architecture.md](docs/architecture.md) — system levels, data model, key flows, capture gap analysis.
+- [docs/commands.md](docs/commands.md) — command map, brain types, scoping flag semantics.
+- [docs/roadmap.md](docs/roadmap.md) — vision and data model.
+- [docs/agents.md](docs/agents.md) — agent integration playbook (stale; authoritative refs are `skills.md` + `architecture.md`).
 - [README.md](README.md) — end-user install/setup.

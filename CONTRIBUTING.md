@@ -22,7 +22,7 @@ filing a public issue.
 2. **Fork and branch.** One logical change per branch.
 3. **Match the existing conventions** in [CLAUDE.md](CLAUDE.md) — async
    end-to-end, `core/` vs. `commands/` split, `--json` on user-facing commands,
-   stable JSON shapes documented in [COMMANDS.md](COMMANDS.md).
+   stable JSON shapes documented in [docs/commands.md](docs/commands.md).
 4. **Run the gates locally** before pushing:
    ```bash
    ruff check .

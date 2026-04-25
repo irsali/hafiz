@@ -251,7 +251,7 @@ run it unprompted on every session.
 hafiz doctor --probe --json
 ```
 
-The `--json` shape is documented in COMMANDS.md under the Setup
+The `--json` shape is documented in docs/commands.md under the Setup
 section; key fields:
 
 - `host.{ram_total_mb, ram_available_mb, cpu_count, onnx_providers, gpu_name, gpu_vram_free_mb, fingerprint}`

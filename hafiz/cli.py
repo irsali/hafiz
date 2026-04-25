@@ -237,7 +237,7 @@ def doctor(
     """Diagnose install health, show host capabilities, and (with
     --probe) recommend per-tunable values for this machine.
 
-    Every user-visible field is documented in COMMANDS.md; the `--json`
+    Every user-visible field is documented in docs/commands.md; the `--json`
     shape is stable for agents that want to act on the recommendations.
     """
     from hafiz.commands.maintenance import run_doctor

@@ -1,5 +1,20 @@
 # Hafiz Agent Integration Guide
 
+> **Stale as of 2026-04-25.** This guide predates the Structural Grounding rewrite
+> and uses the older four-table vocabulary ("entity & relationship graph,"
+> "observations store"). It will be rewritten. Until then, the authoritative
+> references are:
+>
+> - [`../hafiz/data/agents/skills.md`](../hafiz/data/agents/skills.md) — the
+>   agent contract (installed by `hafiz agent install` into every agent's
+>   config). Source of truth for what agents read/write.
+> - [`architecture.md`](architecture.md) — current system, seven-table data
+>   model, key flows, and capture-coverage analysis.
+>
+> Kept below for continuity; treat details as possibly outdated.
+
+---
+
 Universal instructions for any AI agent (Aider, Codex, Claude Code, Cursor, etc.) to use
 Hafiz as a workspace intelligence layer.
 

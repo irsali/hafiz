@@ -19,7 +19,7 @@ Seven-table model built on identity/body/embedding separation:
   commits        - Git axis as a first-class citizen. rewritten_at /
                    rewritten_to track rebase/amend/squash (Phase 5b).
 
-See workitems/active/structural-grounding.md and ROADMAP.md for design.
+See workitems/active/structural-grounding.md and docs/roadmap.md for design.
 """
 
 from __future__ import annotations
