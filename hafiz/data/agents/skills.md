@@ -8,6 +8,12 @@ code structure via AST parsers, attaches agent-authored meaning via
 annotations, and preserves a git-aware history across branches and
 rewrites. Always use `--json` when parsing output programmatically.
 
+Wherever you see `<your-name>` in this file (e.g.
+`--source agent:<your-name>`), substitute the agent you actually are
+— for example `claude-code`, `cursor`, `copilot`, or `aider`. This
+tag is how hafiz attributes writes; never leave the literal string
+`<your-name>` in a real command.
+
 ## Two storage layers (load-bearing)
 
 Hafiz separates **knowledge** (curated, identity-stable, mid-volume)
@@ -224,7 +230,7 @@ annotate them — don't re-derive structure.
     {
       "content": "Canonical auth entry — all routes funnel through here",
       "kind": "pattern",
-      "source": "agent:claude-code",
+      "source": "agent:<your-name>",
       "unit_identity_key": "<copy from step 1>",
       "confidence": 0.9,
       "tags": ["auth"]

@@ -6,12 +6,13 @@ A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your
 
 ```bash
 pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"  # or without [gpu]
+# Start Postgres + write hafiz.toml first — see Setup §1–§2 below
 hafiz init
 hafiz ingest ./src/ --project my-project
 hafiz query "how does authentication work?"
 ```
 
-See the full setup guide below.
+See the full setup guide below. Doing a cross-machine or cross-agent test? See [docs/testing-cross-machine.md](docs/testing-cross-machine.md).
 
 ## Prerequisites
 
