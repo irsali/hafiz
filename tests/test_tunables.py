@@ -23,9 +23,13 @@ from hafiz.core.tunables import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_between_tests():
+def _reset_settings_between_tests(tmp_path, monkeypatch):
     """Env var overrides only take effect on the next ``get_settings()``
-    call, so drop the cached instance around every test."""
+    call, so drop the cached instance around every test. Also redirect
+    XDG_CACHE_HOME so the sticky tuning cache (written by a real
+    ``hafiz config apply`` on the dev machine) doesn't leak into tests
+    that expect resolve() to return the built-in default."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     reset_settings()
     yield
     reset_settings()

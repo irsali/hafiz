@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.table import Table
 
 from hafiz.core.config import get_settings, find_config_file, CONFIG_FILENAME
@@ -597,16 +599,40 @@ def run_config_unset(
 # ── `hafiz config apply` / `clear-sticky` ─────────────────────────────
 
 
-def run_config_apply(*, output_json: bool = False) -> None:
+def run_config_apply(
+    *, output_json: bool = False, assume_yes: bool = False
+) -> None:
     """Run all probers and persist recommendations to sticky state.
 
-    Equivalent to `hafiz doctor --apply` but with a narrower,
+    Interactive by default: prompts per recommendation so the user can
+    accept, skip, or supply a custom value. ``--yes`` (``assume_yes=True``)
+    persists every recommendation without prompting; ``--json`` is also
+    silent (machine consumers don't get prompted). When stdin/stdout
+    aren't both TTYs we degrade to ``--yes`` semantics so piped runs
+    don't hang on an unanswerable prompt.
+
+    Equivalent to ``hafiz doctor --apply`` but with a narrower,
     apply-focused JSON summary agents can act on directly.
     """
     from hafiz.core.host_probe import probe_host
 
     host = probe_host()
     rows = _collect_tuning(host, probe=True)
+
+    interactive = (
+        not output_json
+        and not assume_yes
+        and _is_interactive()
+        and _has_pending_recommendations(rows)
+    )
+    if interactive:
+        console.print()
+        console.print(
+            "[bold]Per-tunable review.[/bold] [dim]Each prompt: [Y]es to apply, "
+            "[n]o to skip, [c]ustom to enter your own value.[/dim]"
+        )
+        rows = _interactive_filter(rows)
+
     applied = _apply_tuning(host, rows)
 
     if output_json:
@@ -616,16 +642,20 @@ def run_config_apply(*, output_json: bool = False) -> None:
                     "ok": True,
                     "applied": applied,
                     "host_fingerprint": host.fingerprint,
+                    "interactive": interactive,
                 }
             )
         )
         return
 
     if not applied:
-        console.print(
-            "[yellow]No probed recommendations to apply.[/yellow] "
-            "Run `hafiz doctor --probe` to inspect per-tunable probe_error details."
-        )
+        if interactive:
+            console.print("\n[dim]Nothing applied — every recommendation was skipped.[/dim]")
+        else:
+            console.print(
+                "[yellow]No probed recommendations to apply.[/yellow] "
+                "Run `hafiz doctor --probe` to inspect per-tunable probe_error details."
+            )
         return
     console.print()
     for a in applied:
@@ -676,7 +706,11 @@ def datetime_now_iso() -> str:
 
 
 def run_doctor(
-    *, output_json: bool = False, probe: bool = False, apply: bool = False
+    *,
+    output_json: bool = False,
+    probe: bool = False,
+    apply: bool = False,
+    assume_yes: bool = False,
 ) -> None:
     """Run diagnostic checks on the Hafiz installation.
 
@@ -985,7 +1019,21 @@ def run_doctor(
     # rows that actually produced a recommendation (skip policy caps and
     # failed probes); sticky never silently lowers a value below default.
     applied: list[dict] = []
+    interactive = False
     if apply:
+        interactive = (
+            not output_json
+            and not assume_yes
+            and _is_interactive()
+            and _has_pending_recommendations(tuning)
+        )
+        if interactive:
+            console.print()
+            console.print(
+                "[bold]Per-tunable review.[/bold] [dim]Each prompt: [Y]es to "
+                "apply, [n]o to skip, [c]ustom to enter your own value.[/dim]"
+            )
+            tuning = _interactive_filter(tuning)
         applied = _apply_tuning(host, tuning)
 
     # ── Output ─────────────────────────────────────────────────────────
@@ -1048,6 +1096,119 @@ def run_doctor(
 
 
 # ── Tuning helpers ─────────────────────────────────────────────────────
+
+
+def _is_interactive() -> bool:
+    """True when both stdin and stdout are a real TTY.
+
+    Used to decide whether to prompt for per-tunable review. Piped or
+    redirected runs (CI, pre-commit, ``hafiz config apply | tee``)
+    silently fall back to ``--yes`` semantics — prompting in that
+    context would hang on an unanswerable read.
+    """
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _has_pending_recommendations(rows: list[dict]) -> bool:
+    """True when at least one row would actually be applied — i.e. has a
+    recommendation that differs from the current effective value and
+    didn't error out. Used to skip the prompt header when there's
+    nothing to ask about."""
+    for r in rows:
+        if r.get("probe_error"):
+            continue
+        rec = r.get("recommended")
+        if rec is None:
+            continue
+        if rec == r.get("current"):
+            continue
+        return True
+    return False
+
+
+def _interactive_filter(rows: list[dict]) -> list[dict]:
+    """Walk recommendation rows; ask the user accept / skip / custom for
+    each one. Returns the (possibly modified) row list — skipped rows
+    have ``recommended`` cleared to None so ``_apply_tuning`` ignores
+    them; custom rows have ``recommended`` replaced with the user's
+    value, ``confidence`` flagged as ``user``, and ``rationale``
+    rewritten to record the override.
+
+    Rows that have no actionable recommendation (policy caps, probe
+    errors, recommendation == current) pass through untouched.
+    """
+    from hafiz.core import tunables as _tunables
+
+    out: list[dict] = []
+    for r in rows:
+        rec = r.get("recommended")
+        if r.get("probe_error") or rec is None or rec == r.get("current"):
+            out.append(r)
+            continue
+
+        console.print()
+        console.print(
+            f"[bold]{r['key']}[/bold]: "
+            f"current=[yellow]{r['current']}[/yellow] → "
+            f"recommended=[green]{rec}[/green] "
+            f"[dim](confidence: {r.get('confidence') or '—'})[/dim]"
+        )
+        if r.get("rationale"):
+            console.print(f"  [dim]{r['rationale']}[/dim]")
+
+        choice = Prompt.ask(
+            "  Apply?",
+            choices=["y", "n", "c"],
+            default="y",
+            show_choices=True,
+        )
+
+        r2 = dict(r)
+        if choice == "n":
+            r2["recommended"] = None
+            r2["user_choice"] = "skip"
+            console.print("  [dim]skipped[/dim]")
+        elif choice == "c":
+            try:
+                t = _tunables.get(r["key"])
+            except KeyError:
+                console.print(
+                    f"  [red]Unknown tunable {r['key']!r}; skipping.[/red]"
+                )
+                r2["recommended"] = None
+                r2["user_choice"] = "skip"
+                out.append(r2)
+                continue
+            while True:
+                raw = Prompt.ask(f"  Enter custom value for {r['key']}")
+                try:
+                    val = _tunables._coerce(t, raw)
+                except (ValueError, TypeError) as exc:
+                    console.print(f"  [red]Invalid:[/red] {exc}")
+                    continue
+                if t.validator is not None:
+                    try:
+                        t.validator(val)
+                    except ValueError as exc:
+                        console.print(f"  [red]Invalid:[/red] {exc}")
+                        continue
+                break
+            r2["recommended"] = val
+            r2["confidence"] = "user"
+            r2["rationale"] = (
+                f"User-supplied value (probe originally recommended {rec})."
+            )
+            r2["measured"] = {"path": "user_override", "probe_recommended": rec}
+            r2["user_choice"] = "custom"
+        else:
+            r2["user_choice"] = "accept"
+
+        out.append(r2)
+
+    return out
 
 
 def _apply_tuning(host, rows: list[dict]) -> list[dict]:

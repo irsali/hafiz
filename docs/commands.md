@@ -23,12 +23,12 @@
 | `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
 | `doctor` | Install health + host capabilities (RAM, CPU, GPU, onnxruntime) + tunable registry. Stable `--json` shape with `checks` / `host` / `tuning` keys. | — | `--json` | rich tables |
 | `doctor --probe` | Same as `doctor`, plus runs per-tunable probers to recommend values for this host. Slow (loads the embedding model, runs several forward passes). | Embed | `--json` | rich tables |
-| `doctor --apply` | Implies `--probe`; additionally persists the recommendations to the sticky tuning cache (`~/.cache/hafiz/tuning_state.json`). JSON response gains an `applied` array. | Embed | `--json` | rich tables |
+| `doctor --apply [--yes]` | Implies `--probe`; persists recommendations to the sticky tuning cache (`~/.cache/hafiz/tuning_state.json`). **Interactive by default** — prompts `[Y]es / [n]o / [c]ustom` per recommendation. `--yes` skips prompts (CI); `--json` is also non-interactive. JSON response gains `applied` and `interactive` fields. | Embed | `--json --yes` | rich tables |
 | `config show` | Display current hafiz.toml settings **and** per-tunable resolution sources (env / toml / sticky / default) | — | `--json` (payload gains a `tunables` array) | rich output |
 | `config get <key>` | Print one tunable's effective value + source layer | — | `--json` | rich output |
 | `config set <key> <value> [--local]` | Persist a tunable to hafiz.toml. User-scope by default (`~/.config/hafiz/hafiz.toml`); `--local` targets the project's `./hafiz.toml`. Validates and type-coerces the input. | — | `--json` | rich output |
 | `config unset <key> [--local]` | Remove a tunable from hafiz.toml so it falls through to sticky / default. Prunes emptied tables. | — | `--json` | rich output |
-| `config apply` | Runs every prober and persists recommendations to sticky state. Equivalent to `hafiz doctor --apply` with a narrower JSON summary. | Embed | `--json` | rich output |
+| `config apply [--yes]` | Runs every prober and prompts to persist each recommendation. **Interactive by default** — `[Y]es / [n]o / [c]ustom` per row, with custom values validated through the tunable's coercer. `--yes` accepts everything; `--json` is non-interactive. JSON gains an `interactive` boolean alongside `applied`. Equivalent to `doctor --apply` with a narrower summary. | Embed | `--json --yes` | rich output |
 | `config clear-sticky` | Delete the sticky tuning cache. Re-probe is required to repopulate. | — | `--json` | rich output |
 | `errors list [--since] [--limit]` | Recent errors newest-first from `~/.cache/hafiz/errors.log` (NDJSON, 1000-entry cap, FIFO rotation). Each record includes `suggested_action` + `context` for recognized classes. Recognizers (v9): `ModuleNotFoundError` (declared-dep aware), sqlalchemy `OperationalError` (DB connectivity), pgvector missing (`ProgrammingError` with `'extension "vector" does not exist'`), pydantic `ValidationError` from the hafiz config loader. | — | `--json` | rich table |
 | `errors list --group-by exception_type` | Pattern view: returns a distinct shape — `{since, grouped_by, total, with_suggestions, most_recent, groups}` — where each group carries `{exception_type, count, with_suggestions, most_recent_id, most_recent_timestamp, sample_command, sample_message}`. `--limit` is ignored in this mode (counts must reflect the full matching window). | — | `--json` | rich table |
@@ -70,6 +70,8 @@
 Adding fields is safe; renaming requires a note here.
 
 **Tunable resolution order:** `env (HAFIZ_*__*)` → `hafiz.toml` → sticky tuning cache → built-in default. The sticky layer is written by `doctor --apply` / `config apply` and keyed to a host fingerprint that invalidates itself when the RAM class, GPU presence, OS/arch, or onnxruntime provider set materially changes. Clear it with `config clear-sticky`.
+
+**Probe safety brake.** The `embedding.max_part_chars` prober runs candidate sizes ascending in a subprocess. To stop the *measurement itself* from OOM-ing the host, the subprocess is given a `safety_ceiling_mb` (= the recommendation budget) and (a) extrapolates the next candidate's likely peak from the previous one × 3.0 and skips it if predicted to exceed the ceiling, (b) stops the moment a measured peak crosses the ceiling. Surfaced in `measured.candidates` with `_skipped` / `_stopped` sentinel rows. Without this brake, batched probing can spike RSS far above what the recommendation logic would ever pick.
 
 ### Indexing
 

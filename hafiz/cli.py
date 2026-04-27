@@ -362,7 +362,18 @@ def doctor(
         "--apply",
         help=(
             "Persist recommendations to the sticky tuning cache "
-            "(~/.cache/hafiz/tuning_state.json). Implies --probe."
+            "(~/.cache/hafiz/tuning_state.json). Implies --probe. "
+            "Interactive by default — prompts per recommendation; pass "
+            "--yes to skip prompts, or --json for non-interactive output."
+        ),
+    ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help=(
+            "Skip interactive prompts during --apply and persist every "
+            "recommendation as-is. Useful for CI / scripted runs."
         ),
     ),
 ) -> None:
@@ -374,7 +385,12 @@ def doctor(
     """
     from hafiz.commands.maintenance import run_doctor
 
-    run_doctor(output_json=json_output, probe=probe or apply_, apply=apply_)
+    run_doctor(
+        output_json=json_output,
+        probe=probe or apply_,
+        apply=apply_,
+        assume_yes=assume_yes,
+    )
 
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
@@ -455,16 +471,32 @@ def config_apply(
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON."
     ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help=(
+            "Skip interactive prompts and persist every recommendation "
+            "as-is. Default is interactive: each recommendation prompts "
+            "[Y]es / [n]o / [c]ustom so you can override before it lands "
+            "in the sticky cache."
+        ),
+    ),
 ) -> None:
-    """Run all probers and persist their recommendations to sticky state.
+    """Run all probers and prompt to persist their recommendations.
 
-    Equivalent to `hafiz doctor --probe --apply`. Does not modify
-    hafiz.toml — sticky state is user-scope cache, separate from
-    checked-in configuration.
+    Interactive by default — for each tunable whose recommendation
+    differs from the current effective value, you'll be asked whether
+    to apply the suggested value, skip it, or supply a custom number.
+    Use ``--yes`` to skip the prompts and accept everything; ``--json``
+    is also non-interactive.
+
+    Does not modify hafiz.toml — sticky state is user-scope cache,
+    separate from checked-in configuration.
     """
     from hafiz.commands.maintenance import run_config_apply
 
-    run_config_apply(output_json=json_output)
+    run_config_apply(output_json=json_output, assume_yes=assume_yes)
 
 
 @config_app.command("clear-sticky")
