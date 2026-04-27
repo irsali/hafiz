@@ -92,7 +92,13 @@ def ingest(
         False, "--json", "-j", help="Emit newline-delimited JSON progress events."
     ),
 ) -> None:
-    """Index files into the Hafiz knowledge base (chunk + embed + store)."""
+    """Index files into the Hafiz knowledge base (chunk + embed + store).
+
+    Multi-project workspaces: ingest one project at a time, and avoid
+    running concurrent `hafiz ingest` processes — each one loads its
+    own embedding model and the per-call peak RSS multiplies. Sequential
+    runs in a single shell are the safe default.
+    """
     if git_hook:
         from hafiz.commands.ingest import run_git_hook_ingest_cmd
 

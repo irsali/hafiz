@@ -146,6 +146,8 @@ hafiz doctor --apply        # persist them to the sticky tuning cache
 hafiz ingest /path/to/your/project --project my-project
 ```
 
+> **Multi-project workspaces:** ingest one project at a time, sequentially in the same shell. Each `hafiz ingest` process loads its own embedding model and embed-call peak RSS scales with `embedding.max_part_chars`; running ingest in parallel (multiple VSCode tasks, CI matrix shards on one host, git hooks firing across sibling repos) multiplies both and can OOM. See [docs/commands.md](docs/commands.md#indexing) for the full note.
+
 ### 6. Try it out
 
 ```bash

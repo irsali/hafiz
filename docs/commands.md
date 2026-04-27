@@ -84,6 +84,8 @@ Adding fields is safe; renaming requires a note here.
 
 **Race safety:** ingest refuses to run during a rebase / merge / cherry-pick in progress (detects `.git/<marker>` files) and exits with code 2.
 
+**Multi-project ingest.** When indexing a workspace with several projects (e.g. `workspace.projects = ["a", "b", "c"]`), run `hafiz ingest` **one project at a time, sequentially in the same shell** — not in parallel. Each `hafiz ingest` process loads its own ONNX embedding model (~500 MB baseline) and the per-call peak RSS for batched embedding scales with the configured `embedding.max_part_chars`; running N processes in parallel multiplies both, defeating the runtime chunking that bounds peak RSS in `embed_texts`. Concrete pattern: avoid spawning ingest from multiple VSCode tasks, CI matrix shards on the same machine, or git hooks across sibling repos triggered together. If you really need parallelism, install ingest-only on a host with enough RAM headroom for `N × (model + per-call peak)` and confirm with `hafiz doctor`.
+
 **Rewrite resilience:** reconcile pass on every ingest marks commits that are no longer reachable in git as `commits.rewritten_at = now`. The installed `post-rewrite` hook triggers a fresh ingest automatically after an amend / rebase.
 
 ### Extraction (agent contract v2)
