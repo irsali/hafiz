@@ -250,11 +250,65 @@ def get_embed_model() -> FastEmbedEmbedding:
     return _embed_model
 
 
+# Per-call sub-batch size as a function of max_part_chars. Real ingest
+# can submit hundreds of parts at once (one large file → many parts);
+# without internal chunking, peak RSS scales linearly with the number
+# of parts and OOMs the host. Values derived from the
+# embedding.max_part_chars probe data (batch=8 peaks):
+#
+#     2K chars → ~2 GB at batch=8  → per-doc ~250 MB
+#     4K chars → ~3.8 GB at batch=8 → per-doc ~475 MB
+#     8K chars → ~10 GB at batch=8 → per-doc ~1.25 GB
+#    16K chars → ~35 GB at batch=8 → per-doc ~4.3 GB  (O(n²) attention!)
+#
+# Picked so the per-call peak stays under ~4 GB above baseline on any
+# host, regardless of how many parts the caller submits.
+_SAFE_BATCH_FOR_CHARS: tuple[tuple[int, int], ...] = (
+    (16_000, 1),
+    (8_000, 2),
+    (4_000, 8),
+    (2_000, 24),
+    (0, 32),
+)
+
+
+def _safe_batch_size(max_part_chars: int) -> int:
+    for threshold, batch in _SAFE_BATCH_FOR_CHARS:
+        if max_part_chars >= threshold:
+            return batch
+    return 8  # unreachable; the (0, ...) row catches everything
+
+
 async def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts, returning a list of vectors."""
+    """Embed a batch of texts, returning a list of vectors.
+
+    Chunks internally so peak RSS doesn't scale with ``len(texts)``.
+    Real ingest can submit hundreds of parts in one call (large file
+    → many parts at the configured ``embedding.max_part_chars``);
+    handing all of them to fastembed at once peaks RSS proportional
+    to the part count and OOMs the host. Sub-batch size is picked
+    from ``max_part_chars`` so the per-call peak is bounded
+    regardless of how big the caller's list is.
+    """
+    if not texts:
+        return []
     model = get_embed_model()
-    embeddings = await model.aget_text_embedding_batch(texts)
-    return embeddings
+
+    # Resolve through the tunable layer (env > toml > sticky > default)
+    # so a user's `hafiz config set` takes effect at the embed call.
+    from hafiz.core.tunables import resolve as resolve_tunable
+
+    max_chars = resolve_tunable("embedding.max_part_chars")
+    sub_batch = _safe_batch_size(max_chars)
+
+    if len(texts) <= sub_batch:
+        return await model.aget_text_embedding_batch(texts)
+
+    out: list[list[float]] = []
+    for i in range(0, len(texts), sub_batch):
+        chunk = texts[i:i + sub_batch]
+        out.extend(await model.aget_text_embedding_batch(chunk))
+    return out
 
 
 async def embed_query(query: str) -> list[float]:
