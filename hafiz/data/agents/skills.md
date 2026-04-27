@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 8 -->
-# Hafiz — Workspace Intelligence (v8)
+<!-- SKILLS_VERSION: 9 -->
+# Hafiz — Workspace Intelligence (v9)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -292,9 +292,10 @@ at 1000 entries). Use it when the user says "hafiz feels broken"
 or you want to understand why a recent command misbehaved.
 
 ```bash
-hafiz errors list --since 1d --json       # newest-first, agent-consumable
-hafiz errors show <id> --json             # full traceback + suggested fix
-hafiz errors clear                        # reset the log
+hafiz errors list --since 1d --json                          # newest-first, agent-consumable
+hafiz errors list --group-by exception_type --since 1d --json # pattern view: counts per class + most_recent
+hafiz errors show <id> --json                                 # full traceback + suggested fix
+hafiz errors clear                                            # reset the log
 ```
 
 Each record carries: `timestamp`, `command`, `argv`, `exception_type`,
@@ -302,6 +303,29 @@ Each record carries: `timestamp`, `command`, `argv`, `exception_type`,
 `host_fingerprint`, plus — for recognized error classes — a
 `suggested_action` string and structured `context` (e.g.,
 `{"missing_module": "scipy", "is_declared_dep": true}`).
+
+Recognizer set as of v9: `ModuleNotFoundError` (declared-dep aware),
+sqlalchemy `OperationalError` (DB connectivity → points at
+`hafiz status --diagnose`), pgvector missing (`'extension "vector"
+does not exist'` on `ProgrammingError`), pydantic `ValidationError`
+raised inside the hafiz config loader (points at `hafiz config show`).
+
+The `--group-by exception_type` shape is distinct from the flat one
+— use it for the "what's been failing" lookup:
+```json
+{
+  "since": "1d",
+  "grouped_by": "exception_type",
+  "total": 7,
+  "with_suggestions": 4,
+  "most_recent": {"id": "...", "exception_type": "...", "command": "...", "timestamp": "..."},
+  "groups": [
+    {"exception_type": "ModuleNotFoundError", "count": 3, "with_suggestions": 3,
+     "most_recent_id": "...", "most_recent_timestamp": "...",
+     "sample_command": "graph stats", "sample_message": "No module named 'scipy'"}
+  ]
+}
+```
 
 The suggestion is informational. Offer it to the user; don't
 auto-run remedial commands without explicit opt-in — even safe
@@ -435,7 +459,8 @@ workstation is a no-op, not a hazard.
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz errors list` | Recent errors, newest first. Each record includes `suggested_action` + `context` for recognized classes. | `--since`, `--limit`, `--json` |
+| `hafiz errors list` | Recent errors, newest first. Each record includes `suggested_action` + `context` for recognized classes. | `--since`, `--limit`, `--group-by`, `--json` |
+| `hafiz errors list --group-by exception_type` | Pattern view: per-class `count` + `with_suggestions` + sample fields, plus top-level `total` / `most_recent`. `--limit` does not apply in this mode. | `--since`, `--json` |
 | `hafiz errors show <id>` | Full structured record: traceback, cwd, git branch, host fingerprint. Accepts a unique-prefix id. | `--json` |
 | `hafiz errors clear` | Wipe the log. Returns the count discarded. | `--json` |
 

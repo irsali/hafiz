@@ -26,10 +26,44 @@ console = Console()
 # ── list ──────────────────────────────────────────────────────────────
 
 
+# Fields you can group by. Currently just exception_type — the agent
+# pattern-recognition use case ("which classes have I been hitting?")
+# is the only one we've validated. New options should land here only
+# with a real consumer.
+SUPPORTED_GROUP_BY = ("exception_type",)
+
+
 def run_errors_list(
-    *, since: str | None = None, limit: int = 20, output_json: bool = False
+    *,
+    since: str | None = None,
+    limit: int = 20,
+    group_by: str | None = None,
+    output_json: bool = False,
 ) -> None:
-    records = error_log.tail(since=since, limit=limit)
+    if group_by is not None and group_by not in SUPPORTED_GROUP_BY:
+        msg = (
+            f"Unknown --group-by value {group_by!r}. "
+            f"Supported: {', '.join(SUPPORTED_GROUP_BY)}."
+        )
+        if output_json:
+            console.print_json(
+                json.dumps({"ok": False, "error": "bad_group_by", "message": msg})
+            )
+        else:
+            console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(2)
+
+    if group_by is not None:
+        # In grouped mode, we want to consider the full matching set
+        # (counts are meaningless if records are silently truncated).
+        # MAX_ENTRIES caps the log itself, so this is bounded.
+        records = error_log.tail(since=since, limit=None)
+    else:
+        records = error_log.tail(since=since, limit=limit)
+
+    if group_by == "exception_type":
+        _render_grouped(records, since=since, output_json=output_json)
+        return
 
     if output_json:
         console.print_json(
@@ -75,6 +109,83 @@ def run_errors_list(
     console.print(
         "[dim]`hafiz errors show <id>` for full traceback + suggestion.[/dim]\n"
     )
+
+
+def _render_grouped(
+    records: list,
+    *,
+    since: str | None,
+    output_json: bool,
+) -> None:
+    groups = error_log.group_by_exception_type(records)
+    total = len(records)
+    with_suggestions = sum(1 for r in records if r.suggested_action)
+    most_recent = None
+    if records:
+        head = records[0]
+        most_recent = {
+            "id": head.id,
+            "exception_type": head.exception_type,
+            "command": head.command,
+            "timestamp": head.timestamp,
+        }
+
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "since": since,
+                    "grouped_by": "exception_type",
+                    "total": total,
+                    "with_suggestions": with_suggestions,
+                    "most_recent": most_recent,
+                    "groups": groups,
+                }
+            )
+        )
+        return
+
+    if not records:
+        if since:
+            console.print(
+                f"[dim]No errors recorded since [bold]{since}[/bold].[/dim]"
+            )
+        else:
+            console.print("[dim]No errors recorded.[/dim]")
+        return
+
+    console.print()
+    title = (
+        f"Errors grouped by exception_type "
+        f"(total {total}{', since ' + since if since else ''})"
+    )
+    tbl = Table(title=title, border_style="red")
+    tbl.add_column("Exception", style="bold")
+    tbl.add_column("Count", justify="right")
+    tbl.add_column("With suggestion", justify="right", style="dim")
+    tbl.add_column("Most recent", style="dim", no_wrap=True)
+    tbl.add_column("Sample command", style="bold")
+    tbl.add_column("Sample message", overflow="fold")
+
+    for g in groups:
+        tbl.add_row(
+            g["exception_type"],
+            str(g["count"]),
+            str(g["with_suggestions"]),
+            g["most_recent_timestamp"].replace("T", " ").rstrip("+00:00"),
+            g["sample_command"] or "—",
+            g["sample_message"],
+        )
+    console.print(tbl)
+    if with_suggestions:
+        console.print(
+            f"[dim]{with_suggestions}/{total} record(s) have a suggested fix. "
+            f"`hafiz errors show <id>` for details.[/dim]\n"
+        )
+    else:
+        console.print(
+            "[dim]`hafiz errors show <id>` for full traceback + suggestion.[/dim]\n"
+        )
 
 
 # ── show ──────────────────────────────────────────────────────────────

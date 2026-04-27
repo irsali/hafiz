@@ -93,38 +93,183 @@ def log_file_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Classifiers → suggested_action
+# Recognizers → suggested_action
 # ---------------------------------------------------------------------------
+#
+# Each recognizer inspects an exception and returns ``(suggestion, context)``
+# when it has high-confidence advice, else ``None``. ``_suggest_action``
+# walks the registry in order; first non-None wins.
+#
+# Conservative by policy: only classes with a well-understood, safe
+# remediation get a suggestion. Everything else gets ``None`` and the
+# user sees the traceback. Misfiring with a wrong suggestion is worse
+# than staying silent.
+#
+# The error logger MUST stay independently importable — recognizers
+# avoid hard imports of optional or heavyweight modules and identify
+# foreign exception classes by walking ``__mro__`` and matching the
+# fully-qualified class name. That way a corrupted sqlalchemy or
+# pydantic install can still be *logged* by hafiz before the user
+# sees a traceback.
+
+
+_Suggestion = tuple[str, dict[str, Any]]
+
+
+def _exc_inherits_from(exc: BaseException, *fully_qualified: str) -> bool:
+    """Return True if any class in ``exc``'s MRO matches one of the given
+    ``module.qualname`` strings. Lets recognizers detect foreign
+    exception types without importing them."""
+    targets = set(fully_qualified)
+    for cls in type(exc).__mro__:
+        fq = f"{cls.__module__}.{cls.__qualname__}"
+        if fq in targets:
+            return True
+    return False
+
+
+def _recognize_module_not_found(
+    exc: BaseException, *, argv: list[str], traceback_text: str
+) -> _Suggestion | None:
+    if not isinstance(exc, ModuleNotFoundError):
+        return None
+    missing = getattr(exc, "name", None) or str(exc)
+    declared = _is_declared_runtime_dep(missing)
+    ctx = {"missing_module": missing, "is_declared_dep": declared}
+    if declared:
+        return (
+            f"hafiz declares `{missing}` as a runtime dep, but your install "
+            f"is missing it. Fix: `pipx inject hafiz {missing}` or "
+            f"`pipx reinstall hafiz`.",
+            ctx,
+        )
+    return (
+        f"Module `{missing}` is not installed and not a declared hafiz "
+        f"dep. If hafiz needs it, file an issue; otherwise install it "
+        f"in the environment that runs hafiz.",
+        ctx,
+    )
+
+
+# pgvector message fragments are stable Postgres wording (server-side,
+# not driver-side), so substring matching here is reasonably durable.
+_PGVECTOR_MARKERS = (
+    'extension "vector" does not exist',
+    'type "vector" does not exist',
+)
+
+
+def _recognize_pgvector_missing(
+    exc: BaseException, *, argv: list[str], traceback_text: str
+) -> _Suggestion | None:
+    """Postgres has no pgvector extension installed in the target DB.
+    Surfaces as sqlalchemy ProgrammingError (or asyncpg's own variant)
+    with a stable server-side error message."""
+    if not _exc_inherits_from(
+        exc,
+        "sqlalchemy.exc.ProgrammingError",
+        "asyncpg.exceptions.UndefinedObjectError",
+        "asyncpg.exceptions.UndefinedFileError",
+    ):
+        return None
+    msg = str(exc).lower()
+    if not any(marker in msg for marker in _PGVECTOR_MARKERS):
+        return None
+    return (
+        "Your Postgres database is missing the pgvector extension. "
+        "Fix: install the `postgresql-NN-pgvector` system package "
+        "(or build from https://github.com/pgvector/pgvector), then run "
+        "`hafiz init` to create the extension and tables.",
+        {"missing_extension": "vector"},
+    )
+
+
+def _recognize_db_connectivity(
+    exc: BaseException, *, argv: list[str], traceback_text: str
+) -> _Suggestion | None:
+    """Sqlalchemy ``OperationalError`` — usually unreachable DB, refused
+    connection, bad credentials, or no such database. We don't try to
+    classify the sub-cause; we point the user at the diagnose path."""
+    if not _exc_inherits_from(exc, "sqlalchemy.exc.OperationalError"):
+        return None
+    # Skip if the embedded message is a pgvector miss — that recognizer
+    # ran first and would have matched. Defensive belt + braces.
+    msg_lower = str(exc).lower()
+    if any(marker in msg_lower for marker in _PGVECTOR_MARKERS):
+        return None
+    return (
+        "Hafiz couldn't talk to Postgres. Run `hafiz status --diagnose` "
+        "to see whether the server is reachable and the configured URL "
+        "is correct (check `[database].url` in your hafiz.toml or the "
+        "HAFIZ_DATABASE__URL env var).",
+        {"db_error_class": type(exc).__name__},
+    )
+
+
+def _recognize_config_validation(
+    exc: BaseException, *, argv: list[str], traceback_text: str
+) -> _Suggestion | None:
+    """Pydantic ``ValidationError`` raised while loading hafiz.toml /
+    HAFIZ_* env vars. We require evidence that the failure came from
+    our config loader, not from arbitrary downstream code, so we
+    don't misfire on unrelated pydantic models."""
+    if not _exc_inherits_from(
+        exc,
+        "pydantic.ValidationError",
+        "pydantic_core._pydantic_core.ValidationError",
+    ):
+        return None
+    if "hafiz/core/config.py" not in traceback_text:
+        return None
+    invalid_keys: list[str] = []
+    try:
+        errors_method = getattr(exc, "errors", None)
+        if callable(errors_method):
+            for err in errors_method():
+                loc = err.get("loc") if isinstance(err, dict) else None
+                if loc:
+                    invalid_keys.append(".".join(str(p) for p in loc))
+    except Exception:  # noqa: BLE001 — recognizer must never crash
+        pass
+    return (
+        "Your hafiz config didn't validate. Run `hafiz config show` to "
+        "see resolved values and per-key sources, then fix the offending "
+        "key with `hafiz config set <key> <value>` or correct hafiz.toml. "
+        "If a HAFIZ_*__* env var is overriding things, unset it to fall "
+        "through to TOML/sticky/default.",
+        {"invalid_keys": invalid_keys},
+    )
+
+
+# Walked in order; first match wins. Order matters: pgvector must come
+# before db_connectivity (the same OperationalError can carry a
+# pgvector message, and the more-specific suggestion should win).
+_RECOGNIZERS = (
+    _recognize_module_not_found,
+    _recognize_pgvector_missing,
+    _recognize_db_connectivity,
+    _recognize_config_validation,
+)
 
 
 def _suggest_action(
-    exc: BaseException, *, argv: list[str]
+    exc: BaseException, *, argv: list[str], traceback_text: str = ""
 ) -> tuple[str | None, dict[str, Any]]:
-    """Pattern-match on known-fixable errors. Returns (suggestion, extra context).
-
-    Conservative by policy: only classes with a well-understood, safe
-    remediation get a suggestion. Everything else gets ``None`` and the
-    user sees the traceback. Extra context is stored on the record so
-    agents can act without re-parsing the message.
-    """
-    # ── ModuleNotFoundError: did we declare it as a runtime dep? ─────
-    if isinstance(exc, ModuleNotFoundError):
-        missing = getattr(exc, "name", None) or str(exc)
-        declared = _is_declared_runtime_dep(missing)
-        ctx = {"missing_module": missing, "is_declared_dep": declared}
-        if declared:
-            return (
-                f"hafiz declares `{missing}` as a runtime dep, but your install "
-                f"is missing it. Fix: `pipx inject hafiz {missing}` or "
-                f"`pipx reinstall hafiz`.",
-                ctx,
+    """Walk the recognizer registry. Returns the first match, or
+    ``(None, {})`` when nothing recognized the exception."""
+    for recognizer in _RECOGNIZERS:
+        try:
+            result = recognizer(exc, argv=argv, traceback_text=traceback_text)
+        except Exception:  # noqa: BLE001 — a buggy recognizer must not break logging
+            logger.warning(
+                "Recognizer %s raised while inspecting %s",
+                recognizer.__name__,
+                type(exc).__name__,
+                exc_info=True,
             )
-        return (
-            f"Module `{missing}` is not installed and not a declared hafiz "
-            f"dep. If hafiz needs it, file an issue; otherwise install it "
-            f"in the environment that runs hafiz.",
-            ctx,
-        )
+            continue
+        if result is not None:
+            return result[0], result[1]
     return None, {}
 
 
@@ -226,7 +371,7 @@ def build_record(
     tb_s = "".join(_traceback.format_exception(type(exc), exc, exc.__traceback__))
 
     branch, dirty = _git_context()
-    suggestion, ctx = _suggest_action(exc, argv=argv)
+    suggestion, ctx = _suggest_action(exc, argv=argv, traceback_text=tb_s)
 
     return ErrorRecord(
         id=str(uuid.uuid4()),
@@ -376,6 +521,48 @@ def tail(
 
 def count_recent(*, since: str) -> int:
     return len(tail(since=since))
+
+
+def group_by_exception_type(records: list[ErrorRecord]) -> list[dict[str, Any]]:
+    """Group ``records`` by ``exception_type``.
+
+    Records are expected newest-first (the shape ``tail`` returns). The
+    first record per type therefore drives ``most_recent_*`` and
+    ``sample_*`` fields. Groups come out sorted by ``count`` desc, then
+    by most-recent timestamp desc — agents glancing at index 0 see the
+    most-frequent, freshest class.
+
+    Sample fields exist so an agent can act without a second
+    ``errors show`` round-trip; they're truncated to keep the response
+    small.
+    """
+    by_type: dict[str, list[ErrorRecord]] = {}
+    for r in records:
+        by_type.setdefault(r.exception_type, []).append(r)
+
+    groups: list[dict[str, Any]] = []
+    for exc_type, rs in by_type.items():
+        head = rs[0]
+        sample_msg = head.message
+        if len(sample_msg) > 200:
+            sample_msg = sample_msg[:200] + "…"
+        groups.append(
+            {
+                "exception_type": exc_type,
+                "count": len(rs),
+                "with_suggestions": sum(1 for r in rs if r.suggested_action),
+                "most_recent_id": head.id,
+                "most_recent_timestamp": head.timestamp,
+                "sample_command": head.command,
+                "sample_message": sample_msg,
+            }
+        )
+
+    groups.sort(
+        key=lambda g: (g["count"], g["most_recent_timestamp"]),
+        reverse=True,
+    )
+    return groups
 
 
 def get(record_id: str) -> ErrorRecord | None:

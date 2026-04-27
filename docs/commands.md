@@ -30,7 +30,8 @@
 | `config unset <key> [--local]` | Remove a tunable from hafiz.toml so it falls through to sticky / default. Prunes emptied tables. | — | `--json` | rich output |
 | `config apply` | Runs every prober and persists recommendations to sticky state. Equivalent to `hafiz doctor --apply` with a narrower JSON summary. | Embed | `--json` | rich output |
 | `config clear-sticky` | Delete the sticky tuning cache. Re-probe is required to repopulate. | — | `--json` | rich output |
-| `errors list [--since] [--limit]` | Recent errors newest-first from `~/.cache/hafiz/errors.log` (NDJSON, 1000-entry cap, FIFO rotation). Each record includes `suggested_action` + `context` for recognized classes. | — | `--json` | rich table |
+| `errors list [--since] [--limit]` | Recent errors newest-first from `~/.cache/hafiz/errors.log` (NDJSON, 1000-entry cap, FIFO rotation). Each record includes `suggested_action` + `context` for recognized classes. Recognizers (v9): `ModuleNotFoundError` (declared-dep aware), sqlalchemy `OperationalError` (DB connectivity), pgvector missing (`ProgrammingError` with `'extension "vector" does not exist'`), pydantic `ValidationError` from the hafiz config loader. | — | `--json` | rich table |
+| `errors list --group-by exception_type` | Pattern view: returns a distinct shape — `{since, grouped_by, total, with_suggestions, most_recent, groups}` — where each group carries `{exception_type, count, with_suggestions, most_recent_id, most_recent_timestamp, sample_command, sample_message}`. `--limit` is ignored in this mode (counts must reflect the full matching window). | — | `--json` | rich table |
 | `errors show <id>` | Full structured record: traceback, cwd, git branch, host fingerprint. Accepts unique-prefix ids. | — | `--json` | rich panel |
 | `errors clear` | Wipe the log; returns count discarded. | — | `--json` | rich output |
 | `hooks install` | Write post-commit + post-merge + post-rewrite git hooks into a repo | — | same | same |

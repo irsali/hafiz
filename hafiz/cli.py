@@ -1440,7 +1440,16 @@ def errors_list(
         None, "--since", help="Relative duration: 1h, 30m, 2d, 1w. Default: all."
     ),
     limit: int = typer.Option(
-        20, "--limit", "-n", min=1, help="Max records to return."
+        20, "--limit", "-n", min=1, help="Max records to return (ignored with --group-by)."
+    ),
+    group_by: Optional[str] = typer.Option(
+        None,
+        "--group-by",
+        help=(
+            "Aggregate records by a field. Supported: 'exception_type'. "
+            "Returns a different JSON shape with `groups`, `total`, "
+            "`with_suggestions`, `most_recent` instead of a flat list."
+        ),
     ),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (agent-consumable)."
@@ -1448,12 +1457,15 @@ def errors_list(
 ) -> None:
     """Show recent errors, newest first.
 
-    Use `--since 1d` to limit scope, and `hafiz errors show <id>` for
+    Use `--since 1d` to limit scope, `--group-by exception_type` for a
+    pattern view across error classes, and `hafiz errors show <id>` for
     the full traceback of one entry.
     """
     from hafiz.commands.errors import run_errors_list
 
-    run_errors_list(since=since, limit=limit, output_json=json_output)
+    run_errors_list(
+        since=since, limit=limit, group_by=group_by, output_json=json_output
+    )
 
 
 @errors_app.command("show")

@@ -14,12 +14,17 @@ import pytest
 from hafiz.core import error_log
 from hafiz.core.error_log import (
     ErrorRecord,
+    _exc_inherits_from,
+    _recognize_config_validation,
+    _recognize_db_connectivity,
+    _recognize_pgvector_missing,
     _suggest_action,
     append,
     build_record,
     clear,
     count_recent,
     get,
+    group_by_exception_type,
     log_exception,
     log_file_path,
     tail,
@@ -244,3 +249,239 @@ def test_record_does_not_include_environment_variables(monkeypatch):
     blob = json.dumps(rec.as_jsonable())
     assert "sk-leak-me" not in blob
     assert "TOTALLY_SECRET_TOKEN" not in blob
+
+
+# ── _exc_inherits_from helper ─────────────────────────────────────────
+
+
+def test_exc_inherits_from_walks_mro():
+    class _CustomError(ValueError):
+        pass
+
+    exc = _CustomError("x")
+    assert _exc_inherits_from(exc, "builtins.ValueError") is True
+    assert _exc_inherits_from(exc, "builtins.RuntimeError") is False
+
+
+# ── pgvector recognizer ───────────────────────────────────────────────
+
+
+def _make_sa_programming_error(message: str):
+    """Build a sqlalchemy ProgrammingError carrying ``message`` in str(exc)."""
+    from sqlalchemy.exc import ProgrammingError as SAProgError
+
+    return SAProgError("SELECT 1", {}, Exception(message))
+
+
+def _make_sa_operational_error(message: str):
+    from sqlalchemy.exc import OperationalError as SAOpError
+
+    return SAOpError("SELECT 1", {}, Exception(message))
+
+
+def test_recognize_pgvector_missing_extension():
+    exc = _make_sa_programming_error('extension "vector" does not exist')
+    result = _recognize_pgvector_missing(
+        exc, argv=["init"], traceback_text=""
+    )
+    assert result is not None
+    suggestion, ctx = result
+    assert "pgvector" in suggestion.lower()
+    assert "hafiz init" in suggestion
+    assert ctx["missing_extension"] == "vector"
+
+
+def test_recognize_pgvector_missing_type():
+    exc = _make_sa_programming_error('type "vector" does not exist')
+    result = _recognize_pgvector_missing(
+        exc, argv=["status"], traceback_text=""
+    )
+    assert result is not None
+
+
+def test_pgvector_recognizer_skips_unrelated_programming_error():
+    exc = _make_sa_programming_error('relation "users" does not exist')
+    result = _recognize_pgvector_missing(
+        exc, argv=["status"], traceback_text=""
+    )
+    assert result is None
+
+
+def test_pgvector_recognizer_ignores_non_sqlalchemy_classes():
+    exc = ValueError('extension "vector" does not exist')
+    result = _recognize_pgvector_missing(exc, argv=[], traceback_text="")
+    assert result is None
+
+
+# ── DB connectivity recognizer ────────────────────────────────────────
+
+
+def test_recognize_db_connectivity_on_operational_error():
+    exc = _make_sa_operational_error("connection refused")
+    result = _recognize_db_connectivity(exc, argv=["status"], traceback_text="")
+    assert result is not None
+    suggestion, ctx = result
+    assert "hafiz status --diagnose" in suggestion
+    assert ctx["db_error_class"] == "OperationalError"
+
+
+def test_db_connectivity_recognizer_yields_to_pgvector():
+    """An OperationalError carrying a pgvector message should not be
+    claimed by the connectivity recognizer — the more specific one wins
+    via registry order, but the connectivity recognizer also
+    self-yields as belt-and-braces."""
+    exc = _make_sa_operational_error('extension "vector" does not exist')
+    result = _recognize_db_connectivity(exc, argv=[], traceback_text="")
+    assert result is None
+
+
+def test_db_connectivity_ignores_unrelated_errors():
+    exc = RuntimeError("nothing to do with the DB")
+    result = _recognize_db_connectivity(exc, argv=[], traceback_text="")
+    assert result is None
+
+
+# ── config validation recognizer ──────────────────────────────────────
+
+
+def _make_pydantic_validation_error():
+    from pydantic import BaseModel, ValidationError
+
+    class _M(BaseModel):
+        n: int
+
+    try:
+        _M(n="not-an-int")  # type: ignore[arg-type]
+    except ValidationError as e:
+        return e
+    raise AssertionError("expected ValidationError")
+
+
+def test_recognize_config_validation_when_traceback_points_at_config_loader():
+    exc = _make_pydantic_validation_error()
+    fake_tb = (
+        'Traceback (most recent call last):\n'
+        '  File "/path/to/hafiz/core/config.py", line 143, in load_settings\n'
+        '    return HafizSettings(**toml_data)\n'
+        'pydantic_core._pydantic_core.ValidationError: 1 validation error\n'
+    )
+    result = _recognize_config_validation(
+        exc, argv=["status"], traceback_text=fake_tb
+    )
+    assert result is not None
+    suggestion, ctx = result
+    assert "hafiz config show" in suggestion
+    # invalid_keys should be populated from .errors()
+    assert isinstance(ctx["invalid_keys"], list)
+    assert any("n" == k or k.endswith(".n") for k in ctx["invalid_keys"])
+
+
+def test_config_validation_no_false_positive_outside_config_loader():
+    """A ValidationError raised by arbitrary downstream code with no
+    hafiz/core/config.py in the traceback must NOT produce a config
+    suggestion."""
+    exc = _make_pydantic_validation_error()
+    result = _recognize_config_validation(
+        exc, argv=["query", "x"], traceback_text="some unrelated traceback"
+    )
+    assert result is None
+
+
+# ── recognizer registry: ordering + first-match-wins ──────────────────
+
+
+def test_suggest_action_walks_registry_and_returns_first_match():
+    # ModuleNotFoundError is the first recognizer; should still match.
+    exc = ModuleNotFoundError("No module named 'scipy'")
+    exc.name = "scipy"
+    suggestion, ctx = _suggest_action(exc, argv=[], traceback_text="")
+    assert suggestion is not None
+    assert ctx["missing_module"] == "scipy"
+
+
+def test_suggest_action_routes_programming_error_to_pgvector():
+    """A pgvector-shaped ProgrammingError reaches the pgvector
+    recognizer through the registry walk, not the connectivity one."""
+    exc = _make_sa_programming_error('extension "vector" does not exist')
+    suggestion, ctx = _suggest_action(exc, argv=["init"], traceback_text="")
+    assert suggestion is not None
+    assert "pgvector" in suggestion.lower()
+    assert ctx.get("missing_extension") == "vector"
+
+
+def test_suggest_action_routes_plain_operational_error_to_connectivity():
+    """A plain OperationalError without pgvector wording matches the
+    connectivity recognizer."""
+    exc = _make_sa_operational_error("connection refused")
+    suggestion, ctx = _suggest_action(exc, argv=["status"], traceback_text="")
+    assert suggestion is not None
+    assert "hafiz status --diagnose" in suggestion
+    assert ctx.get("db_error_class") == "OperationalError"
+
+
+def test_suggest_action_buggy_recognizer_does_not_break_logging(monkeypatch):
+    """A recognizer that raises must be skipped silently — the logger's
+    job is to never crash."""
+
+    def _explosive(exc, *, argv, traceback_text):
+        raise RuntimeError("recognizer bug")
+
+    monkeypatch.setattr(error_log, "_RECOGNIZERS", (_explosive,))
+    suggestion, ctx = _suggest_action(
+        ValueError("x"), argv=[], traceback_text=""
+    )
+    assert suggestion is None
+    assert ctx == {}
+
+
+# ── group_by_exception_type ──────────────────────────────────────────
+
+
+def test_group_by_exception_type_aggregates_and_sorts():
+    # newest-first input (the shape tail() returns)
+    records = [
+        _make_record(
+            id=f"{i:036d}",
+            timestamp=f"2026-04-22T12:0{i}:00+00:00",
+            exception_type=cls,
+            message=f"msg {i}",
+            command=cmd,
+            suggested_action=("fix it" if cls == "ModuleNotFoundError" else None),
+        )
+        for i, (cls, cmd) in enumerate(
+            reversed(
+                [
+                    ("RuntimeError", "ingest"),
+                    ("ModuleNotFoundError", "graph stats"),
+                    ("ModuleNotFoundError", "query x"),
+                    ("ModuleNotFoundError", "context y"),
+                    ("RuntimeError", "ingest"),
+                ]
+            )
+        )
+    ]
+    groups = group_by_exception_type(records)
+    # Two distinct types
+    assert {g["exception_type"] for g in groups} == {
+        "ModuleNotFoundError",
+        "RuntimeError",
+    }
+    # Sorted by count desc → ModuleNotFoundError (3) first
+    assert groups[0]["exception_type"] == "ModuleNotFoundError"
+    assert groups[0]["count"] == 3
+    assert groups[0]["with_suggestions"] == 3
+    assert groups[1]["exception_type"] == "RuntimeError"
+    assert groups[1]["count"] == 2
+    assert groups[1]["with_suggestions"] == 0
+
+
+def test_group_by_exception_type_empty():
+    assert group_by_exception_type([]) == []
+
+
+def test_group_by_exception_type_truncates_long_sample_message():
+    long_msg = "x" * 500
+    rec = _make_record(message=long_msg)
+    groups = group_by_exception_type([rec])
+    assert len(groups[0]["sample_message"]) <= 201  # 200 + ellipsis
+    assert groups[0]["sample_message"].endswith("…")

@@ -140,3 +140,109 @@ def test_modulenotfound_scipy_gets_pipx_inject_suggestion():
     assert "pipx inject" in payload["suggested_action"]
     assert payload["context"]["missing_module"] == "scipy"
     assert payload["context"]["is_declared_dep"] is True
+
+
+# ── --group-by exception_type ──────────────────────────────────────────
+
+
+def test_list_group_by_exception_type_json_shape():
+    """Grouped JSON shape must carry the agent-consumable summary
+    keys at the top level (total, with_suggestions, most_recent) plus
+    a `groups` list — distinct from the flat `errors` list shape."""
+    _inject(RuntimeError, "a", ["ingest"])
+    _inject(RuntimeError, "b", ["ingest"])
+    _inject(ValueError, "c", ["query", "x"])
+
+    result = runner.invoke(
+        app, ["errors", "list", "--group-by", "exception_type", "--json"]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+
+    # New shape — distinct from the flat one.
+    assert payload["grouped_by"] == "exception_type"
+    assert "groups" in payload
+    assert "errors" not in payload  # not the flat shape
+
+    assert payload["total"] == 3
+    assert payload["with_suggestions"] == 0
+    assert payload["most_recent"]["exception_type"] == "ValueError"
+
+    # Two groups; RuntimeError first (count 2 > 1).
+    assert len(payload["groups"]) == 2
+    assert payload["groups"][0]["exception_type"] == "RuntimeError"
+    assert payload["groups"][0]["count"] == 2
+    assert payload["groups"][1]["exception_type"] == "ValueError"
+    assert payload["groups"][1]["count"] == 1
+    # Each group carries the sample fields agents need to act without
+    # a second `errors show` round-trip.
+    for g in payload["groups"]:
+        assert "most_recent_id" in g
+        assert "most_recent_timestamp" in g
+        assert "sample_command" in g
+        assert "sample_message" in g
+        assert "with_suggestions" in g
+
+
+def test_list_group_by_with_suggestions_count():
+    """A recognized error contributes to with_suggestions."""
+    exc = ModuleNotFoundError("No module named 'scipy'")
+    exc.name = "scipy"
+    try:
+        raise exc
+    except ModuleNotFoundError as e:
+        error_log.log_exception(e, argv=["graph", "stats"])
+    _inject(RuntimeError, "no advice for me", ["ingest"])
+
+    result = runner.invoke(
+        app, ["errors", "list", "--group-by", "exception_type", "--json"]
+    )
+    payload = json.loads(result.stdout)
+    assert payload["total"] == 2
+    assert payload["with_suggestions"] == 1
+    by_type = {g["exception_type"]: g for g in payload["groups"]}
+    assert by_type["ModuleNotFoundError"]["with_suggestions"] == 1
+    assert by_type["RuntimeError"]["with_suggestions"] == 0
+
+
+def test_list_group_by_empty_log():
+    result = runner.invoke(
+        app, ["errors", "list", "--group-by", "exception_type", "--json"]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["total"] == 0
+    assert payload["groups"] == []
+    assert payload["most_recent"] is None
+
+
+def test_list_group_by_invalid_value_errors():
+    result = runner.invoke(
+        app, ["errors", "list", "--group-by", "command", "--json"]
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "bad_group_by"
+
+
+def test_list_group_by_ignores_limit():
+    """In grouped mode --limit must not silently truncate the input
+    set — counts would lie. We examine the full matching window."""
+    for i in range(15):
+        _inject(RuntimeError, f"msg {i}", ["x"])
+    result = runner.invoke(
+        app,
+        [
+            "errors",
+            "list",
+            "--group-by",
+            "exception_type",
+            "--limit",
+            "2",
+            "--json",
+        ],
+    )
+    payload = json.loads(result.stdout)
+    assert payload["total"] == 15
+    assert payload["groups"][0]["count"] == 15
