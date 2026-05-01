@@ -25,7 +25,7 @@ When trade-offs arise, favor the experience of the thousandth user over the conv
 - **CLI:** Typer + Rich (subcommand groups via `app.add_typer`).
 - **DB:** PostgreSQL + pgvector via SQLAlchemy 2.0 **async** + asyncpg.
 - **Embeddings:** fastembed (`nomic-embed-text-v1.5`, 768-dim, ONNX; GPU via `fastembed-gpu`).
-- **Indexing:** LlamaIndex core for chunking primitives; custom logic in [hafiz/core/chunker.py](hafiz/core/chunker.py).
+- **Chunking:** custom logic in [hafiz/core/chunker.py](hafiz/core/chunker.py).
 - **Migrations:** Alembic ([alembic/versions/](alembic/versions/)).
 - **Config:** pydantic-settings reading `hafiz.toml` (cwd → `~/.config/hafiz/` → `/etc/hafiz/`).
 - **Tests:** pytest + pytest-asyncio (`asyncio_mode = "auto"`).

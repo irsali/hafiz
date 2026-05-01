@@ -31,7 +31,7 @@ def _isolate_device_state(tmp_path, monkeypatch):
 
 @pytest.fixture
 def fake_models(monkeypatch):
-    """Swap the heavyweight FastEmbedEmbedding builders with sentinels."""
+    """Swap the heavyweight TextEmbedding builders with sentinels."""
     cpu = MagicMock(name="cpu_model")
     gpu = MagicMock(name="gpu_model")
     monkeypatch.setattr(embeddings, "_build_cpu_model", lambda _m: cpu)
@@ -144,21 +144,21 @@ class TestGpuBuilderProbe:
     """The un-mocked _build_gpu_model: verify the NaN guard and TRT preference."""
 
     def _fake_fastembed(self, vector):
-        """Return a class that mimics FastEmbedEmbedding for the probe call."""
+        """Return a class that mimics ``fastembed.TextEmbedding`` for the probe call."""
 
         class _Fake:
             def __init__(self, **kwargs):
                 self.providers = kwargs.get("providers")
 
-            def get_text_embedding(self, _text):
-                return vector
+            def embed(self, texts):
+                return [vector for _ in list(texts)]
 
         return _Fake
 
     def test_raises_when_probe_returns_nan(self, monkeypatch):
         monkeypatch.setattr(
             embeddings,
-            "FastEmbedEmbedding",
+            "TextEmbedding",
             self._fake_fastembed([float("nan")] * 4 + [0.1] * 764),
         )
         monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: False)
@@ -168,7 +168,7 @@ class TestGpuBuilderProbe:
     def test_raises_when_probe_returns_inf(self, monkeypatch):
         monkeypatch.setattr(
             embeddings,
-            "FastEmbedEmbedding",
+            "TextEmbedding",
             self._fake_fastembed([float("inf")] + [0.0] * 767),
         )
         monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: False)
@@ -178,7 +178,7 @@ class TestGpuBuilderProbe:
     def test_passes_through_valid_probe(self, monkeypatch):
         monkeypatch.setattr(
             embeddings,
-            "FastEmbedEmbedding",
+            "TextEmbedding",
             self._fake_fastembed([0.01] * 768),
         )
         monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: False)
@@ -192,7 +192,7 @@ class TestGpuBuilderProbe:
         monkeypatch.delenv("ORT_TENSORRT_CACHE_PATH", raising=False)
         monkeypatch.setattr(
             embeddings,
-            "FastEmbedEmbedding",
+            "TextEmbedding",
             self._fake_fastembed([0.01] * 768),
         )
         monkeypatch.setattr(embeddings, "_tensorrt_available", lambda: True)

@@ -62,13 +62,18 @@ def test_safe_batch_size_is_monotone_non_increasing():
 
 class _FakeModel:
     """Records each batch handed to it. Returns deterministic vectors
-    so we can assert order is preserved across sub-batches."""
+    so we can assert order is preserved across sub-batches.
+
+    Mimics ``fastembed.TextEmbedding.embed`` — sync, returns an iterable
+    of vectors. Production wraps this in ``asyncio.to_thread``.
+    """
 
     def __init__(self):
         self.calls: list[list[str]] = []
 
-    async def aget_text_embedding_batch(self, texts):
-        self.calls.append(list(texts))
+    def embed(self, texts):
+        texts = list(texts)
+        self.calls.append(texts)
         return [[float(len(t)), float(i)] for i, t in enumerate(texts)]
 
 

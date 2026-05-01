@@ -1,4 +1,4 @@
-"""Embedding service wrapping llama-index-embeddings-fastembed.
+"""Embedding service using fastembed directly.
 
 Uses nomic-embed-text-v1.5 (768 dims) by default, running locally via ONNX.
 
@@ -16,13 +16,14 @@ Inspect or override via ``hafiz embedding status`` / ``hafiz embedding retry``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
 import subprocess
 from pathlib import Path
 
-from llama_index.embeddings.fastembed import FastEmbedEmbedding
+from fastembed import TextEmbedding
 from rich.console import Console
 from rich.panel import Panel
 
@@ -32,7 +33,7 @@ from hafiz.core.config import get_settings
 logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
 
-_embed_model: FastEmbedEmbedding | None = None
+_embed_model: TextEmbedding | None = None
 
 
 def _cuda_available() -> bool:
@@ -58,8 +59,8 @@ def _gpu_name() -> str | None:
         return None
 
 
-def _build_cpu_model(model_name: str) -> FastEmbedEmbedding:
-    return FastEmbedEmbedding(model_name=model_name, providers=["CPUExecutionProvider"])
+def _build_cpu_model(model_name: str) -> TextEmbedding:
+    return TextEmbedding(model_name=model_name, providers=["CPUExecutionProvider"])
 
 
 def _tensorrt_available() -> bool:
@@ -86,7 +87,7 @@ def _trt_cache_dir() -> Path:
     return root / "hafiz" / "trt_engines"
 
 
-def _build_gpu_model(model_name: str) -> FastEmbedEmbedding:
+def _build_gpu_model(model_name: str) -> TextEmbedding:
     """Build a GPU-preferring model and exercise it to surface lazy init failures.
 
     When TensorRT is installed, prefer it and skip the CUDA EP entirely:
@@ -105,11 +106,11 @@ def _build_gpu_model(model_name: str) -> FastEmbedEmbedding:
     else:
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
-    model = FastEmbedEmbedding(model_name=model_name, providers=providers)
-    # FastEmbed defers ORT session creation until first use; force it now so
+    model = TextEmbedding(model_name=model_name, providers=providers)
+    # fastembed defers ORT session creation until first use; force it now so
     # OOM / missing-kernel errors surface during probe, not mid-ingest.
-    probe = model.get_text_embedding("probe")
-    if not all(math.isfinite(v) for v in probe):
+    probe = next(iter(model.embed(["probe"])))
+    if not all(math.isfinite(float(v)) for v in probe):
         raise RuntimeError(
             "GPU probe returned non-finite values (NaN/Inf). This onnxruntime "
             "build likely lacks kernels for your GPU's compute capability. "
@@ -145,7 +146,7 @@ def probe_device(
     model_name: str,
     *,
     persist: bool = True,
-) -> tuple[FastEmbedEmbedding, device_state.DeviceState]:
+) -> tuple[TextEmbedding, device_state.DeviceState]:
     """Resolve ``device`` to a working model, writing sticky state if persist=True.
 
     ``device`` is one of ``"auto" | "cpu" | "gpu"``.
@@ -214,7 +215,7 @@ def probe_device(
     return _build_cpu_model(model_name), state
 
 
-def get_embed_model() -> FastEmbedEmbedding:
+def get_embed_model() -> TextEmbedding:
     """Lazy singleton; selects device per config → sticky cache → probe."""
     global _embed_model
     if _embed_model is not None:
@@ -279,6 +280,12 @@ def _safe_batch_size(max_part_chars: int) -> int:
     return 8  # unreachable; the (0, ...) row catches everything
 
 
+async def _embed_batch(model: TextEmbedding, texts: list[str]) -> list[list[float]]:
+    """Run fastembed's sync ``embed`` in a worker thread, return plain Python floats."""
+    arrays = await asyncio.to_thread(lambda: list(model.embed(texts)))
+    return [[float(v) for v in arr] for arr in arrays]
+
+
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts, returning a list of vectors.
 
@@ -302,19 +309,20 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     sub_batch = _safe_batch_size(max_chars)
 
     if len(texts) <= sub_batch:
-        return await model.aget_text_embedding_batch(texts)
+        return await _embed_batch(model, texts)
 
     out: list[list[float]] = []
     for i in range(0, len(texts), sub_batch):
         chunk = texts[i:i + sub_batch]
-        out.extend(await model.aget_text_embedding_batch(chunk))
+        out.extend(await _embed_batch(model, chunk))
     return out
 
 
 async def embed_query(query: str) -> list[float]:
     """Embed a single query string."""
     model = get_embed_model()
-    return await model.aget_query_embedding(query)
+    arrays = await asyncio.to_thread(lambda: list(model.query_embed([query])))
+    return [float(v) for v in arrays[0]]
 
 
 def reset_cache() -> None:
