@@ -80,7 +80,7 @@ def run_extract_import(
 
 def _read_json(file: str | None) -> dict[str, Any]:
     if file:
-        with open(file) as f:
+        with open(file, encoding="utf-8") as f:
             return json.load(f)
     return json.load(sys.stdin)
 

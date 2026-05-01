@@ -110,7 +110,7 @@ def load_state() -> TuningState | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Corrupt tuning-state cache at %s (%s); removing.", path, exc)
         try:
@@ -160,7 +160,7 @@ def save_state(state: TuningState) -> None:
     path = cache_file_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state.as_jsonable(), indent=2))
+        path.write_text(json.dumps(state.as_jsonable(), indent=2), encoding="utf-8")
     except OSError as exc:
         logger.warning("Could not persist tuning state at %s: %s", path, exc)
 

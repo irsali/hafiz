@@ -8,6 +8,7 @@ Env vars use HAFIZ_ prefix with double-underscore nesting:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import ClassVar, Literal
@@ -29,11 +30,17 @@ def config_search_paths() -> list[Path]:
     tests (and cwd-changing users) see a consistent view — the module-
     level captured values would bake in whatever ``Path.home()`` /
     ``Path.cwd()`` were at import time."""
-    return [
+    paths = [
         Path.cwd() / CONFIG_FILENAME,
         Path.home() / ".config" / "hafiz" / CONFIG_FILENAME,
-        Path("/etc/hafiz") / CONFIG_FILENAME,
     ]
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            paths.append(Path(appdata) / "hafiz" / CONFIG_FILENAME)
+    else:
+        paths.append(Path("/etc/hafiz") / CONFIG_FILENAME)
+    return paths
 
 
 # Back-compat alias for any external readers that were importing this

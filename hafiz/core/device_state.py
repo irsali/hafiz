@@ -50,7 +50,7 @@ def load_state() -> DeviceState | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return DeviceState(**data)
     except (json.JSONDecodeError, TypeError, KeyError) as exc:
         logger.warning("Corrupt device-state cache at %s (%s); removing.", path, exc)
@@ -65,7 +65,7 @@ def save_state(state: DeviceState) -> None:
     path = cache_file_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(state), indent=2))
+        path.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
     except OSError as exc:
         logger.warning("Could not persist device state at %s: %s", path, exc)
 

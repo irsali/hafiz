@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -63,19 +64,21 @@ def _install_hook(
     hook_path = hooks_dir / hook_name
 
     if hook_path.exists():
-        existing = hook_path.read_text()
+        existing = hook_path.read_text(encoding="utf-8")
         if "hafiz" in existing.lower():
             return "exists"
         # Append to existing hook
-        with open(hook_path, "a") as f:
+        with open(hook_path, "a", encoding="utf-8") as f:
             f.write(f"\n\n# --- Hafiz {hook_name} hook ---\n")
             f.write(f"{project_flag}\n")
             f.write(f"nohup hafiz ingest --git-hook{project_opt} > /dev/null 2>&1 &\n")
-        hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        if os.name != "nt":
+            hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return "appended"
     else:
-        hook_path.write_text(content)
-        hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        hook_path.write_text(content, encoding="utf-8")
+        if os.name != "nt":
+            hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return "created"
 
 

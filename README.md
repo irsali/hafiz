@@ -54,6 +54,30 @@ pip install .          # or pip install ".[gpu]" for GPU support
 
 </details>
 
+<details>
+<summary>Windows (PowerShell)</summary>
+
+Tested on Windows 11 with PowerShell. Requires [Git for Windows](https://git-scm.com/download/win) (also provides the `bash` interpreter that git hooks use).
+
+```powershell
+# Install pipx
+python -m pip install --user pipx
+python -m pipx ensurepath        # restart PowerShell after this
+
+# Install Hafiz
+pipx install "git+https://github.com/irsali/hafiz.git"
+
+# With GPU acceleration (requires CUDA drivers)
+pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
+
+# Editable install from local clone
+pipx install -e ".[gpu]" --force   # or without [gpu]
+```
+
+Config goes in `%APPDATA%\hafiz\hafiz.toml` (or `.\hafiz.toml` in the project). Cache state lives under `%USERPROFILE%\.cache\hafiz\`.
+
+</details>
+
 ## Setup
 
 ### 1. Start PostgreSQL with pgvector
@@ -95,10 +119,11 @@ psql -d hafiz -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ### 2. Create the config file
 
 ```bash
-mkdir -p ~/.config/hafiz
+mkdir -p ~/.config/hafiz                                            # Linux / macOS
+# Windows (PowerShell):  New-Item -ItemType Directory -Force "$env:APPDATA\hafiz" | Out-Null
 ```
 
-Create `~/.config/hafiz/hafiz.toml`:
+Create the config file at `~/.config/hafiz/hafiz.toml` (Linux/macOS) or `%APPDATA%\hafiz\hafiz.toml` (Windows):
 
 ```toml
 [database]
@@ -383,7 +408,7 @@ src/generated/
 Hafiz looks for `hafiz.toml` in order:
 1. Current directory
 2. `~/.config/hafiz/hafiz.toml`
-3. `/etc/hafiz/hafiz.toml`
+3. `/etc/hafiz/hafiz.toml` (Linux/macOS) or `%APPDATA%\hafiz\hafiz.toml` (Windows)
 
 See [Setup](#setup) for the full config template. Environment variables override config values using the `HAFIZ_` prefix with double-underscore nesting:
 

@@ -11,6 +11,7 @@ import typer
 
 from hafiz import __version__
 
+
 def _parse_domain_csv(value: Optional[str]) -> Optional[list[str]]:
     """Parse a ``--include-domain a,b,c`` flag into ``["a","b","c"]``.
 
