@@ -20,6 +20,7 @@ import asyncio
 import logging
 import math
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -59,8 +60,78 @@ def _gpu_name() -> str | None:
         return None
 
 
+def _model_cache_dir() -> Path:
+    """Persistent, XDG-aware cache for downloaded embedding models.
+
+    fastembed's default is ``tempfile.gettempdir()/fastembed_cache``. On hosts
+    where ``/tmp`` is tmpfs (RAM-backed) that means a ~260 MB re-download on
+    every reboot — plus a fresh window for an interrupted download to leave the
+    cache half-written. Pinning the cache under ``~/.cache/hafiz`` makes it
+    survive reboots and turns model corruption into a once-ever event.
+    """
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base) if base else Path.home() / ".cache"
+    path = root / "hafiz" / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _purge_if_incomplete(cache_dir: Path, model_name: str) -> bool:
+    """Delete a half-downloaded model cache so fastembed re-downloads cleanly.
+
+    A download interrupted mid-flight leaves the small config/tokenizer blobs
+    in place but the large ``model.onnx`` as a 0-byte ``*.incomplete`` blob with
+    no snapshot symlink. fastembed then tries to load a file that isn't there
+    and dies on every call instead of resuming. Detect that signature — a
+    ``*.incomplete`` blob, or no resolvable ``onnx/model.onnx`` in any
+    snapshot — and remove the model dir. Returns True if anything was purged.
+    """
+    model_dir = cache_dir / f"models--{model_name.replace('/', '--')}"
+    if not model_dir.is_dir():
+        return False
+
+    blobs = model_dir / "blobs"
+    has_incomplete = blobs.is_dir() and any(blobs.glob("*.incomplete"))
+
+    snapshots = model_dir / "snapshots"
+    has_onnx = snapshots.is_dir() and any(
+        (snap / "onnx" / "model.onnx").exists() for snap in snapshots.iterdir()
+    )
+
+    if has_incomplete or not has_onnx:
+        shutil.rmtree(model_dir, ignore_errors=True)
+        logger.warning(
+            "Purged incomplete embedding-model cache at %s; re-downloading.",
+            model_dir,
+        )
+        return True
+    return False
+
+
+def _text_embedding(model_name: str, providers: list[str]) -> TextEmbedding:
+    """Construct a fastembed model against the persistent cache.
+
+    Self-heals a corrupt cache before loading, and on any load failure raises
+    an actionable error naming the cache dir and the remedy instead of letting
+    a bare ONNX ``NO_SUCHFILE`` traceback escape.
+    """
+    cache_dir = _model_cache_dir()
+    _purge_if_incomplete(cache_dir, model_name)
+    try:
+        return TextEmbedding(
+            model_name=model_name, providers=providers, cache_dir=str(cache_dir)
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load embedding model '{model_name}' from {cache_dir}: "
+            f"{exc}\nThe model download is likely corrupt or incomplete. Run "
+            f"`hafiz embedding retry` (re-downloads on the next embed), or delete "
+            f"{cache_dir} and retry to force a clean download."
+        ) from exc
+
+
 def _build_cpu_model(model_name: str) -> TextEmbedding:
-    return TextEmbedding(model_name=model_name, providers=["CPUExecutionProvider"])
+    return _text_embedding(model_name, ["CPUExecutionProvider"])
 
 
 def _tensorrt_available() -> bool:
@@ -106,7 +177,7 @@ def _build_gpu_model(model_name: str) -> TextEmbedding:
     else:
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
-    model = TextEmbedding(model_name=model_name, providers=providers)
+    model = _text_embedding(model_name, providers)
     # fastembed defers ORT session creation until first use; force it now so
     # OOM / missing-kernel errors surface during probe, not mid-ingest.
     probe = next(iter(model.embed(["probe"])))

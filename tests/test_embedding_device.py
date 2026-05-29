@@ -432,3 +432,46 @@ class TestCLI:
         assert data["cleared_prior"] is True
         assert data["device"] == "cpu"
         assert "explicitly" in data["message"]
+
+
+class TestModelCachePurge:
+    """`_purge_if_incomplete` self-heals a half-downloaded model cache.
+
+    Regression for the interrupted-download failure: a snapshot with config
+    blobs but no ``onnx/model.onnx`` (plus a 0-byte ``*.incomplete`` blob) made
+    every embed call die with a bare ONNX NO_SUCHFILE.
+    """
+
+    MODEL = "nomic-ai/nomic-embed-text-v1.5"
+    DIRNAME = "models--nomic-ai--nomic-embed-text-v1.5"
+
+    def test_incomplete_blob_is_purged(self, tmp_path):
+        model_dir = tmp_path / self.DIRNAME
+        (model_dir / "blobs").mkdir(parents=True)
+        (model_dir / "snapshots" / "abc" / "onnx").mkdir(parents=True)
+        (model_dir / "blobs" / "x.incomplete").write_text("")
+        assert embeddings._purge_if_incomplete(tmp_path, self.MODEL) is True
+        assert not model_dir.exists()
+
+    def test_missing_onnx_is_purged(self, tmp_path):
+        model_dir = tmp_path / self.DIRNAME
+        (model_dir / "snapshots" / "abc" / "onnx").mkdir(parents=True)
+        assert embeddings._purge_if_incomplete(tmp_path, self.MODEL) is True
+        assert not model_dir.exists()
+
+    def test_healthy_cache_is_kept(self, tmp_path):
+        model_dir = tmp_path / self.DIRNAME
+        onnx = model_dir / "snapshots" / "abc" / "onnx"
+        onnx.mkdir(parents=True)
+        (onnx / "model.onnx").write_text("weights")
+        assert embeddings._purge_if_incomplete(tmp_path, self.MODEL) is False
+        assert model_dir.exists()
+
+    def test_absent_cache_is_noop(self, tmp_path):
+        assert embeddings._purge_if_incomplete(tmp_path, self.MODEL) is False
+
+    def test_cache_dir_is_persistent_not_tmp(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        path = embeddings._model_cache_dir()
+        assert path == tmp_path / "hafiz" / "models"
+        assert path.is_dir()

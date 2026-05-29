@@ -89,7 +89,19 @@ _GPU_VRAM_FREE_MB_REQUIRED = 6_000   # leave headroom for compositor + apps
 # Subprocess script — embedded as a string. Imports are intentionally
 # scoped inside main() so the import-error path can be reported via JSON.
 _MEASURE_SCRIPT = r"""
-import json, resource, sys, time
+import json, os, resource, sys, time
+from pathlib import Path
+
+
+def _model_cache_dir():
+    # Mirror hafiz.core.embeddings._model_cache_dir without importing the
+    # module — keeps this measurement subprocess's baseline RSS clean. Must
+    # stay in sync so the probe reuses the same persistent model download.
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base) if base else Path.home() / ".cache"
+    path = root / "hafiz" / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 def main():
     cfg = json.loads(sys.stdin.read())
@@ -124,7 +136,7 @@ def main():
         else ["CPUExecutionProvider"]
     )
     try:
-        model = TextEmbedding(model_name, providers=providers)
+        model = TextEmbedding(model_name, providers=providers, cache_dir=_model_cache_dir())
     except Exception as e:
         print(json.dumps({"_fatal": f"model load failed: {e!s}"}), flush=True)
         sys.exit(2)
