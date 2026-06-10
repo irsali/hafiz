@@ -12,9 +12,10 @@ everything Hafiz knows that's relevant to a task. Post-structural-grounding:
     walks current ``Edge`` rows.
   - "Observations" are ``Annotation`` rows — same wisdom layer, renamed.
 
-Transcript-neighbor expansion is temporarily disabled: Phase 3b-2 rewires
-``hafiz.core.capture`` onto the new schema. Until then, retrieved chunks
-pass through unchanged.
+Transcripts now live in the source layer (``hafiz.core.capture`` writes
+``communications`` + messages). They are excluded from default context
+by design and surfaced only via ``--include-transcripts`` / ``hafiz
+recall``; the old chunk-based turn-neighbor expansion is retired.
 """
 
 from __future__ import annotations

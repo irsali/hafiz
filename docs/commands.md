@@ -194,7 +194,9 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `capture [TEXT]` | *(Phase 3b-2: not yet rewired for the new schema. Falls through with a clear error. Transcript storage will land as `chat.turn` units.)* | — | — | — |
+| `capture [TEXT]` | Ingest a transcript / multi-page dump into the **source layer** as one communication. Reads TEXT, `--file`, or stdin. Splits on blank lines into turns; the selective-embed policy embeds substantive turns. Hidden from default `query`/`context`; surface via `recall <id>` or `--include-transcripts`. | Embed | Pipe a conversation in (`--source agent:<name>`); recall later | `--file`, `--title`, `--project`, `--source`, `--tags`, `--session`, `--task`, `--json` |
+
+**`capture --json` shape:** `{action, communication_id, title, source, project, turn_count, messages_embedded, session_id, task}`. The `agent` column on the stored communication is derived from `--source` (`agent:hermes` → `hermes`), so `hafiz recall --agent <name>` filters to a tool's own captures.
 
 ### Sessions
 

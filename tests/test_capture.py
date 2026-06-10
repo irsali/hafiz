@@ -1,8 +1,8 @@
 """Pure-function tests for ``hafiz.core.capture``.
 
-DB-hitting logic (``store_transcript`` / ``expand_transcript_neighbors``)
-is covered by dogfooding; here we pin down the turn splitter and the
-slug generator shape.
+DB-hitting logic (``store_transcript`` → source-layer communications)
+is covered by dogfooding; here we pin down the turn splitter, the slug
+generator, and the ``--source`` → agent derivation.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import re
 
 import pytest
 
-from hafiz.core.capture import _slugify, split_transcript
+from hafiz.core.capture import _agent_from_source, _slugify, split_transcript
 
 
 @pytest.mark.parametrize(
@@ -50,3 +50,19 @@ def test_slugify_strips_and_caps_long_titles():
     slug = _slugify("a" * 200)
     # kebab base is capped at 40 chars, then -<6hex>
     assert re.fullmatch(r"a{40}-[0-9a-f]{6}", slug)
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("agent:hermes", "hermes"),       # agent: prefix stripped
+        ("agent:claude-code", "claude-code"),
+        ("user:anjum", "user:anjum"),     # non-agent source passes through
+        ("capture", "capture"),           # bare value passes through
+        (None, "capture"),                # missing → default
+        ("", "capture"),                  # empty → default
+        ("agent:", "capture"),            # empty after prefix → default
+    ],
+)
+def test_agent_from_source(source, expected):
+    assert _agent_from_source(source) == expected

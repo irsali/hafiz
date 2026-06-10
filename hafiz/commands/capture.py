@@ -78,22 +78,6 @@ def run_capture(
 
     try:
         summary = asyncio.run(_run())
-    except ImportError:
-        # core/capture.py still targets the pre-v5 chunk pipeline. The
-        # feature is parked pending the source-layer rewire (Phase 3b-2);
-        # surface that intent instead of leaking a raw ImportError.
-        msg = (
-            "`hafiz capture` is not yet available on this version — transcript "
-            "ingest is being rewired onto the source layer (Phase 3b-2). "
-            "Use `hafiz import claude-code` for agent transcripts in the meantime."
-        )
-        if output_json:
-            console.print_json(
-                json.dumps({"ok": False, "error": msg, "command": "capture"})
-            )
-        else:
-            console.print(f"[yellow]Not yet rewired:[/yellow] {msg}")
-        raise SystemExit(1)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
@@ -103,11 +87,12 @@ def run_capture(
             json.dumps(
                 {
                     "action": "capture",
-                    "transcript_id": summary.transcript_id,
+                    "communication_id": summary.communication_id,
                     "title": summary.title,
-                    "source_file": summary.source_file,
+                    "source": source,
+                    "project": project,
                     "turn_count": summary.turn_count,
-                    "chunks_stored": summary.chunks_stored,
+                    "messages_embedded": summary.messages_embedded,
                     "session_id": resolved_session_id,
                     "task": resolved_task,
                 }
@@ -124,14 +109,14 @@ def run_capture(
         )
     info = (
         f"[bold green]Transcript captured[/bold green]\n\n"
-        f"  [bold]ID:[/bold]       {summary.transcript_id}\n"
+        f"  [bold]ID:[/bold]       {summary.communication_id}\n"
         f"  [bold]Title:[/bold]    {summary.title or '—'}\n"
         f"  [bold]Source:[/bold]   {source or '—'}\n"
         f"  [bold]Project:[/bold]  {project or '—'}\n"
         f"  [bold]Tags:[/bold]     {tags_str}\n"
         f"{session_line}"
         f"  [bold]Turns:[/bold]    {summary.turn_count}\n"
-        f"  [bold]Chunks:[/bold]   {summary.chunks_stored}\n"
-        f"  [bold]Path:[/bold]     {summary.source_file}"
+        f"  [bold]Embedded:[/bold] {summary.messages_embedded}\n"
+        f"  [dim]Source layer — surface via `hafiz recall {summary.communication_id}`[/dim]"
     )
     console.print(Panel(info, border_style="cyan"))
