@@ -78,6 +78,22 @@ def run_capture(
 
     try:
         summary = asyncio.run(_run())
+    except ImportError:
+        # core/capture.py still targets the pre-v5 chunk pipeline. The
+        # feature is parked pending the source-layer rewire (Phase 3b-2);
+        # surface that intent instead of leaking a raw ImportError.
+        msg = (
+            "`hafiz capture` is not yet available on this version — transcript "
+            "ingest is being rewired onto the source layer (Phase 3b-2). "
+            "Use `hafiz import claude-code` for agent transcripts in the meantime."
+        )
+        if output_json:
+            console.print_json(
+                json.dumps({"ok": False, "error": msg, "command": "capture"})
+            )
+        else:
+            console.print(f"[yellow]Not yet rewired:[/yellow] {msg}")
+        raise SystemExit(1)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)

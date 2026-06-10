@@ -1,10 +1,35 @@
 """Tests for hafiz.cli — CLI command registration and basic invocation."""
 
+import json
+
+import pytest
 from typer.testing import CliRunner
 
 from hafiz.cli import app
 
 runner = CliRunner()
+
+
+async def _db_available() -> bool:
+    """Return True iff a live Postgres with the v5 schema is reachable."""
+    try:
+        from sqlalchemy import text
+
+        from hafiz.core.database import close_engine, get_session_factory
+
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            await session.execute(text("SELECT 1 FROM annotations LIMIT 1"))
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            from hafiz.core.database import close_engine
+
+            await close_engine()
+        except Exception:
+            pass
 
 
 def test_version():
@@ -394,3 +419,38 @@ def test_distill_project_and_workspace_mutually_exclusive():
     )
     assert result.exit_code == 1
     assert "mutually exclusive" in result.output
+
+
+# ── review — must run clean against the v5 schema (regression for the
+#    pre-v5 Chunk/Entity/Relation/Observation crash) ─────────────────────────
+
+
+def test_review_runs_clean_on_v5_schema():
+    """`hafiz review --json` must produce a well-formed report, not crash.
+
+    Regression guard: review.py used to query removed ORM tables and died
+    with ``ArgumentError: ...got Chunk``. It now reads units/edges/
+    embeddings/annotations.
+
+    Synchronous on purpose: ``runner.invoke`` drives the CLI's own
+    ``asyncio.run``, which cannot nest inside a running event loop.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    result = runner.invoke(app, ["review", "--json"])
+    assert result.exit_code == 0, result.output
+
+    payload = json.loads(result.output)
+    # Shape contract: stats counts the four v5 knowledge tables; findings
+    # and summary are always present.
+    for key in ("units", "edges", "embeddings", "annotations"):
+        assert key in payload["stats"], payload["stats"]
+        assert isinstance(payload["stats"][key], int)
+    assert isinstance(payload["findings"], list)
+    assert payload["summary"]["total"] == len(payload["findings"])
+    # None of the removed-table sentinels should leak into output.
+    assert "Chunk" not in result.output
+    assert "Entity" not in result.output

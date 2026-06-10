@@ -145,7 +145,7 @@ def prune(
         False, "--json", "-j", help="Output as JSON."
     ),
 ) -> None:
-    """Remove chunks for files that no longer exist on disk."""
+    """No-op — stale-file cleanup is automatic on ingest. Kept for compatibility."""
     from hafiz.commands.prune import run_prune
 
     run_prune(project=project, dry_run=dry_run, output_json=json_output)

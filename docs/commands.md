@@ -79,8 +79,8 @@ Adding fields is safe; renaming requires a note here.
 |---------|---------|:-----:|-----------|-------------|
 | `ingest <path>` | Walk the tree, pick a parser per file, upsert units / revisions / embeddings. On a git repo, diff-driven: re-ingests only files changed since last indexed commit | Embed + Parser | `--json` emits NDJSON progress | rich progress |
 | `ingest --git-hook` | Same pipeline, designed to run inside the installed post-commit / post-merge / post-rewrite hooks | Embed + Parser | `--json` | rich output |
-| `watch <path>` | Long-running: detect file changes, re-ingest automatically. *(Phase 3b-2: still on the old API — falls through with a "not yet rewired" message.)* | Embed + Parser | `--json` events | rich output |
-| `prune` | Obsolete under new pipeline — on-ingest tombstoning handles this. Kept as a CLI no-op. | — | `--json` | rich output |
+| `watch <path>` | Long-running: detect file changes, re-ingest automatically. *(Parked — still on the pre-v5 chunk pipeline. Exits 1 with a clean "not yet rewired" message; use `hafiz ingest` + git hooks meanwhile.)* | Embed + Parser | `--json` → `{"ok":false,"error":...}` | rich "not yet rewired" |
+| `prune` | No-op. On-ingest tombstoning (`tombstone_vanished_files`) handles stale files; this reports that and exits 0. Kept so existing hooks/scripts don't break. | — | `--json` returns `{"action":"prune","noop":true,...}` | rich "nothing to prune" |
 
 **Race safety:** ingest refuses to run during a rebase / merge / cherry-pick in progress (detects `.git/<marker>` files) and exits with code 2.
 
@@ -237,7 +237,7 @@ Defaults:
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `review` | *(Phase 3b-4: still on the old schema. Fails cleanly until rewired.)* | — | — | — |
+| `review` | Self-review of the knowledge base: counts units / edges / embeddings / annotations, then flags annotation-quality gaps (no decisions, low confidence, staleness), orphan units, and projects with units but no edges. | Graph + Annotations | `--json` emits `{stats, findings, summary}` | rich panel of findings |
 
 ## Common Flags
 

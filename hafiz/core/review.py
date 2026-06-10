@@ -3,20 +3,29 @@
 This is Layer 2 (evolving) — separate from skills.md (Layer 1, stable contract).
 It helps users and agents understand the health of their knowledge base and
 surfaces actionable improvements without being prescriptive.
+
+Reads the v5 knowledge layer: ``units`` (addressable things), ``edges``
+(relations between them), ``annotations`` (the wisdom layer), and ``embeddings``
+(the vector index). Only *live* rows are counted — tombstoned units
+(``valid_until`` set), superseded edges (``superseded_at`` set), and expired
+annotations (``valid_until`` in the past) are excluded so findings reflect the
+current state, not history.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, func, text
+from sqlalchemy import func, or_, select
 
 from hafiz.core.database import (
-    Chunk,
-    Entity,
-    Relation,
-    Observation,
+    Annotation,
+    Edge,
+    Embedding,
+    File,
+    Unit,
+    UnitRevision,
     get_session_factory,
 )
 
@@ -25,7 +34,7 @@ from hafiz.core.database import (
 class ReviewFinding:
     """A single review finding with actionable suggestion."""
 
-    category: str  # observations, graph, coverage, staleness
+    category: str  # annotations, graph, coverage, staleness
     severity: str  # info, suggestion, warning
     title: str
     detail: str
@@ -94,85 +103,77 @@ async def run_review(project: str | None = None) -> ReviewReport:
     """Analyze the hafiz knowledge base and produce a review report.
 
     Checks:
-    - Observation quality: duplicates, low confidence, type distribution
-    - Graph coverage: orphan entities, entities without descriptions
-    - Index coverage: projects without entities, stale files
-    - Staleness: old observations that may need re-evaluation
+    - Annotation quality: type distribution, low confidence, staleness
+    - Graph coverage: orphan units (no edges)
+    - Index coverage: projects with units but no edges (graph not built)
     """
     report = ReviewReport()
     session_factory = get_session_factory()
 
     async with session_factory() as session:
-        # ── Gather stats ────────────────────────────────────────────────
-        chunk_count = (
-            await session.execute(
-                _count_query(Chunk, project)
-            )
+        # ── Gather stats (live rows only) ───────────────────────────────
+        embedding_count = (
+            await session.execute(_embedding_count(project))
         ).scalar() or 0
-        entity_count = (
-            await session.execute(
-                _count_query(Entity, project)
-            )
+        unit_count = (
+            await session.execute(_unit_count(project))
         ).scalar() or 0
-        relation_count = (
-            await session.execute(
-                _count_query(Relation, project, field_name="source_id")
-            )
+        edge_count = (
+            await session.execute(_edge_count(project))
         ).scalar() or 0
-        obs_count = (
-            await session.execute(
-                _count_query(Observation, project)
-            )
+        ann_count = (
+            await session.execute(_annotation_count(project))
         ).scalar() or 0
 
         report.stats = {
-            "chunks": chunk_count,
-            "entities": entity_count,
-            "relations": relation_count,
-            "observations": obs_count,
+            "units": unit_count,
+            "edges": edge_count,
+            "embeddings": embedding_count,
+            "annotations": ann_count,
         }
 
-        # ── Observation checks ──────────────────────────────────────────
+        # ── Annotation checks ───────────────────────────────────────────
 
-        # Type distribution
-        obs_types = (
+        # Kind distribution
+        kind_rows = (
             await session.execute(
-                _filtered(
-                    select(Observation.obs_type, func.count())
-                    .group_by(Observation.obs_type),
-                    Observation,
+                _ann_filter(
+                    select(Annotation.kind, func.count()).group_by(Annotation.kind),
                     project,
                 )
             )
         ).all()
 
-        type_dist = {t: c for t, c in obs_types}
-        report.stats["observation_types"] = type_dist
+        kind_dist = {k: c for k, c in kind_rows}
+        report.stats["annotation_kinds"] = kind_dist
 
-        if obs_count > 0 and not type_dist.get("decision"):
+        if ann_count > 0 and not kind_dist.get("decision"):
             report.findings.append(ReviewFinding(
-                category="observations",
+                category="annotations",
                 severity="suggestion",
                 title="No decisions recorded",
-                detail="Decisions are the most durable observation type — they capture why, not just what.",
+                detail="Decisions are the most durable annotation kind — "
+                       "they capture why, not just what.",
                 action='hafiz observe "<decision>" --type decision --source agent:<name>',
             ))
 
-        if obs_count > 0 and not type_dist.get("warning"):
+        if ann_count > 0 and not kind_dist.get("warning"):
             report.findings.append(ReviewFinding(
-                category="observations",
+                category="annotations",
                 severity="info",
                 title="No warnings recorded",
-                detail="Warnings capture gotchas and non-obvious behaviors that prevent repeated mistakes.",
+                detail="Warnings capture gotchas and non-obvious behaviors "
+                       "that prevent repeated mistakes.",
             ))
 
-        # Low confidence observations
+        # Low-confidence annotations
         low_conf = (
             await session.execute(
-                _filtered(
-                    select(func.count()).select_from(Observation)
-                    .where(Observation.confidence < 0.5),
-                    Observation,
+                _ann_filter(
+                    select(func.count())
+                    .select_from(Annotation)
+                    .where(_ann_live())
+                    .where(Annotation.confidence < 0.5),
                     project,
                 )
             )
@@ -180,139 +181,229 @@ async def run_review(project: str | None = None) -> ReviewReport:
 
         if low_conf > 0:
             report.findings.append(ReviewFinding(
-                category="observations",
+                category="annotations",
                 severity="suggestion",
-                title=f"{low_conf} low-confidence observations",
-                detail="Observations with confidence < 50% may add noise. Review and either boost or remove.",
+                title=f"{low_conf} low-confidence annotations",
+                detail="Annotations with confidence < 50% may add noise. "
+                       "Review and either boost or remove.",
                 action="hafiz query '' --recall --limit 50 --json  # then filter by confidence",
             ))
 
-        # Stale observations (older than 90 days)
-        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-        stale_obs = (
+        # Stale annotations (older than 90 days)
+        cutoff = datetime.now(UTC) - timedelta(days=90)
+        stale = (
             await session.execute(
-                _filtered(
-                    select(func.count()).select_from(Observation)
-                    .where(Observation.valid_from < cutoff),
-                    Observation,
+                _ann_filter(
+                    select(func.count())
+                    .select_from(Annotation)
+                    .where(_ann_live())
+                    .where(Annotation.valid_from < cutoff),
                     project,
                 )
             )
         ).scalar() or 0
 
-        if stale_obs > 0:
+        if stale > 0:
             report.findings.append(ReviewFinding(
                 category="staleness",
                 severity="info",
-                title=f"{stale_obs} observations older than 90 days",
-                detail="Older observations may still be valid, but periodic review keeps knowledge fresh.",
-                action="hafiz query '' --recall --limit 20 --json  # review and invalidate if outdated",
+                title=f"{stale} annotations older than 90 days",
+                detail="Older annotations may still be valid, but periodic "
+                       "review keeps knowledge fresh.",
+                action="hafiz journal --since 90d --json  # review and supersede if outdated",
             ))
 
-        # ── Graph checks ───────────────────────────────────────────────
+        # ── Graph checks ────────────────────────────────────────────────
 
-        # Orphan entities (no relations)
-        if entity_count > 0:
-            connected_ids = (
-                select(Relation.source_id).union(select(Relation.target_id))
+        # Orphan units — live units that appear on no live edge (in or out).
+        if unit_count > 0:
+            connected = (
+                select(Edge.source_unit_id.label("uid"))
+                .where(Edge.superseded_at.is_(None))
+                .union(
+                    select(Edge.target_unit_id.label("uid"))
+                    .where(Edge.superseded_at.is_(None))
+                    .where(Edge.target_unit_id.isnot(None))
+                )
             ).subquery()
 
             orphan_count = (
                 await session.execute(
-                    _filtered(
-                        select(func.count()).select_from(Entity)
-                        .where(Entity.id.notin_(select(connected_ids.c[0]))),
-                        Entity,
+                    _unit_filter(
+                        select(func.count())
+                        .select_from(Unit)
+                        .where(Unit.valid_until.is_(None))
+                        .where(Unit.id.notin_(select(connected.c.uid))),
                         project,
                     )
+                )
+            ).scalar() or 0
+
+            # Name-only edges: the parser recorded a relation by target name
+            # but never resolved it to a unit (target_unit_id IS NULL). A high
+            # share of these is the usual reason orphan counts look alarming —
+            # the relations exist, they just aren't resolved into the graph.
+            unresolved_edges = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(Edge)
+                    .where(Edge.superseded_at.is_(None))
+                    .where(Edge.target_unit_id.is_(None))
                 )
             ).scalar() or 0
 
             if orphan_count > 0:
-                pct = round(orphan_count / entity_count * 100)
+                pct = round(orphan_count / unit_count * 100)
+                detail = (
+                    "Units with no resolved edges are isolated — they don't "
+                    "contribute to dependency analysis."
+                )
+                if unresolved_edges and edge_count:
+                    unresolved_pct = round(unresolved_edges / edge_count * 100)
+                    detail += (
+                        f" Note: {unresolved_pct}% of edges are name-only "
+                        "(target not yet resolved to a unit), which inflates "
+                        "this count — those relations exist but aren't linked."
+                    )
                 report.findings.append(ReviewFinding(
                     category="graph",
                     severity="suggestion" if pct > 30 else "info",
-                    title=f"{orphan_count} orphan entities ({pct}%)",
-                    detail="Entities without relations are isolated — they don't contribute to dependency analysis.",
-                    action="hafiz graph show <entity> --json  # check if relations are missing",
+                    title=f"{orphan_count} orphan units ({pct}%)",
+                    detail=detail,
+                    action="hafiz graph show <unit> --json  # check if relations are missing",
                 ))
 
-        # Entities without descriptions
-        if entity_count > 0:
-            no_desc = (
-                await session.execute(
-                    _filtered(
-                        select(func.count()).select_from(Entity)
-                        .where(
-                            (Entity.description.is_(None))
-                            | (Entity.description == "")
-                        ),
-                        Entity,
-                        project,
-                    )
-                )
-            ).scalar() or 0
+        # ── Coverage checks ─────────────────────────────────────────────
 
-            if no_desc > 0:
-                pct = round(no_desc / entity_count * 100)
-                report.findings.append(ReviewFinding(
-                    category="graph",
-                    severity="suggestion" if pct > 50 else "info",
-                    title=f"{no_desc} entities without descriptions ({pct}%)",
-                    detail="Descriptions help semantic search find entities by concept, not just name.",
-                ))
-
-        # ── Coverage checks ────────────────────────────────────────────
-
-        # Projects with chunks but no entities
-        project_chunks = (
-            await session.execute(
-                select(Chunk.project, func.count())
-                .where(Chunk.project.isnot(None))
-                .group_by(Chunk.project)
-            )
+        # Projects with units but no edges — the graph hasn't been built for
+        # them (extraction / structural linking not yet run). Per-project
+        # unit and edge presence is reached via the file → project axis.
+        proj_units = (
+            await session.execute(_units_by_project())
+        ).all()
+        proj_edges = (
+            await session.execute(_edges_by_project())
         ).all()
 
-        project_entities = (
-            await session.execute(
-                select(Entity.project, func.count())
-                .where(Entity.project.isnot(None))
-                .group_by(Entity.project)
-            )
-        ).all()
-
-        entity_projects = {p for p, _ in project_entities}
-        for proj, count in project_chunks:
-            if proj and proj not in entity_projects:
+        edge_projects = {p for p, _ in proj_edges if p}
+        for proj, count in proj_units:
+            if proj and proj not in edge_projects:
                 report.findings.append(ReviewFinding(
                     category="coverage",
                     severity="suggestion",
-                    title=f"Project '{proj}' has {count} chunks but no entities",
-                    detail="Entity extraction hasn't been run for this project. Graph queries won't return results.",
-                    action=f"hafiz extract export --project {proj} --limit 200  # then extract entities",
+                    title=f"Project '{proj}' has {count} units but no edges",
+                    detail="No relations were extracted for this project. "
+                           "Graph queries won't return results.",
+                    action=f"hafiz extract export --project {proj} --limit 200"
+                           "  # then import semantic edges",
                 ))
 
-        # Entity-to-chunk ratio
-        if chunk_count > 0 and entity_count > 0:
-            ratio = entity_count / chunk_count
-            report.stats["entity_chunk_ratio"] = round(ratio, 3)
+        # Unit-to-embedding ratio (rough index coverage signal)
+        if embedding_count > 0 and unit_count > 0:
+            report.stats["unit_embedding_ratio"] = round(unit_count / embedding_count, 3)
 
     return report
 
 
-def _count_query(model, project: str | None, field_name: str = "project"):
-    """Build a count query with optional project filter."""
-    stmt = select(func.count()).select_from(model)
+# ---------------------------------------------------------------------------
+# Query builders. ``project`` lives on ``files`` (units join through file_id),
+# on ``annotations`` directly, and is reached for edges/embeddings via their
+# unit. We scope by joining to ``files`` where needed.
+# ---------------------------------------------------------------------------
+
+
+def _ann_live():
+    """Predicate: annotation is not expired."""
+    now = datetime.now(UTC)
+    return or_(Annotation.valid_until.is_(None), Annotation.valid_until > now)
+
+
+def _ann_filter(stmt, project: str | None):
     if project:
-        stmt = stmt.where(getattr(model, field_name if field_name == "project" else "id").isnot(None))
-        if hasattr(model, "project"):
-            stmt = select(func.count()).select_from(model).where(model.project == project)
+        stmt = stmt.where(Annotation.project == project)
     return stmt
 
 
-def _filtered(stmt, model, project: str | None):
-    """Add project filter to an existing statement if project is specified."""
-    if project and hasattr(model, "project"):
-        stmt = stmt.where(model.project == project)
+def _annotation_count(project: str | None):
+    stmt = (
+        select(func.count())
+        .select_from(Annotation)
+        .where(_ann_live())
+    )
+    return _ann_filter(stmt, project)
+
+
+def _unit_filter(stmt, project: str | None):
+    """Scope a Unit-based count to a project via the files join."""
+    if project:
+        stmt = stmt.where(
+            Unit.file_id.in_(select(File.id).where(File.project == project))
+        )
     return stmt
+
+
+def _unit_count(project: str | None):
+    stmt = (
+        select(func.count())
+        .select_from(Unit)
+        .where(Unit.valid_until.is_(None))
+    )
+    return _unit_filter(stmt, project)
+
+
+def _edge_count(project: str | None):
+    stmt = (
+        select(func.count())
+        .select_from(Edge)
+        .where(Edge.superseded_at.is_(None))
+    )
+    if project:
+        stmt = stmt.where(
+            Edge.source_unit_id.in_(
+                select(Unit.id).where(
+                    Unit.file_id.in_(select(File.id).where(File.project == project))
+                )
+            )
+        )
+    return stmt
+
+
+def _embedding_count(project: str | None):
+    stmt = (
+        select(func.count())
+        .select_from(Embedding)
+        .join(UnitRevision, Embedding.unit_revision_id == UnitRevision.id)
+        .where(UnitRevision.superseded_at.is_(None))
+    )
+    if project:
+        stmt = stmt.where(
+            UnitRevision.unit_id.in_(
+                select(Unit.id).where(
+                    Unit.file_id.in_(select(File.id).where(File.project == project))
+                )
+            )
+        )
+    return stmt
+
+
+def _units_by_project():
+    """Live unit counts grouped by their file's project."""
+    return (
+        select(File.project, func.count(Unit.id))
+        .join(File, Unit.file_id == File.id)
+        .where(Unit.valid_until.is_(None))
+        .where(File.project.isnot(None))
+        .group_by(File.project)
+    )
+
+
+def _edges_by_project():
+    """Live edge counts grouped by the source unit's file's project."""
+    return (
+        select(File.project, func.count(Edge.id))
+        .join(Unit, Edge.source_unit_id == Unit.id)
+        .join(File, Unit.file_id == File.id)
+        .where(Edge.superseded_at.is_(None))
+        .where(File.project.isnot(None))
+        .group_by(File.project)
+    )

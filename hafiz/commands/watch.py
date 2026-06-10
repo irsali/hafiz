@@ -29,7 +29,26 @@ def run_watch(
         console.print(f"[red]Not a directory:[/red] {target}")
         raise SystemExit(1)
 
-    from hafiz.core.watcher import start_watcher
+    try:
+        from hafiz.core.watcher import start_watcher
+    except ImportError:
+        # core/watcher.py still targets the pre-v5 chunk pipeline
+        # (chunk_file / LANGUAGE_MAP, removed from the chunker). The live
+        # watcher is parked pending the rewire onto walk_files +
+        # index_file; surface that instead of a raw ImportError.
+        msg = (
+            "`hafiz watch` is not yet available on this version — the live "
+            "watcher is being rewired onto the v5 ingest pipeline. "
+            "Use `hafiz ingest` (diff-driven; auto-fires from git hooks via "
+            "`hafiz hooks install`) in the meantime."
+        )
+        if output_json:
+            console.print_json(
+                json.dumps({"ok": False, "error": msg, "command": "watch"})
+            )
+        else:
+            console.print(f"[yellow]Not yet rewired:[/yellow] {msg}")
+        raise SystemExit(1)
 
     # Activity log for the display
     activity: list[dict] = []
