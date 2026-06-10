@@ -131,6 +131,63 @@ def watch(
     run_watch(path, project=project, output_json=json_output)
 
 
+# ─── SERVE (warm daemon) ────────────────────────────────────────────
+
+serve_app = typer.Typer(
+    name="serve",
+    help="On-demand warm daemon — keeps the embedding model + DB hot for fast recall.",
+    invoke_without_command=True,
+)
+app.add_typer(serve_app)
+
+
+@serve_app.callback(invoke_without_command=True)
+def serve_main(
+    ctx: typer.Context,
+    idle_timeout: float = typer.Option(
+        -1.0,
+        "--idle-timeout",
+        help="Seconds of inactivity before auto-shutdown (default 1800; -1 keeps default).",
+    ),
+    detach: bool = typer.Option(
+        False, "--detach", help="Daemonize into the background and return."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Machine-readable output."
+    ),
+) -> None:
+    """Start the daemon. Subcommands: `status`, `stop`."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from hafiz.commands.serve import run_serve
+
+    run_serve(idle_timeout=idle_timeout, detach=detach, output_json=json_output)
+
+
+@serve_app.command("status")
+def serve_status(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Machine-readable output."
+    ),
+) -> None:
+    """Report whether the daemon is running."""
+    from hafiz.commands.serve import run_status
+
+    run_status(output_json=json_output)
+
+
+@serve_app.command("stop")
+def serve_stop(
+    json_output: bool = typer.Option(
+        False, "--json", "-j", help="Machine-readable output."
+    ),
+) -> None:
+    """Stop the running daemon (best-effort)."""
+    from hafiz.commands.serve import run_stop
+
+    run_stop(output_json=json_output)
+
+
 # ─── PRUNE ──────────────────────────────────────────────────────────
 
 @app.command()

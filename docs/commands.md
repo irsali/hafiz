@@ -86,6 +86,21 @@ Adding fields is safe; renaming requires a note here.
 
 **Multi-project ingest.** When indexing a workspace with several projects (e.g. `workspace.projects = ["a", "b", "c"]`), run `hafiz ingest` **one project at a time, sequentially in the same shell** — not in parallel. Each `hafiz ingest` process loads its own ONNX embedding model (~500 MB baseline) and the per-call peak RSS for batched embedding scales with the configured `embedding.max_part_chars`; running N processes in parallel multiplies both, defeating the runtime chunking that bounds peak RSS in `embed_texts`. Concrete pattern: avoid spawning ingest from multiple VSCode tasks, CI matrix shards on the same machine, or git hooks across sibling repos triggered together. If you really need parallelism, install ingest-only on a host with enough RAM headroom for `N × (model + per-call peak)` and confirm with `hafiz doctor`.
 
+### Daemon (warm serving)
+
+A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embedding-model load + DB connect) before any search runs. The **warm daemon** loads the model + pooled DB engine **once** and answers many requests over a Unix socket, dropping per-call latency to the actual vector op (~15ms recall, ~400ms graph-context) plus cheap local IPC.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `serve` | Run the daemon (foreground). `--detach` backgrounds it; `--idle-timeout <secs>` sets auto-shutdown (default 1800). | Embed + DB | normally auto-spawned; run by hand to pre-warm | rich panel |
+| `serve status` | Report whether the daemon is live + its version. | — | `--json` → `{"ok","running","socket","version"}` | rich panel |
+| `serve stop` | Stop the running daemon (best-effort: removes the socket). | — | `--json` → `{"ok","was_running","socket_removed"}` | rich line |
+
+- **Transport:** Unix domain socket, **0600**, at `$XDG_RUNTIME_DIR/hafiz/daemon.sock` (falls back to `/tmp/hafiz-<uid>/daemon.sock`). Never a TCP port — a sovereign personal store stays off the network; filesystem permissions gate access. Override the path with `HAFIZ_DAEMON_SOCKET`.
+- **On-demand:** clients auto-spawn the daemon if it's absent and **fall back to direct in-process execution** on any daemon error, so the daemon can only make things faster — never break a call that the plain CLI would have served. Disable entirely with `HAFIZ_NO_DAEMON=1`.
+- **Idle shutdown:** the daemon exits after `--idle-timeout` seconds of inactivity, so it never lingers forever.
+- **Version skew:** every message carries the hafiz version; a client talking to a daemon from a prior hafiz version respawns it automatically.
+
 **Rewrite resilience:** reconcile pass on every ingest marks commits that are no longer reachable in git as `commits.rewritten_at = now`. The installed `post-rewrite` hook triggers a fresh ingest automatically after an amend / rebase.
 
 ### Extraction (agent contract v2)

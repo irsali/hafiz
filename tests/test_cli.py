@@ -64,6 +64,27 @@ def test_query_help():
     assert "--source" in result.output
 
 
+def test_serve_status_help():
+    result = runner.invoke(app, ["serve", "status", "--help"])
+    assert result.exit_code == 0
+    assert "json" in result.output.lower()
+
+
+def test_serve_status_json_shape(monkeypatch, tmp_path):
+    """`serve status --json` reports a stable shape even with no daemon."""
+    # Point at a socket that doesn't exist so status reports not-running
+    # without spawning anything.
+    monkeypatch.setenv("HAFIZ_DAEMON_SOCKET", str(tmp_path / "absent.sock"))
+    result = runner.invoke(app, ["serve", "status", "--json"])
+    assert result.exit_code == 0
+    import json
+
+    data = json.loads(result.output)
+    assert data["ok"] is True
+    assert data["running"] is False
+    assert "socket" in data
+
+
 def test_query_mutual_exclusion():
     result = runner.invoke(app, ["query", "test", "--project", "x", "--workspace"])
     assert result.exit_code == 1
