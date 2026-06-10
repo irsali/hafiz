@@ -22,6 +22,18 @@ device = "auto"
 # Env override: HAFIZ_EMBEDDING__MAX_PART_CHARS=4096
 max_part_chars = 2000
 
+[rerank]
+# Cross-encoder reranking of `query --recall` results — a second-stage
+# precision pass that sharply separates relevant rows from near-random
+# noise. On by default. The model ships with fastembed (no extra
+# dependency) and loads lazily. Disable on constrained hosts.
+# Env override: HAFIZ_RERANK__ENABLED=false
+enabled = true
+model = "Xenova/ms-marco-MiniLM-L-6-v2"  # ~80 MB ONNX cross-encoder
+# Over-fetch this multiple of the requested limit before reranking, so the
+# cross-encoder has real candidates to reorder.
+candidate_multiplier = 3
+
 [ingest]
 # Skip any file larger than this (bytes). Guards against minified
 # bundles, generated output, and accidentally-committed binaries that

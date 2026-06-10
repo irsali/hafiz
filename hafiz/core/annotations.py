@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -32,8 +32,10 @@ from hafiz.core.database import (
     AnnotationTarget,
     Communication,
     CommunicationMessage,
-    Session as SessionRow,
     get_session_factory,
+)
+from hafiz.core.database import (
+    Session as SessionRow,
 )
 from hafiz.core.embeddings import embed_query
 from hafiz.core.git_context import current_git_context
@@ -216,7 +218,7 @@ async def store_annotation(
                 else:
                     legacy_session_value = raw
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     new_ann = Annotation(
         id=uuid.uuid4(),
         content=content,
@@ -268,8 +270,28 @@ async def search_annotations(
     kind: str | None = None,
     source: str | None = None,
     active_only: bool = True,
+    rerank: bool | None = None,
 ) -> list[AnnotationResult]:
-    """Search annotations by vector similarity."""
+    """Search annotations by vector similarity, optionally cross-encoder reranked.
+
+    When ``rerank`` is True (or None and ``rerank.enabled`` config is set), the
+    vector stage over-fetches ``limit × candidate_multiplier`` candidates and a
+    cross-encoder reorders them by joint (query, content) relevance before
+    truncating to ``limit``. Reranking is strictly a reordering: on any failure
+    it falls back to the vector order. ``rerank=False`` forces pure vector.
+    """
+    from hafiz.core.config import load_settings
+    from hafiz.core.reranker import rerank as _rerank_items
+
+    rerank_cfg = load_settings().rerank
+    do_rerank = rerank_cfg.enabled if rerank is None else rerank
+    # Over-fetch candidates for the reranker to reorder; it can only improve on
+    # what vector recall surfaced, so a wider net helps. Pure-vector path keeps
+    # the tight limit.
+    fetch_limit = (
+        max(limit * rerank_cfg.candidate_multiplier, limit) if do_rerank else limit
+    )
+
     query_embedding = await embed_query(query)
 
     session_factory = get_session_factory()
@@ -283,7 +305,7 @@ async def search_annotations(
             )
             .where(Annotation.embedding.isnot(None))
             .order_by(Annotation.embedding.cosine_distance(query_embedding))
-            .limit(limit)
+            .limit(fetch_limit)
         )
 
         if isinstance(project, list):
@@ -295,7 +317,7 @@ async def search_annotations(
         if source:
             stmt = stmt.where(Annotation.source == source)
         if active_only:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             stmt = stmt.where(Annotation.valid_from <= now)
             stmt = stmt.where(
                 (Annotation.valid_until.is_(None))
@@ -305,23 +327,29 @@ async def search_annotations(
         result = await session.execute(stmt)
         rows = result.all()
 
-        return [
-            AnnotationResult(
-                id=str(ann.id),
-                content=ann.content,
-                kind=ann.kind,
-                source=ann.source,
-                project=ann.project,
-                tags=ann.tags,
-                confidence=ann.confidence,
-                valid_from=ann.valid_from,
-                valid_until=ann.valid_until,
-                unit_id=str(ann.unit_id) if ann.unit_id else None,
-                metadata=ann.metadata_ or {},
-                score=round(float(similarity), 4),
-            )
-            for ann, similarity in rows
-        ]
+    candidates = [
+        AnnotationResult(
+            id=str(ann.id),
+            content=ann.content,
+            kind=ann.kind,
+            source=ann.source,
+            project=ann.project,
+            tags=ann.tags,
+            confidence=ann.confidence,
+            valid_from=ann.valid_from,
+            valid_until=ann.valid_until,
+            unit_id=str(ann.unit_id) if ann.unit_id else None,
+            metadata=ann.metadata_ or {},
+            score=round(float(similarity), 4),
+        )
+        for ann, similarity in rows
+    ]
+
+    if do_rerank and len(candidates) > 1:
+        return await _rerank_items(
+            query, candidates, text_of=lambda r: r.content, top_n=limit
+        )
+    return candidates[:limit]
 
 
 async def list_annotations(
@@ -358,7 +386,7 @@ async def invalidate_annotation(ann_id: str) -> Annotation | None:
         ann = result.scalar_one_or_none()
         if ann is None:
             return None
-        ann.valid_until = datetime.now(timezone.utc)
+        ann.valid_until = datetime.now(UTC)
         await session.commit()
         await session.refresh(ann)
         return ann

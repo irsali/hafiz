@@ -20,6 +20,7 @@ import asyncio
 import json
 import uuid
 
+import typer
 from rich.console import Console
 from rich.table import Table
 
@@ -57,8 +58,9 @@ async def _resolve_target_comm_ids(
             if row is not None:
                 return [as_uuid]
 
-            from hafiz.core.database import Session as SessionRow
             from sqlalchemy import select
+
+            from hafiz.core.database import Session as SessionRow
 
             sess = await s.get(SessionRow, as_uuid)
             if sess is not None:
@@ -78,8 +80,9 @@ async def _resolve_target_comm_ids(
     sess = await get_session_by_slug(raw)
     if sess is None:
         return []
-    from hafiz.core.database import Communication, get_session_factory
     from sqlalchemy import select
+
+    from hafiz.core.database import Communication, get_session_factory
 
     factory = get_session_factory()
     async with factory() as s:
@@ -130,6 +133,55 @@ def run_forget_target(
     console.print(
         f"[bold green]Forget complete:[/bold green] {summary['communications_affected']} "
         f"communication(s) {mode}."
+    )
+
+
+def run_forget_annotation(
+    annotation_id: str,
+    *,
+    output_json: bool = False,
+) -> None:
+    """Retire a knowledge-layer annotation by uuid (soft — sets valid_until=now).
+
+    The row is kept for audit; it simply drops out of ``--recall`` and context.
+    Use when a recorded decision/fact/learning is wrong, obsolete, or test
+    litter. Unlike supersession, this needs no replacement annotation.
+    """
+
+    async def _do() -> dict:
+        try:
+            from hafiz.core.annotations import invalidate_annotation
+
+            try:
+                ann = await invalidate_annotation(annotation_id)
+            except ValueError:
+                return {"ok": False, "error": f"not a valid annotation uuid: {annotation_id!r}"}
+            if ann is None:
+                return {"ok": False, "error": f"no annotation with id {annotation_id!r}"}
+            return {
+                "ok": True,
+                "action": "forget-annotation",
+                "id": str(ann.id),
+                "kind": ann.kind,
+                "valid_until": ann.valid_until.isoformat() if ann.valid_until else None,
+            }
+        finally:
+            await close_engine()
+
+    summary = asyncio.run(_do())
+
+    if output_json:
+        console.print_json(json.dumps(summary))
+        if not summary.get("ok"):
+            raise typer.Exit(1)
+        return
+
+    if not summary.get("ok"):
+        console.print(f"[red]Error:[/red] {summary['error']}")
+        raise typer.Exit(1)
+    console.print(
+        f"[bold green]Annotation retired:[/bold green] {summary['id']} "
+        f"({summary['kind']}) — dropped from recall, kept for audit."
     )
 
 

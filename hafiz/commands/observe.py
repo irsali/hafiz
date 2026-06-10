@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.console import Console
 from rich.panel import Panel
@@ -36,7 +36,7 @@ def _compute_valid_until(
         raise SystemExit(1)
     if expires_in:
         try:
-            return datetime.now(timezone.utc) + parse_duration(expires_in)
+            return datetime.now(UTC) + parse_duration(expires_in)
         except ValueError as e:
             console.print(f"[red]Error:[/red] {e}")
             raise SystemExit(1)
@@ -50,7 +50,7 @@ def _compute_valid_until(
             )
             raise SystemExit(1)
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
         return parsed
     return None
 
@@ -222,8 +222,8 @@ STALE_DAYS = 90
 
 def _age(valid_from: datetime) -> tuple[str, int, bool]:
     """(human label, age in days, stale flag) for a ``valid_from``."""
-    now = datetime.now(timezone.utc)
-    days = (now - valid_from.astimezone(timezone.utc)).days
+    now = datetime.now(UTC)
+    days = (now - valid_from.astimezone(UTC)).days
     if days < 0:
         return "future", days, False
     if days == 0:
@@ -246,6 +246,7 @@ def run_recall(
     kind: str | None = None,
     source: str | None = None,
     include_superseded: bool = False,
+    rerank: bool = True,
     output_json: bool = False,
 ) -> None:
     """Search annotations by semantic similarity and display results."""
@@ -271,6 +272,7 @@ def run_recall(
                 kind=kind,
                 source=source,
                 active_only=not include_superseded,
+                rerank=rerank,
             )
             return results
         finally:
@@ -281,7 +283,7 @@ def run_recall(
     def _is_inactive(r) -> bool:
         if r.valid_until is None:
             return False
-        return r.valid_until < datetime.now(timezone.utc)
+        return r.valid_until < datetime.now(UTC)
 
     if output_json:
         data = {

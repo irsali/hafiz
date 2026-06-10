@@ -139,6 +139,7 @@ class _Server:
                 project=req.get("project"),
                 kind=req.get("kind"),
                 source=req.get("source"),
+                rerank=req.get("rerank"),  # None → honor config default
             )
         return {"ok": True, "results": [_annotation_to_dict(r) for r in results]}
 
@@ -292,6 +293,17 @@ async def serve(*, idle_timeout: float = DEFAULT_IDLE_TIMEOUT) -> None:
     # Warm the model before binding so the first client request doesn't pay
     # the cold-start cost we built this to avoid.
     await asyncio.to_thread(get_embed_model)
+
+    # Warm the reranker too when enabled — otherwise the first recall pays the
+    # cross-encoder's cold load. Skip silently if it can't load (recall then
+    # falls back to vector order per the reranker's own contract).
+    from hafiz.core.reranker import rerank_enabled, warm_reranker
+
+    if rerank_enabled():
+        try:
+            await warm_reranker()
+        except Exception:  # noqa: BLE001 — degrade to vector-only, never block startup
+            logger.warning("reranker warm-up failed; recall will use vector order")
 
     server = _Server(idle_timeout=idle_timeout, _embed_lock=asyncio.Lock())
     server._loop = asyncio.get_running_loop()
