@@ -79,6 +79,24 @@ class EmbeddingSettings(BaseModel):
     max_part_chars: int = 2_000
 
 
+class RerankSettings(BaseModel):
+    """Cross-encoder reranking of recall results (second-stage precision).
+
+    Vector similarity compresses signal and noise into a narrow band; a
+    cross-encoder re-scores the top-K candidates against the query and
+    separates them sharply. Applied to annotation recall only (not code
+    search or per-turn prefetch). The model ships with fastembed — no extra
+    dependency — and loads lazily on first use.
+    """
+
+    enabled: bool = True
+    model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # ~80 MB ONNX
+    # Over-fetch this multiple of the requested limit before reranking, so the
+    # cross-encoder has real candidates to reorder (it can only reorder what
+    # vector recall surfaced).
+    candidate_multiplier: int = 3
+
+
 class IngestSettings(BaseModel):
     """Policy caps for the ingest pipeline — hard guards, not probed."""
 
@@ -136,6 +154,7 @@ class HafizSettings(BaseSettings):
 
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    rerank: RerankSettings = Field(default_factory=RerankSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)

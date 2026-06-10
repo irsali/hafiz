@@ -241,6 +241,14 @@ def query(
         "--include-superseded",
         help="(with --recall) Also return superseded/expired observations, dimmed.",
     ),
+    no_rerank: bool = typer.Option(
+        False,
+        "--no-rerank",
+        help=(
+            "(with --recall) Skip cross-encoder reranking; return pure vector "
+            "order. Reranking is on by default for sharper recall precision."
+        ),
+    ),
     include_transcripts: bool = typer.Option(
         False,
         "--include-transcripts",
@@ -291,6 +299,7 @@ def query(
             kind=type,
             source=source,
             include_superseded=include_superseded,
+            rerank=not no_rerank,
             output_json=json_output,
         )
     else:
@@ -1428,6 +1437,16 @@ def forget(
             "retention_until. Use without a target."
         ),
     ),
+    annotation: bool = typer.Option(
+        False,
+        "--annotation",
+        help=(
+            "Retire a knowledge-layer annotation (decision/fact/learning/…) "
+            "by its uuid instead of a source-layer communication. Sets "
+            "valid_until = now so it drops out of recall; the row is kept "
+            "for audit."
+        ),
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -1446,15 +1465,24 @@ def forget(
       a session uuid, or a session slug.
     * Sweep: ``hafiz forget --all-expired`` — tombstones every
       communication past its retention window (default 90 days).
+    * Annotation: ``hafiz forget <uuid> --annotation`` — retire a
+      knowledge-layer annotation (drops from recall, kept for audit).
     """
     if all_expired and target:
         typer.echo("Error: --all-expired and a target are mutually exclusive.")
+        raise typer.Exit(1)
+    if annotation and (all_expired or hard):
+        typer.echo("Error: --annotation can't combine with --all-expired or --hard.")
         raise typer.Exit(1)
     if not all_expired and not target:
         typer.echo("Error: provide a target or use --all-expired.")
         raise typer.Exit(1)
 
-    if all_expired:
+    if annotation:
+        from hafiz.commands.forget import run_forget_annotation
+
+        run_forget_annotation(target, output_json=json_output)
+    elif all_expired:
         from hafiz.commands.forget import run_forget_sweep
 
         run_forget_sweep(dry_run=dry_run, output_json=json_output)

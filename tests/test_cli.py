@@ -85,6 +85,24 @@ def test_serve_status_json_shape(monkeypatch, tmp_path):
     assert "socket" in data
 
 
+def test_query_recall_has_no_rerank_flag():
+    result = runner.invoke(app, ["query", "--help"])
+    assert result.exit_code == 0
+    assert "--no-rerank" in result.output
+
+
+def test_forget_annotation_rejects_hard_combo():
+    result = runner.invoke(app, ["forget", "some-id", "--annotation", "--hard"])
+    assert result.exit_code == 1
+    assert "can't combine" in result.output
+
+
+def test_forget_help_documents_annotation_mode():
+    result = runner.invoke(app, ["forget", "--help"])
+    assert result.exit_code == 0
+    assert "--annotation" in result.output
+
+
 def test_query_mutual_exclusion():
     result = runner.invoke(app, ["query", "test", "--project", "x", "--workspace"])
     assert result.exit_code == 1

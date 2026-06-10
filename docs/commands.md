@@ -151,8 +151,10 @@ Rejected at import time: `kind` starting with `code.*`; relations in `{calls, im
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `query "<text>"` | Vector similarity search over the `embeddings` table (joined back to units + files for context) | Embed | `--json` | rich output |
-| `query "<text>" --recall` | Vector similarity search over annotations | Embed | `--json` | rich output |
+| `query "<text>" --recall` | Vector search over annotations, **cross-encoder reranked** by default for precision. `--no-rerank` for pure vector order. | Embed + Rerank | `--json` | rich output |
 | `context "<task>"` | Synthesize units + graph + annotations for a task | Embed | `--json` | rich panel |
+
+**Reranking** (on `query --recall`): vector similarity compresses relevant rows and near-random noise into a narrow band; a cross-encoder re-scores the top `limit × rerank.candidate_multiplier` candidates against the query and reorders them, then returns the top `limit`. On by default (`rerank.enabled` config); `--no-rerank` skips it. The reranker model (`Xenova/ms-marco-MiniLM-L-6-v2`, ~80 MB) ships with fastembed — no extra dependency — and loads lazily, cached alongside the embedding model. Reranking is strictly a reordering: if the model is unavailable it falls back to vector order. Warm via the daemon it adds ~300-400ms; the gain is sharp signal/noise separation. Disable on constrained hosts with `hafiz config set rerank.enabled false`.
 
 **Scoping flags** (on `context`, `query`):
 
@@ -240,6 +242,7 @@ Hafiz can ingest agent-harness transcripts into a dedicated source layer (see [a
 | `query --include-transcripts` | Add matching source-layer turns to results, tagged `layer="source"` | — | `--json` | rich panel (separate transcript section) |
 | `context --include-transcripts` | Append matching transcript turns under a `transcripts` field | — | `--json` | rich panel |
 | `forget <target>` | Targeted redaction: soft tombstone by default, `--hard` deletes content | — | `--json` | rich line |
+| `forget <uuid> --annotation` | Retire a **knowledge-layer** annotation by uuid (soft — sets `valid_until = now`, kept for audit). For wrong/obsolete observations. | — | `--json` → `{ok, action, id, kind, valid_until}` | rich line |
 | `forget --all-expired` | Sweep mode — tombstone every communication past its `retention_until` | — | `--json` | rich table |
 
 Defaults:
