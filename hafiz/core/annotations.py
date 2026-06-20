@@ -59,9 +59,7 @@ async def _classify_target_kind(target_uuid: uuid.UUID) -> str | None:
     return None
 
 
-async def write_derived_from_links(
-    annotation_id: uuid.UUID, derived_from: list[str]
-) -> list[dict]:
+async def write_derived_from_links(annotation_id: uuid.UUID, derived_from: list[str]) -> list[dict]:
     """Insert annotation_targets rows for each derived_from id.
 
     Returns one summary dict per id describing how it was classified.
@@ -244,9 +242,7 @@ async def store_annotation(
         if supersedes_id:
             target = await session.get(Annotation, uuid.UUID(supersedes_id))
             if target is None:
-                raise ValueError(
-                    f"Cannot supersede {supersedes_id!r}: annotation not found."
-                )
+                raise ValueError(f"Cannot supersede {supersedes_id!r}: annotation not found.")
             if target.valid_until is None or target.valid_until > now:
                 target.valid_until = now
         session.add(new_ann)
@@ -288,9 +284,7 @@ async def search_annotations(
     # Over-fetch candidates for the reranker to reorder; it can only improve on
     # what vector recall surfaced, so a wider net helps. Pure-vector path keeps
     # the tight limit.
-    fetch_limit = (
-        max(limit * rerank_cfg.candidate_multiplier, limit) if do_rerank else limit
-    )
+    fetch_limit = max(limit * rerank_cfg.candidate_multiplier, limit) if do_rerank else limit
 
     query_embedding = await embed_query(query)
 
@@ -299,9 +293,7 @@ async def search_annotations(
         stmt = (
             select(
                 Annotation,
-                (1 - Annotation.embedding.cosine_distance(query_embedding)).label(
-                    "similarity"
-                ),
+                (1 - Annotation.embedding.cosine_distance(query_embedding)).label("similarity"),
             )
             .where(Annotation.embedding.isnot(None))
             .order_by(Annotation.embedding.cosine_distance(query_embedding))
@@ -319,10 +311,7 @@ async def search_annotations(
         if active_only:
             now = datetime.now(UTC)
             stmt = stmt.where(Annotation.valid_from <= now)
-            stmt = stmt.where(
-                (Annotation.valid_until.is_(None))
-                | (Annotation.valid_until > now)
-            )
+            stmt = stmt.where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
 
         result = await session.execute(stmt)
         rows = result.all()
@@ -346,9 +335,7 @@ async def search_annotations(
     ]
 
     if do_rerank and len(candidates) > 1:
-        return await _rerank_items(
-            query, candidates, text_of=lambda r: r.content, top_n=limit
-        )
+        return await _rerank_items(query, candidates, text_of=lambda r: r.content, top_n=limit)
     return candidates[:limit]
 
 
@@ -362,12 +349,7 @@ async def list_annotations(
     """List annotations with optional filters, newest first."""
     session_factory = get_session_factory()
     async with session_factory() as session:
-        stmt = (
-            select(Annotation)
-            .order_by(Annotation.valid_from.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = select(Annotation).order_by(Annotation.valid_from.desc()).limit(limit).offset(offset)
         if project:
             stmt = stmt.where(Annotation.project == project)
         if kind:

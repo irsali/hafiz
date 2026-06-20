@@ -12,7 +12,6 @@ against a live Postgres and skip gracefully otherwise.
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 import uuid
 from pathlib import Path
@@ -21,7 +20,6 @@ import pytest
 from sqlalchemy import text
 
 from hafiz.core.database import (
-    Commit,
     File,
     close_engine,
     get_session_factory,
@@ -32,7 +30,6 @@ from hafiz.core.git_context import (
     is_git_repo,
 )
 from hafiz.core.store import latest_indexed_commit, upsert_commit
-
 
 # ── commit_metadata ────────────────────────────────────────────────────────
 

@@ -1,4 +1,6 @@
-"""structural grounding — greenfield reshape to units/revisions/embeddings/edges/annotations/files/commits
+"""structural grounding — greenfield reshape to the seven-table schema.
+
+units/revisions/embeddings/edges/annotations/files/commits.
 
 Revision ID: 0005
 Revises: 0004
@@ -10,18 +12,19 @@ separation. See workitems/active/structural-grounding.md for the design.
 
 Destructive by design — pre-1.0 greenfield grant. No backfill. Users re-ingest.
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-from pgvector.sqlalchemy import Vector
-
 
 revision: str = "0005"
-down_revision: Union[str, None] = "0004"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0004"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -51,13 +54,9 @@ def upgrade() -> None:
         sa.Column("hash", sa.Text(), primary_key=True),
         sa.Column("project", sa.Text(), nullable=True),
         sa.Column("author", sa.Text(), nullable=True),
-        sa.Column(
-            "committed_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("committed_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("summary", sa.Text(), nullable=True),
-        sa.Column(
-            "rewritten_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("rewritten_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("rewritten_to", sa.Text(), nullable=True),
         sa.Column(
             "metadata",
@@ -81,9 +80,7 @@ def upgrade() -> None:
         sa.Column("language", sa.Text(), nullable=True),
         sa.Column("first_seen_commit", sa.Text(), nullable=True),
         sa.Column("last_seen_commit", sa.Text(), nullable=True),
-        sa.Column(
-            "valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             postgresql.TIMESTAMP(timezone=True),
@@ -120,9 +117,7 @@ def upgrade() -> None:
         sa.Column("identity_key", sa.Text(), nullable=False),
         sa.Column("first_seen_commit", sa.Text(), nullable=True),
         sa.Column("last_seen_commit", sa.Text(), nullable=True),
-        sa.Column(
-            "valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             postgresql.TIMESTAMP(timezone=True),
@@ -183,15 +178,9 @@ def upgrade() -> None:
             name="ck_unit_revisions_source",
         ),
     )
-    op.create_index(
-        "idx_unit_revisions_unit_id", "unit_revisions", ["unit_id"]
-    )
-    op.create_index(
-        "idx_unit_revisions_content_hash", "unit_revisions", ["content_hash"]
-    )
-    op.create_index(
-        "idx_unit_revisions_commit_hash", "unit_revisions", ["commit_hash"]
-    )
+    op.create_index("idx_unit_revisions_unit_id", "unit_revisions", ["unit_id"])
+    op.create_index("idx_unit_revisions_content_hash", "unit_revisions", ["content_hash"])
+    op.create_index("idx_unit_revisions_commit_hash", "unit_revisions", ["commit_hash"])
     op.create_index(
         "uq_unit_revisions_current",
         "unit_revisions",
@@ -213,9 +202,7 @@ def upgrade() -> None:
             sa.ForeignKey("unit_revisions.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column(
-            "part_index", sa.Integer(), nullable=False, server_default="0"
-        ),
+        sa.Column("part_index", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("content_hash", sa.Text(), nullable=False),
         sa.Column("embedding", Vector(768), nullable=True),
@@ -233,12 +220,8 @@ def upgrade() -> None:
             name="uq_embeddings_revision_part",
         ),
     )
-    op.create_index(
-        "idx_embeddings_revision", "embeddings", ["unit_revision_id"]
-    )
-    op.create_index(
-        "idx_embeddings_content_hash", "embeddings", ["content_hash"]
-    )
+    op.create_index("idx_embeddings_revision", "embeddings", ["unit_revision_id"])
+    op.create_index("idx_embeddings_content_hash", "embeddings", ["content_hash"])
 
     # ─── edges ──────────────────────────────────────────────────
     # Append-only relations between units. target_unit_id nullable
@@ -307,9 +290,7 @@ def upgrade() -> None:
         sa.Column("source", sa.Text(), nullable=True),
         sa.Column("project", sa.Text(), nullable=True),
         sa.Column("tags", postgresql.ARRAY(sa.Text()), nullable=True),
-        sa.Column(
-            "confidence", sa.Float(), nullable=False, server_default="1.0"
-        ),
+        sa.Column("confidence", sa.Float(), nullable=False, server_default="1.0"),
         sa.Column(
             "unit_id",
             postgresql.UUID(as_uuid=True),
@@ -349,9 +330,7 @@ def upgrade() -> None:
     op.create_index("idx_annotations_session", "annotations", ["session_id"])
     op.create_index("idx_annotations_task", "annotations", ["task"])
     op.create_index("idx_annotations_commit", "annotations", ["commit_hash"])
-    op.create_index(
-        "idx_annotations_supersedes", "annotations", ["supersedes_id"]
-    )
+    op.create_index("idx_annotations_supersedes", "annotations", ["supersedes_id"])
 
 
 def downgrade() -> None:

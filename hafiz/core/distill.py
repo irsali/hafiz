@@ -24,7 +24,7 @@ note-kind annotations and source-layer messages are surfaced.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -87,7 +87,7 @@ async def find_distill_candidates(
     Expired / superseded notes are excluded — already handled elsewhere,
     don't drag them into fresh distillation.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = now - (since or timedelta(days=7))
     end = now
 
@@ -98,10 +98,7 @@ async def find_distill_candidates(
             .where(Annotation.kind == "note")
             .where(Annotation.valid_from >= start)
             .where(Annotation.valid_from <= end)
-            .where(
-                (Annotation.valid_until.is_(None))
-                | (Annotation.valid_until > now)
-            )
+            .where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
             .order_by(Annotation.valid_from.desc())
             .limit(limit)
         )

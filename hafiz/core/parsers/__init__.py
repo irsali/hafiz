@@ -30,6 +30,7 @@ logger = logging.getLogger("hafiz.parsers")
 # Data types — what a parser produces
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParsedUnit:
     """One addressable unit inside a file.
@@ -80,6 +81,7 @@ class ParseResult:
 # Protocol — the contract every parser satisfies
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class Parser(Protocol):
     """Protocol for file parsers. Implementations need not inherit — just
@@ -101,6 +103,7 @@ class Parser(Protocol):
 # ---------------------------------------------------------------------------
 # Registry — extension -> Parser, with fallback
 # ---------------------------------------------------------------------------
+
 
 class ParserRegistry:
     """Maps file extensions to parsers. First-class lookup for ingest;
@@ -158,14 +161,15 @@ class ParserRegistry:
 # Discovery — in-tree + entry-point
 # ---------------------------------------------------------------------------
 
+
 def _build_registry() -> ParserRegistry:
     """Assemble a fresh registry: in-tree parsers first, then entry-point
     discovered parsers on top (so third-party can override)."""
     registry = ParserRegistry()
 
     # In-tree parsers — imported here to avoid circular import at module load.
-    from hafiz.core.parsers.python_ast import PythonAstParser
     from hafiz.core.parsers.prose import ProseParser
+    from hafiz.core.parsers.python_ast import PythonAstParser
     from hafiz.core.parsers.whole_file import WholeFileParser
 
     registry.register(PythonAstParser())
@@ -194,9 +198,7 @@ def _build_registry() -> ParserRegistry:
                 registry.register(parser)
                 logger.debug("Registered entry-point parser %r", ep.name)
             except Exception as exc:
-                logger.warning(
-                    "Failed to load entry-point parser %r: %s", ep.name, exc
-                )
+                logger.warning("Failed to load entry-point parser %r: %s", ep.name, exc)
     except Exception as exc:
         logger.debug("entry_points lookup failed: %s", exc)
 

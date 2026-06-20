@@ -41,14 +41,9 @@ def run_errors_list(
     output_json: bool = False,
 ) -> None:
     if group_by is not None and group_by not in SUPPORTED_GROUP_BY:
-        msg = (
-            f"Unknown --group-by value {group_by!r}. "
-            f"Supported: {', '.join(SUPPORTED_GROUP_BY)}."
-        )
+        msg = f"Unknown --group-by value {group_by!r}. Supported: {', '.join(SUPPORTED_GROUP_BY)}."
         if output_json:
-            console.print_json(
-                json.dumps({"ok": False, "error": "bad_group_by", "message": msg})
-            )
+            console.print_json(json.dumps({"ok": False, "error": "bad_group_by", "message": msg}))
         else:
             console.print(f"[red]{msg}[/red]")
         raise typer.Exit(2)
@@ -86,9 +81,7 @@ def run_errors_list(
 
     console.print()
     tbl = Table(
-        title=(
-            f"Errors (last {len(records)}{' since ' + since if since else ''})"
-        ),
+        title=(f"Errors (last {len(records)}{' since ' + since if since else ''})"),
         border_style="red",
     )
     tbl.add_column("ID", style="dim", no_wrap=True)
@@ -106,9 +99,7 @@ def run_errors_list(
             (r.message[:120] + "…") if len(r.message) > 120 else r.message,
         )
     console.print(tbl)
-    console.print(
-        "[dim]`hafiz errors show <id>` for full traceback + suggestion.[/dim]\n"
-    )
+    console.print("[dim]`hafiz errors show <id>` for full traceback + suggestion.[/dim]\n")
 
 
 def _render_grouped(
@@ -147,18 +138,13 @@ def _render_grouped(
 
     if not records:
         if since:
-            console.print(
-                f"[dim]No errors recorded since [bold]{since}[/bold].[/dim]"
-            )
+            console.print(f"[dim]No errors recorded since [bold]{since}[/bold].[/dim]")
         else:
             console.print("[dim]No errors recorded.[/dim]")
         return
 
     console.print()
-    title = (
-        f"Errors grouped by exception_type "
-        f"(total {total}{', since ' + since if since else ''})"
-    )
+    title = f"Errors grouped by exception_type (total {total}{', since ' + since if since else ''})"
     tbl = Table(title=title, border_style="red")
     tbl.add_column("Exception", style="bold")
     tbl.add_column("Count", justify="right")
@@ -183,9 +169,7 @@ def _render_grouped(
             f"`hafiz errors show <id>` for details.[/dim]\n"
         )
     else:
-        console.print(
-            "[dim]`hafiz errors show <id>` for full traceback + suggestion.[/dim]\n"
-        )
+        console.print("[dim]`hafiz errors show <id>` for full traceback + suggestion.[/dim]\n")
 
 
 # ── show ──────────────────────────────────────────────────────────────
@@ -205,9 +189,7 @@ def run_errors_show(record_id: str, *, output_json: bool = False) -> None:
                 )
             )
         else:
-            console.print(
-                f"[red]No error matches id prefix [bold]{record_id}[/bold].[/red]"
-            )
+            console.print(f"[red]No error matches id prefix [bold]{record_id}[/bold].[/red]")
         raise typer.Exit(1)
 
     if output_json:

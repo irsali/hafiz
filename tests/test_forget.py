@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from typer.testing import CliRunner
@@ -58,7 +58,7 @@ def _seed_comm_with_msg(*, agent="claude-code", project: str | None = None):
                         seq=0,
                         role="user",
                         content="please forget me",
-                        ts=datetime.now(timezone.utc),
+                        ts=datetime.now(UTC),
                     )
                 ],
                 embed=False,
@@ -160,9 +160,7 @@ def test_forget_via_session_slug_affects_all_comms_in_session():
 def test_forget_all_expired_dry_run_reports_zero_when_clean():
     """With no expired communications, the sweep matches 0."""
     runner = CliRunner()
-    result = runner.invoke(
-        app, ["forget", "--all-expired", "--dry-run", "--json"]
-    )
+    result = runner.invoke(app, ["forget", "--all-expired", "--dry-run", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["dry_run"] is True
@@ -178,8 +176,8 @@ def test_forget_all_expired_tombstones_past_retention():
                 slug=f"forget-sweep-{uuid.uuid4().hex[:6]}",
                 name="forget sweep test",
             )
-            past_started = datetime.now(timezone.utc) - timedelta(days=120)
-            expired = datetime.now(timezone.utc) - timedelta(days=1)
+            past_started = datetime.now(UTC) - timedelta(days=120)
+            expired = datetime.now(UTC) - timedelta(days=1)
             comm, _ = await upsert_communication(
                 agent="claude-code",
                 external_id=f"forget-sweep-{uuid.uuid4().hex[:8]}",

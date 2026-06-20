@@ -59,9 +59,7 @@ def test_gpu_shortcut_24gb_recommends_16k(monkeypatch):
 
     monkeypatch.setattr(probers, "_run_measurement", fake_run)
 
-    host = _host(
-        gpu_vram_total_mb=24_000, gpu_vram_free_mb=20_000, gpu_name="RTX 3090"
-    )
+    host = _host(gpu_vram_total_mb=24_000, gpu_vram_free_mb=20_000, gpu_name="RTX 3090")
     result = probers.probe_max_part_chars(host)
     assert result.recommended_value == 16_000
     assert result.measured["path"] == "gpu_shortcut_24gb"
@@ -73,9 +71,7 @@ def test_gpu_shortcut_16gb_caps_at_8k(monkeypatch):
     case — the failure mode we're guarding against."""
     monkeypatch.setattr(probers, "_run_measurement", lambda *a, **kw: [])
 
-    host = _host(
-        gpu_vram_total_mb=16_311, gpu_vram_free_mb=10_000, gpu_name="RTX 5060 Ti"
-    )
+    host = _host(gpu_vram_total_mb=16_311, gpu_vram_free_mb=10_000, gpu_name="RTX 5060 Ti")
     result = probers.probe_max_part_chars(host)
     assert result.recommended_value == 8_000
     assert result.measured["path"] == "gpu_shortcut_16gb"
@@ -93,9 +89,7 @@ def test_gpu_shortcut_skipped_when_free_too_low(monkeypatch):
 
     monkeypatch.setattr(probers, "_run_measurement", fake_run)
 
-    host = _host(
-        gpu_vram_total_mb=16_000, gpu_vram_free_mb=2_000, gpu_name="RTX 5060 Ti"
-    )
+    host = _host(gpu_vram_total_mb=16_000, gpu_vram_free_mb=2_000, gpu_name="RTX 5060 Ti")
     result = probers.probe_max_part_chars(host)
     # CPU path was taken, not GPU shortcut
     assert result.measured["path"] != "gpu_shortcut_16gb"
@@ -199,9 +193,7 @@ def test_cpu_recommendation_picks_largest_under_budget(monkeypatch):
 
 
 def test_fallback_when_measurement_returns_nothing(monkeypatch):
-    monkeypatch.setattr(
-        probers, "_run_measurement", lambda *a, **kw: [{"_fatal": "no fastembed"}]
-    )
+    monkeypatch.setattr(probers, "_run_measurement", lambda *a, **kw: [{"_fatal": "no fastembed"}])
     host = _host()
     result = probers.probe_max_part_chars(host)
     assert result.recommended_value == 2_000

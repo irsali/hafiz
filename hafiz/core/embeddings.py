@@ -118,9 +118,7 @@ def _text_embedding(model_name: str, providers: list[str]) -> TextEmbedding:
     cache_dir = _model_cache_dir()
     _purge_if_incomplete(cache_dir, model_name)
     try:
-        return TextEmbedding(
-            model_name=model_name, providers=providers, cache_dir=str(cache_dir)
-        )
+        return TextEmbedding(model_name=model_name, providers=providers, cache_dir=str(cache_dir))
     except Exception as exc:
         raise RuntimeError(
             f"Failed to load embedding model '{model_name}' from {cache_dir}: "
@@ -247,9 +245,7 @@ def probe_device(
             model = _build_gpu_model(model_name)
         except Exception as exc:
             raise RuntimeError(f"embedding.device = 'gpu' but probe failed: {exc}") from exc
-        state = device_state.build_state(
-            "gpu", reason=None, category=None, gpu_name=_gpu_name()
-        )
+        state = device_state.build_state("gpu", reason=None, category=None, gpu_name=_gpu_name())
         if persist:
             device_state.save_state(state)
         return model, state
@@ -268,9 +264,7 @@ def probe_device(
             _announce_fallback(state, first_time=True)
             return _build_cpu_model(model_name), state
 
-        state = device_state.build_state(
-            "gpu", reason=None, category=None, gpu_name=_gpu_name()
-        )
+        state = device_state.build_state("gpu", reason=None, category=None, gpu_name=_gpu_name())
         if persist:
             device_state.save_state(state)
         return model, state
@@ -313,9 +307,7 @@ def get_embed_model() -> TextEmbedding:
                 _embed_model = _build_gpu_model(model_name)
                 return _embed_model
             except Exception as exc:
-                logger.warning(
-                    "Cached GPU state failed re-init (%s); reprobing.", exc
-                )
+                logger.warning("Cached GPU state failed re-init (%s); reprobing.", exc)
                 device_state.clear_state()
 
     _embed_model, _ = probe_device("auto", model_name, persist=True)
@@ -384,7 +376,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
 
     out: list[list[float]] = []
     for i in range(0, len(texts), sub_batch):
-        chunk = texts[i:i + sub_batch]
+        chunk = texts[i : i + sub_batch]
         out.extend(await _embed_batch(model, chunk))
     return out
 

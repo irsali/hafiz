@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 
 from rich.console import Console
 from rich.panel import Panel
@@ -155,14 +155,9 @@ def _promotion_hint(
 
 
 def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
-    total = (
-        len(bundle.notes) + len(bundle.transcripts) + len(bundle.messages)
-    )
+    total = len(bundle.notes) + len(bundle.transcripts) + len(bundle.messages)
     if total == 0:
-        console.print(
-            f"[yellow]No distill candidates in the last "
-            f"{since_arg or '7d'}.[/yellow]"
-        )
+        console.print(f"[yellow]No distill candidates in the last {since_arg or '7d'}.[/yellow]")
         return
 
     window_label = f"Since {since_arg or '7d'}"
@@ -175,9 +170,7 @@ def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
     )
 
     if bundle.notes:
-        table = Table(
-            title="Notes", border_style="cyan", title_justify="left"
-        )
+        table = Table(title="Notes", border_style="cyan", title_justify="left")
         table.add_column("ID", style="dim", width=14, no_wrap=True)
         table.add_column("Date", style="dim", width=11)
         table.add_column("Source", style="dim", width=18)
@@ -186,7 +179,7 @@ def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
         for n in bundle.notes:
             table.add_row(
                 n.id[:12],
-                n.valid_from.astimezone(timezone.utc).strftime("%Y-%m-%d"),
+                n.valid_from.astimezone(UTC).strftime("%Y-%m-%d"),
                 n.source or "—",
                 n.task or "—",
                 n.content[:100] + ("..." if len(n.content) > 100 else ""),
@@ -208,7 +201,7 @@ def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
         for t in bundle.transcripts:
             table.add_row(
                 t.transcript_id[:12],
-                t.captured_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
+                t.captured_at.astimezone(UTC).strftime("%Y-%m-%d"),
                 t.title or "—",
                 str(t.turn_count),
                 t.preview,
@@ -233,7 +226,7 @@ def _print_rich(bundle: DistillBundle, *, since_arg: str | None) -> None:
                 preview += "…"
             table.add_row(
                 m.id[:12],
-                m.ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                m.ts.astimezone(UTC).strftime("%Y-%m-%d %H:%M"),
                 m.role,
                 m.author or "—",
                 preview,

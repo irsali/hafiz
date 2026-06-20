@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -17,7 +16,6 @@ from watchdog.observers import Observer
 
 from hafiz.core.chunker import LANGUAGE_MAP, chunk_file, should_ignore
 from hafiz.core.config import get_settings
-from hafiz.core.database import close_engine
 from hafiz.core.embeddings import embed_texts
 from hafiz.core.store import delete_chunks_for_file, store_chunks
 

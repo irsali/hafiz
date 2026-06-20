@@ -71,9 +71,7 @@ class TuningState:
     host_fingerprint: str
     onnxruntime_version: str | None
     entries: dict[str, TuningEntry] = field(default_factory=dict)
-    written_at: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
-    )
+    written_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     schema: int = CURRENT_SCHEMA
 
     def as_jsonable(self) -> dict[str, Any]:
@@ -142,9 +140,7 @@ def load_state() -> TuningState | None:
             if isinstance(v, dict) and "value" in v
         }
     except (KeyError, TypeError) as exc:
-        logger.warning(
-            "Malformed tuning-state entries at %s (%s); ignoring.", path, exc
-        )
+        logger.warning("Malformed tuning-state entries at %s (%s); ignoring.", path, exc)
         return None
 
     return TuningState(
@@ -252,13 +248,9 @@ def merge_into_state(
     Collisions on ``new_entries`` overwrite silently; the writer is
     responsible for deciding what goes in.
     """
-    if state is None or is_stale(
-        state, fingerprint=fingerprint, ort_version=ort_version
-    ):
+    if state is None or is_stale(state, fingerprint=fingerprint, ort_version=ort_version):
         base_entries: dict[str, TuningEntry] = {}
     else:
         base_entries = dict(state.entries)
     base_entries.update(new_entries)
-    return build_state(
-        fingerprint=fingerprint, ort_version=ort_version, entries=base_entries
-    )
+    return build_state(fingerprint=fingerprint, ort_version=ort_version, entries=base_entries)

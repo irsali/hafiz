@@ -6,10 +6,10 @@ Supports async PostgreSQL migrations via asyncpg.
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
 from hafiz.core.database import Base
 
 # Alembic Config object
@@ -18,6 +18,7 @@ config = context.config
 # Override alembic.ini URL with hafiz config (hafiz.toml / env vars)
 try:
     from hafiz.core.config import load_settings
+
     config.set_main_option("sqlalchemy.url", load_settings().database.url)
 except Exception:
     pass  # Fall back to alembic.ini value

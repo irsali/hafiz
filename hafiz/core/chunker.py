@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 
 def compute_hash(content: str) -> str:
@@ -199,22 +199,16 @@ def walk_files(
                 rel_str = str(rel_dir)
                 for p in local_patterns:
                     all_patterns.extend(_normalize_pattern(p, rel_str))
-                spec = pathspec.PathSpec.from_lines(
-                    "gitwildmatch", all_patterns
-                )
+                spec = pathspec.PathSpec.from_lines("gitwildmatch", all_patterns)
 
         dirnames[:] = [
             d
             for d in sorted(dirnames)
-            if not spec.match_file(
-                str(rel_dir / d) if str(rel_dir) != "." else d
-            )
+            if not spec.match_file(str(rel_dir / d) if str(rel_dir) != "." else d)
         ]
 
         for filename in sorted(filenames):
-            rel_path = (
-                str(rel_dir / filename) if str(rel_dir) != "." else filename
-            )
+            rel_path = str(rel_dir / filename) if str(rel_dir) != "." else filename
             if spec.match_file(rel_path):
                 continue
 

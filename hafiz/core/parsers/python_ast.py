@@ -106,9 +106,7 @@ class _Visitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._visit_func(node)
 
-    def _visit_func(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> None:
+    def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         qualified = self._qualified_name(node.name)
         parent = self._current_qualified_parent()
         kind = "code.method" if self._class_stack else "code.function"

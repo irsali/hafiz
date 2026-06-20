@@ -278,7 +278,7 @@ def _is_declared_runtime_dep(module_name: str) -> bool:
     [project].dependencies. Top-level module name comparison, ignores
     versions and package-vs-module casing for the common Python cases."""
     try:
-        from hafiz.core import config as _cfg  # for project root locator
+        pass  # for project root locator
     except Exception:
         return False
 
@@ -289,14 +289,10 @@ def _is_declared_runtime_dep(module_name: str) -> bool:
         cand = parent / "pyproject.toml"
         if cand.is_file():
             try:
-                import sys as _sys
+                import tomllib
 
-                if _sys.version_info >= (3, 11):
-                    import tomllib as _tomllib
-                else:
-                    import tomli as _tomllib  # type: ignore[no-redef]
                 with open(cand, "rb") as f:
-                    data = _tomllib.load(f)
+                    data = tomllib.load(f)
                 deps = (data.get("project") or {}).get("dependencies") or []
                 want = module_name.lower()
                 for dep in deps:
@@ -433,12 +429,12 @@ def _rotate_if_needed(path: Path, *, incoming_bytes: int) -> None:
         # Fast path: well under limits.
         if size + incoming_bytes <= MAX_BYTES:
             # Still check line count for the entries cap.
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 lines = f.readlines()
             if len(lines) < MAX_ENTRIES:
                 return
         else:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 lines = f.readlines()
         keep = lines[-(MAX_ENTRIES - 1) :] if MAX_ENTRIES > 1 else []
         with open(path, "w", encoding="utf-8") as f:
@@ -485,7 +481,7 @@ def _load_all() -> list[ErrorRecord]:
     if not path.is_file():
         return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             lines = f.readlines()
     except OSError:
         return []

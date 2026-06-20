@@ -144,9 +144,7 @@ def test_query_rejects_overlapping_domain_filters():
 
 
 def test_query_rejects_dotted_domain():
-    result = runner.invoke(
-        app, ["query", "test", "--include-domain", "code.function"]
-    )
+    result = runner.invoke(app, ["query", "test", "--include-domain", "code.function"])
     assert result.exit_code == 2
     assert "single token" in result.output.lower()
 
@@ -295,17 +293,13 @@ def test_journal_help():
 
 
 def test_journal_since_and_day_mutually_exclusive():
-    result = runner.invoke(
-        app, ["journal", "--since", "7d", "--day", "2026-04-20"]
-    )
+    result = runner.invoke(app, ["journal", "--since", "7d", "--day", "2026-04-20"])
     assert result.exit_code == 1
     assert "mutually exclusive" in result.output
 
 
 def test_journal_project_and_workspace_mutually_exclusive():
-    result = runner.invoke(
-        app, ["journal", "--project", "x", "--workspace"]
-    )
+    result = runner.invoke(app, ["journal", "--project", "x", "--workspace"])
     assert result.exit_code == 1
     assert "mutually exclusive" in result.output
 
@@ -327,9 +321,7 @@ def test_observe_rejects_both_expiry_flags():
 
 
 def test_observe_rejects_garbage_duration():
-    result = runner.invoke(
-        app, ["observe", "test", "--expires-in", "banana"]
-    )
+    result = runner.invoke(app, ["observe", "test", "--expires-in", "banana"])
     assert result.exit_code == 1
     assert "duration" in result.output.lower()
 
@@ -343,9 +335,7 @@ def test_capture_help():
 
 
 def test_capture_rejects_both_text_and_file():
-    result = runner.invoke(
-        app, ["capture", "some text", "--file", "/tmp/does-not-matter.md"]
-    )
+    result = runner.invoke(app, ["capture", "some text", "--file", "/tmp/does-not-matter.md"])
     assert result.exit_code == 1
     assert "not both" in result.output.lower()
 
@@ -359,9 +349,7 @@ def test_capture_rejects_empty_input():
 
 
 def test_capture_rejects_missing_file():
-    result = runner.invoke(
-        app, ["capture", "--file", "/tmp/does-not-exist-hafiz-test.md"]
-    )
+    result = runner.invoke(app, ["capture", "--file", "/tmp/does-not-exist-hafiz-test.md"])
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
 
@@ -443,17 +431,13 @@ def test_query_help_has_include_superseded():
 
 
 def test_observe_rejects_bad_supersedes_uuid():
-    result = runner.invoke(
-        app, ["observe", "test", "--supersedes", "not-a-uuid"]
-    )
+    result = runner.invoke(app, ["observe", "test", "--supersedes", "not-a-uuid"])
     assert result.exit_code == 1
     assert "uuid" in result.output.lower()
 
 
 def test_observe_rejects_bad_derived_from_uuid():
-    result = runner.invoke(
-        app, ["observe", "test", "--derived-from", "abc,not-a-uuid,def"]
-    )
+    result = runner.invoke(app, ["observe", "test", "--derived-from", "abc,not-a-uuid,def"])
     assert result.exit_code == 1
     assert "uuid" in result.output.lower()
 
@@ -468,9 +452,7 @@ def test_distill_help():
 
 
 def test_distill_project_and_workspace_mutually_exclusive():
-    result = runner.invoke(
-        app, ["distill", "--project", "x", "--workspace"]
-    )
+    result = runner.invoke(app, ["distill", "--project", "x", "--workspace"])
     assert result.exit_code == 1
     assert "mutually exclusive" in result.output
 

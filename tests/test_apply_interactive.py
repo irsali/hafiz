@@ -77,9 +77,7 @@ def test_filter_accept_keeps_recommendation(monkeypatch):
     """Default-blank answer means accept — the row passes through with
     recommended unchanged and ``user_choice='accept'`` set."""
     answers = iter(["y"])
-    monkeypatch.setattr(
-        "hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers)
-    )
+    monkeypatch.setattr("hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers))
 
     out = _interactive_filter([_row()])
     assert len(out) == 1
@@ -91,9 +89,7 @@ def test_filter_skip_clears_recommendation(monkeypatch):
     """A 'no' answer must clear ``recommended`` so ``_apply_tuning``
     skips the row entirely — sticky state must NOT be touched."""
     answers = iter(["n"])
-    monkeypatch.setattr(
-        "hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers)
-    )
+    monkeypatch.setattr("hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers))
 
     out = _interactive_filter([_row()])
     assert out[0]["recommended"] is None
@@ -105,9 +101,7 @@ def test_filter_custom_validates_and_replaces(monkeypatch):
     validated through the tunable's coercer + validator before
     replacing the recommendation."""
     answers = iter(["c", "4096"])
-    monkeypatch.setattr(
-        "hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers)
-    )
+    monkeypatch.setattr("hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers))
 
     out = _interactive_filter([_row()])
     assert out[0]["recommended"] == 4_096
@@ -122,9 +116,7 @@ def test_filter_custom_rejects_invalid_then_retries(monkeypatch):
     passing value advances. Guards against the user typo'ing a number
     that would later blow up at use time."""
     answers = iter(["c", "not-a-number", "0", "4000"])
-    monkeypatch.setattr(
-        "hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers)
-    )
+    monkeypatch.setattr("hafiz.commands.maintenance.Prompt.ask", lambda *a, **kw: next(answers))
 
     out = _interactive_filter([_row()])
     assert out[0]["recommended"] == 4_000
@@ -142,7 +134,7 @@ def test_filter_passes_through_no_op_rows(monkeypatch):
 
     rows = [
         _row(recommended=2_000),  # equals current
-        _row(recommended=None),   # no proposal
+        _row(recommended=None),  # no proposal
         _row(probe_error="boom"),
     ]
     out = _interactive_filter(rows)

@@ -55,13 +55,13 @@ def test_slugify_strips_and_caps_long_titles():
 @pytest.mark.parametrize(
     "source,expected",
     [
-        ("agent:hermes", "hermes"),       # agent: prefix stripped
+        ("agent:hermes", "hermes"),  # agent: prefix stripped
         ("agent:claude-code", "claude-code"),
-        ("user:anjum", "user:anjum"),     # non-agent source passes through
-        ("capture", "capture"),           # bare value passes through
-        (None, "capture"),                # missing → default
-        ("", "capture"),                  # empty → default
-        ("agent:", "capture"),            # empty after prefix → default
+        ("user:anjum", "user:anjum"),  # non-agent source passes through
+        ("capture", "capture"),  # bare value passes through
+        (None, "capture"),  # missing → default
+        ("", "capture"),  # empty → default
+        ("agent:", "capture"),  # empty after prefix → default
     ],
 )
 def test_agent_from_source(source, expected):

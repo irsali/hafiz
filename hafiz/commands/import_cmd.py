@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -34,7 +34,7 @@ def _resolve_since(since: str | None) -> datetime | None:
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
-    return datetime.now(timezone.utc) - delta
+    return datetime.now(UTC) - delta
 
 
 def run_import_claude_code(
@@ -81,9 +81,7 @@ def run_import_claude_code(
         )
         return
 
-    table = Table(
-        title=f"Claude Code import — {root}", border_style="cyan"
-    )
+    table = Table(title=f"Claude Code import — {root}", border_style="cyan")
     table.add_column("Metric", style="bold")
     table.add_column("Count", justify="right")
     s = summary
@@ -103,9 +101,7 @@ def run_import_claude_code(
     if s.errors:
         console.print()
         err_panel = Panel(
-            "\n".join(
-                f"[red]{e['path']}[/red]: {e['error']}" for e in s.errors[:10]
-            ),
+            "\n".join(f"[red]{e['path']}[/red]: {e['error']}" for e in s.errors[:10]),
             title="Errors (first 10)",
             border_style="red",
         )

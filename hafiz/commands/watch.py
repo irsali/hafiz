@@ -43,9 +43,7 @@ def run_watch(
             "`hafiz hooks install`) in the meantime."
         )
         if output_json:
-            console.print_json(
-                json.dumps({"ok": False, "error": msg, "command": "watch"})
-            )
+            console.print_json(json.dumps({"ok": False, "error": msg, "command": "watch"}))
         else:
             console.print(f"[yellow]Not yet rewired:[/yellow] {msg}")
         raise SystemExit(1)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from rich.console import Console
 from rich.table import Table
@@ -42,13 +42,10 @@ def _parse_day(day: str | None) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(day)
     except ValueError:
-        console.print(
-            f"[red]Error:[/red] --day must be an ISO date "
-            f"(e.g. 2026-04-20), got {day!r}"
-        )
+        console.print(f"[red]Error:[/red] --day must be an ISO date (e.g. 2026-04-20), got {day!r}")
         raise SystemExit(1)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -67,9 +64,7 @@ def run_journal(
 ) -> None:
     """Entry point for the ``hafiz journal`` command."""
     if since and day:
-        console.print(
-            "[red]Error:[/red] --since and --day are mutually exclusive."
-        )
+        console.print("[red]Error:[/red] --since and --day are mutually exclusive.")
         raise SystemExit(1)
 
     since_td = _parse_since(since) if day is None else None
@@ -126,9 +121,7 @@ def _print_json(bundle: JournalBundle) -> None:
                 "tags": e.tags,
                 "confidence": e.confidence,
                 "valid_from": e.valid_from.isoformat(),
-                "valid_until": (
-                    e.valid_until.isoformat() if e.valid_until else None
-                ),
+                "valid_until": (e.valid_until.isoformat() if e.valid_until else None),
                 "session_id": e.session_id,
                 "task": e.task,
                 "commit_hash": e.commit_hash,
@@ -168,9 +161,7 @@ def _print_rich(
         console.print(f"[yellow]Nothing in window ({label}).[/yellow]")
         return
 
-    window_label = (
-        f"Day {day_arg}" if day_arg else f"Since {since_arg or '7d'}"
-    )
+    window_label = f"Day {day_arg}" if day_arg else f"Since {since_arg or '7d'}"
     total_items = len(bundle.entries) + len(bundle.captures)
     totals = [f"{len(bundle.entries)} entries"]
     if bundle.captures:
@@ -195,11 +186,9 @@ def _print_rich(
             table.add_column("Context", style="dim", width=16)
 
             for e in entries:
-                t = e.valid_from.astimezone(timezone.utc).strftime("%H:%M")
+                t = e.valid_from.astimezone(UTC).strftime("%H:%M")
                 kind_style = KIND_STYLE.get(e.kind, "white")
-                content_preview = (
-                    e.content if len(e.content) <= 120 else e.content[:117] + "..."
-                )
+                content_preview = e.content if len(e.content) <= 120 else e.content[:117] + "..."
                 ctx_parts: list[str] = []
                 if branch := e.metadata.get("branch"):
                     ctx_parts.append(branch)
@@ -231,7 +220,7 @@ def _print_rich(
             cap_table.add_column("Preview", ratio=3)
 
             for c in captures:
-                t = c.captured_at.astimezone(timezone.utc).strftime("%H:%M")
+                t = c.captured_at.astimezone(UTC).strftime("%H:%M")
                 cap_table.add_row(
                     t,
                     c.title or "—",

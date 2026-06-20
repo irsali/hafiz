@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import importlib.resources
 import re
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 # Markers bracketing hafiz-managed content inside an instruction file.
 # The region between them is owned by hafiz; everything outside belongs to the user.
@@ -30,12 +30,7 @@ DEFAULT_FILENAME = "skills.md"
 
 def prepend_cursor_frontmatter(content: str) -> str:
     """Wrap content with Cursor .mdc frontmatter."""
-    frontmatter = (
-        "---\n"
-        "description: Hafiz workspace intelligence\n"
-        "alwaysApply: true\n"
-        "---\n\n"
-    )
+    frontmatter = "---\ndescription: Hafiz workspace intelligence\nalwaysApply: true\n---\n\n"
     return frontmatter + content
 
 

@@ -51,7 +51,10 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
-    "ruff>=0.5",
+    # Upper-bounded so the now-blocking CI lint gate is reproducible: a new
+    # ruff minor can add rules that would fail the gate out of band. Bump
+    # deliberately, re-running `ruff check . && ruff format .` against it.
+    "ruff>=0.15,<0.16",
 ]
 
 [tool.ruff]
@@ -60,6 +63,11 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.lint.pep8-naming]
+# `G` is the idiomatic NetworkX graph variable across the ecosystem and its
+# docs; lowercasing it everywhere would hurt readability, not help it.
+extend-ignore-names = ["G"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

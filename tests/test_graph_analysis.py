@@ -8,7 +8,7 @@ when Postgres is unavailable — matching the pattern used in test_search.py.
 from __future__ import annotations
 
 import pickle
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +16,6 @@ import networkx as nx
 import pytest
 
 from hafiz.core import graph_analysis as ga
-
 
 # ── Cache path sanitization ─────────────────────────────────────────────────
 
@@ -45,14 +44,14 @@ def test_cache_path_preserves_safe_chars():
 
 
 def test_signature_equality_same_values():
-    t = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+    t = datetime(2026, 4, 21, 12, 0, tzinfo=UTC)
     s1 = ga.GraphSignature(max_observed=t, unit_count=5, edge_count=7)
     s2 = ga.GraphSignature(max_observed=t, unit_count=5, edge_count=7)
     assert s1 == s2
 
 
 def test_signature_inequality_on_count_change():
-    t = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+    t = datetime(2026, 4, 21, 12, 0, tzinfo=UTC)
     s1 = ga.GraphSignature(max_observed=t, unit_count=5, edge_count=7)
     s2 = ga.GraphSignature(max_observed=t, unit_count=4, edge_count=7)
     # Deletion scenario: count drops but max_updated is unchanged
@@ -60,8 +59,8 @@ def test_signature_inequality_on_count_change():
 
 
 def test_signature_inequality_on_timestamp_change():
-    t1 = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
-    t2 = datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 4, 21, 12, 0, tzinfo=UTC)
+    t2 = datetime(2026, 4, 21, 13, 0, tzinfo=UTC)
     s1 = ga.GraphSignature(max_observed=t1, unit_count=5, edge_count=7)
     s2 = ga.GraphSignature(max_observed=t2, unit_count=5, edge_count=7)
     assert s1 != s2
@@ -81,13 +80,13 @@ def test_cache_write_and_read_roundtrip(tmp_path: Path, monkeypatch):
     G.add_edge("a", "b", key="r2", relation="imports", weight=1.0, evidence=None)
 
     sig = ga.GraphSignature(
-        max_observed=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        max_observed=datetime(2026, 4, 21, tzinfo=UTC),
         unit_count=2,
         edge_count=2,
     )
     meta = ga.GraphMeta(
         project="demo",
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         signature=sig,
         version=ga.CACHE_VERSION,
         node_count=2,
@@ -99,13 +98,13 @@ def test_cache_write_and_read_roundtrip(tmp_path: Path, monkeypatch):
     assert path.exists()
 
     with path.open("rb") as f:
-        loaded_G, loaded_meta = pickle.load(f)
+        loaded_g, loaded_meta = pickle.load(f)
 
-    assert isinstance(loaded_G, nx.MultiDiGraph)
-    assert loaded_G.number_of_nodes() == 2
-    assert loaded_G.number_of_edges() == 2
+    assert isinstance(loaded_g, nx.MultiDiGraph)
+    assert loaded_g.number_of_nodes() == 2
+    assert loaded_g.number_of_edges() == 2
     # MultiDiGraph edge access: G[u][v] returns {key: attrs}
-    edges_between = loaded_G["a"]["b"]
+    edges_between = loaded_g["a"]["b"]
     assert set(edges_between.keys()) == {"r1", "r2"}
     assert edges_between["r1"]["relation"] == "calls"
     assert edges_between["r2"]["relation"] == "imports"
@@ -119,7 +118,7 @@ def test_invalidate_cache_removes_file(tmp_path: Path, monkeypatch):
     G = nx.MultiDiGraph()
     meta = ga.GraphMeta(
         project="x",
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         signature=ga.GraphSignature(None, 0, 0),
         version=ga.CACHE_VERSION,
         node_count=0,
@@ -159,28 +158,26 @@ def test_invalidate_all_caches_missing_dir_is_safe(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_cached_graph_uses_cache_when_signature_matches(
-    tmp_path: Path, monkeypatch
-):
+async def test_get_cached_graph_uses_cache_when_signature_matches(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ga, "CACHE_DIR", tmp_path)
 
     # Seed a cache
-    G_cached = nx.MultiDiGraph()
-    G_cached.add_node("a", name="Cached", kind="function")
+    g_cached = nx.MultiDiGraph()
+    g_cached.add_node("a", name="Cached", kind="function")
     sig = ga.GraphSignature(
-        max_observed=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        max_observed=datetime(2026, 4, 21, tzinfo=UTC),
         unit_count=1,
         edge_count=0,
     )
     meta = ga.GraphMeta(
         project=None,
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         signature=sig,
         version=ga.CACHE_VERSION,
         node_count=1,
         edge_count=0,
     )
-    ga._write_cache_atomic(ga._cache_path(None), G_cached, meta)
+    ga._write_cache_atomic(ga._cache_path(None), g_cached, meta)
 
     # current_signature returns the matching signature — load_graph must NOT be called
     async def fake_signature(project=None):
@@ -189,8 +186,9 @@ async def test_get_cached_graph_uses_cache_when_signature_matches(
     async def fake_load(project=None):
         raise AssertionError("load_graph should not be called on cache hit")
 
-    with patch.object(ga, "current_signature", side_effect=fake_signature), patch.object(
-        ga, "load_graph", side_effect=fake_load
+    with (
+        patch.object(ga, "current_signature", side_effect=fake_signature),
+        patch.object(ga, "load_graph", side_effect=fake_load),
     ):
         G, returned_meta = await ga.get_cached_graph()
 
@@ -200,32 +198,30 @@ async def test_get_cached_graph_uses_cache_when_signature_matches(
 
 
 @pytest.mark.asyncio
-async def test_get_cached_graph_rebuilds_on_signature_mismatch(
-    tmp_path: Path, monkeypatch
-):
+async def test_get_cached_graph_rebuilds_on_signature_mismatch(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ga, "CACHE_DIR", tmp_path)
 
     # Seed a cache with an old signature
-    G_cached = nx.MultiDiGraph()
-    G_cached.add_node("old")
+    g_cached = nx.MultiDiGraph()
+    g_cached.add_node("old")
     old_sig = ga.GraphSignature(
-        max_observed=datetime(2026, 4, 20, tzinfo=timezone.utc),
+        max_observed=datetime(2026, 4, 20, tzinfo=UTC),
         unit_count=1,
         edge_count=0,
     )
     meta = ga.GraphMeta(
         project=None,
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         signature=old_sig,
         version=ga.CACHE_VERSION,
         node_count=1,
         edge_count=0,
     )
-    ga._write_cache_atomic(ga._cache_path(None), G_cached, meta)
+    ga._write_cache_atomic(ga._cache_path(None), g_cached, meta)
 
     # Current signature differs — should rebuild
     new_sig = ga.GraphSignature(
-        max_observed=datetime(2026, 4, 21, tzinfo=timezone.utc),
+        max_observed=datetime(2026, 4, 21, tzinfo=UTC),
         unit_count=2,
         edge_count=1,
     )
@@ -233,18 +229,17 @@ async def test_get_cached_graph_rebuilds_on_signature_mismatch(
     async def fake_signature(project=None):
         return new_sig
 
-    G_fresh = nx.MultiDiGraph()
-    G_fresh.add_node("new-a")
-    G_fresh.add_node("new-b")
-    G_fresh.add_edge(
-        "new-a", "new-b", key="r1", relation="calls", weight=1.0, evidence=None
-    )
+    g_fresh = nx.MultiDiGraph()
+    g_fresh.add_node("new-a")
+    g_fresh.add_node("new-b")
+    g_fresh.add_edge("new-a", "new-b", key="r1", relation="calls", weight=1.0, evidence=None)
 
     async def fake_load(project=None):
-        return G_fresh
+        return g_fresh
 
-    with patch.object(ga, "current_signature", side_effect=fake_signature), patch.object(
-        ga, "load_graph", side_effect=fake_load
+    with (
+        patch.object(ga, "current_signature", side_effect=fake_signature),
+        patch.object(ga, "load_graph", side_effect=fake_load),
     ):
         G, returned_meta = await ga.get_cached_graph()
 
@@ -255,9 +250,9 @@ async def test_get_cached_graph_rebuilds_on_signature_mismatch(
 
     # And the cache on disk should now reflect the fresh data
     with ga._cache_path(None).open("rb") as f:
-        persisted_G, persisted_meta = pickle.load(f)
+        persisted_g, persisted_meta = pickle.load(f)
     assert persisted_meta.signature == new_sig
-    assert persisted_G.number_of_nodes() == 2
+    assert persisted_g.number_of_nodes() == 2
 
 
 @pytest.mark.asyncio
@@ -265,33 +260,34 @@ async def test_get_cached_graph_force_rebuild(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ga, "CACHE_DIR", tmp_path)
 
     # Seed a valid cache whose signature matches
-    G_cached = nx.MultiDiGraph()
-    G_cached.add_node("cached-only")
+    g_cached = nx.MultiDiGraph()
+    g_cached.add_node("cached-only")
     sig = ga.GraphSignature(None, 1, 0)
     meta = ga.GraphMeta(
         project=None,
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         signature=sig,
         version=ga.CACHE_VERSION,
         node_count=1,
         edge_count=0,
     )
-    ga._write_cache_atomic(ga._cache_path(None), G_cached, meta)
+    ga._write_cache_atomic(ga._cache_path(None), g_cached, meta)
 
     async def fake_signature(project=None):
         return sig
 
-    G_fresh = nx.MultiDiGraph()
-    G_fresh.add_node("fresh")
+    g_fresh = nx.MultiDiGraph()
+    g_fresh.add_node("fresh")
 
     load_called = {"count": 0}
 
     async def fake_load(project=None):
         load_called["count"] += 1
-        return G_fresh
+        return g_fresh
 
-    with patch.object(ga, "current_signature", side_effect=fake_signature), patch.object(
-        ga, "load_graph", side_effect=fake_load
+    with (
+        patch.object(ga, "current_signature", side_effect=fake_signature),
+        patch.object(ga, "load_graph", side_effect=fake_load),
     ):
         G, _ = await ga.get_cached_graph(force_rebuild=True)
 
@@ -301,9 +297,7 @@ async def test_get_cached_graph_force_rebuild(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_cached_graph_rebuilds_on_corrupt_cache(
-    tmp_path: Path, monkeypatch
-):
+async def test_get_cached_graph_rebuilds_on_corrupt_cache(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ga, "CACHE_DIR", tmp_path)
 
     # Write a garbage file at the cache path
@@ -315,14 +309,15 @@ async def test_get_cached_graph_rebuilds_on_corrupt_cache(
     async def fake_signature(project=None):
         return sig
 
-    G_fresh = nx.MultiDiGraph()
-    G_fresh.add_node("rebuilt")
+    g_fresh = nx.MultiDiGraph()
+    g_fresh.add_node("rebuilt")
 
     async def fake_load(project=None):
-        return G_fresh
+        return g_fresh
 
-    with patch.object(ga, "current_signature", side_effect=fake_signature), patch.object(
-        ga, "load_graph", side_effect=fake_load
+    with (
+        patch.object(ga, "current_signature", side_effect=fake_signature),
+        patch.object(ga, "load_graph", side_effect=fake_load),
     ):
         G, meta = await ga.get_cached_graph()
 

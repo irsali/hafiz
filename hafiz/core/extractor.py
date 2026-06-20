@@ -53,7 +53,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hafiz.core.annotations import store_annotation
 from hafiz.core.database import Edge, File, Unit, get_session_factory
 
-
 EXTRACT_CONTRACT_VERSION = 2
 
 
@@ -65,9 +64,7 @@ AST_UNIT_KIND_PREFIXES = ("code.",)
 
 # Relations the Python AST (and future tree-sitter) parsers own. Same
 # rejection rule.
-AST_RELATION_NAMES = frozenset(
-    {"calls", "imports", "inherits", "references"}
-)
+AST_RELATION_NAMES = frozenset({"calls", "imports", "inherits", "references"})
 
 # Annotation kinds the agent is free to use. Open set (anything not in
 # AST_UNIT_KIND_PREFIXES), but the canonical values are enumerated so
@@ -178,14 +175,10 @@ def parse_extraction_payload(data: dict[str, Any]) -> ExtractionResult:
     annotations: list[ExtractedAnnotation] = []
     for i, row in enumerate(raw_anns):
         if not isinstance(row, dict):
-            raise ExtractContractError(
-                f"annotations[{i}] must be an object."
-            )
+            raise ExtractContractError(f"annotations[{i}] must be an object.")
         content = row.get("content")
         if not content or not isinstance(content, str):
-            raise ExtractContractError(
-                f"annotations[{i}].content is required."
-            )
+            raise ExtractContractError(f"annotations[{i}].content is required.")
         kind = row.get("kind", "fact")
         if any(kind.startswith(p) for p in AST_UNIT_KIND_PREFIXES):
             raise ExtractContractError(
@@ -223,9 +216,7 @@ def parse_extraction_payload(data: dict[str, Any]) -> ExtractionResult:
             raise ExtractContractError(f"edges[{i}] must be an object.")
         for required in ("source_name", "target_name", "relation"):
             if not row.get(required):
-                raise ExtractContractError(
-                    f"edges[{i}].{required} is required."
-                )
+                raise ExtractContractError(f"edges[{i}].{required} is required.")
         relation = row["relation"]
         if relation in AST_RELATION_NAMES:
             raise ExtractContractError(
@@ -271,11 +262,11 @@ async def _resolve_unit(
 ) -> Unit | None:
     """Find a Unit the agent referenced. Preference order:
 
-      1. ``identity_key`` exact match — the stable, correct handle.
-      2. ``(name, source_file, project)`` fallback — ``name`` is the
-         unit's qualified name; ``source_file`` narrows the lookup.
-      3. ``(name, project)`` if no source_file — may pick wrong unit
-         when a name is shared across files; caller takes the risk.
+    1. ``identity_key`` exact match — the stable, correct handle.
+    2. ``(name, source_file, project)`` fallback — ``name`` is the
+       unit's qualified name; ``source_file`` narrows the lookup.
+    3. ``(name, project)`` if no source_file — may pick wrong unit
+       when a name is shared across files; caller takes the risk.
     """
     if identity_key:
         row = (

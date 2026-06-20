@@ -6,14 +6,14 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-from hafiz.core.config import get_settings, find_config_file, CONFIG_FILENAME
-from hafiz.core.database import create_tables, close_engine, get_session_factory
+from hafiz.core.config import CONFIG_FILENAME, find_config_file, get_settings
+from hafiz.core.database import close_engine, create_tables, get_session_factory
 
 console = Console()
 
@@ -87,6 +87,7 @@ def run_status(*, output_json: bool = False) -> None:
     async def _status():
         try:
             from sqlalchemy import func, select
+
             from hafiz.core.database import (
                 Annotation,
                 Commit,
@@ -102,16 +103,12 @@ def run_status(*, output_json: bool = False) -> None:
                 # ── Current-state counts (tombstoned / superseded excluded) ─
                 files_count = (
                     await session.execute(
-                        select(func.count())
-                        .select_from(File)
-                        .where(File.valid_until.is_(None))
+                        select(func.count()).select_from(File).where(File.valid_until.is_(None))
                     )
                 ).scalar() or 0
                 units_count = (
                     await session.execute(
-                        select(func.count())
-                        .select_from(Unit)
-                        .where(Unit.valid_until.is_(None))
+                        select(func.count()).select_from(Unit).where(Unit.valid_until.is_(None))
                     )
                 ).scalar() or 0
                 current_revisions_count = (
@@ -122,38 +119,26 @@ def run_status(*, output_json: bool = False) -> None:
                     )
                 ).scalar() or 0
                 embeddings_count = (
-                    await session.execute(
-                        select(func.count()).select_from(Embedding)
-                    )
+                    await session.execute(select(func.count()).select_from(Embedding))
                 ).scalar() or 0
                 edges_count = (
                     await session.execute(
-                        select(func.count())
-                        .select_from(Edge)
-                        .where(Edge.superseded_at.is_(None))
+                        select(func.count()).select_from(Edge).where(Edge.superseded_at.is_(None))
                     )
                 ).scalar() or 0
                 annotations_count = (
-                    await session.execute(
-                        select(func.count()).select_from(Annotation)
-                    )
+                    await session.execute(select(func.count()).select_from(Annotation))
                 ).scalar() or 0
                 commits_count = (
-                    await session.execute(
-                        select(func.count()).select_from(Commit)
-                    )
+                    await session.execute(select(func.count()).select_from(Commit))
                 ).scalar() or 0
 
                 # ── Historical totals (include tombstoned for context) ──
                 total_units = (
-                    await session.execute(
-                        select(func.count()).select_from(Unit)
-                    )
+                    await session.execute(select(func.count()).select_from(Unit))
                 ).scalar() or 0
                 total_revisions = (
-                    await session.execute(
-                        select(func.count()).select_from(UnitRevision)
-                    )
+                    await session.execute(select(func.count()).select_from(UnitRevision))
                 ).scalar() or 0
 
                 # ── Breakdowns by project and kind (current only) ──
@@ -199,13 +184,9 @@ def run_status(*, output_json: bool = False) -> None:
                 "edges": edges_count,
                 "annotations": annotations_count,
                 "commits": commits_count,
-                "by_project": {
-                    p or "(none)": c for p, c in project_rows
-                },
+                "by_project": {p or "(none)": c for p, c in project_rows},
                 "by_kind": {k or "(none)": c for k, c in kind_rows},
-                "last_commit_per_project": {
-                    p or "(none)": c for p, c in last_commit_rows
-                },
+                "last_commit_per_project": {p or "(none)": c for p, c in last_commit_rows},
             }
             return stats
         finally:
@@ -267,9 +248,7 @@ def run_status(*, output_json: bool = False) -> None:
 
     if stats["last_commit_per_project"]:
         console.print()
-        commit_table = Table(
-            title="Last indexed commit per project", border_style="cyan"
-        )
+        commit_table = Table(title="Last indexed commit per project", border_style="cyan")
         commit_table.add_column("Project")
         commit_table.add_column("Commit", style="dim")
         for proj, sha in stats["last_commit_per_project"].items():
@@ -362,9 +341,7 @@ def run_config_show(*, output_json: bool = False) -> None:
             "sticky": "[green]sticky[/green]",
             "default": "[dim]default[/dim]",
         }[row["source"]]
-        tun_table.add_row(
-            row["key"], str(row["value"]), source_style, str(row["default"])
-        )
+        tun_table.add_row(row["key"], str(row["value"]), source_style, str(row["default"]))
     console.print(tun_table)
     console.print()
 
@@ -423,14 +400,10 @@ def _read_toml(path: Path) -> dict:
     """Parse a TOML file if it exists; return empty dict otherwise."""
     if not path.is_file():
         return {}
-    import sys as _sys
+    import tomllib
 
-    if _sys.version_info >= (3, 11):
-        import tomllib as _tomllib
-    else:
-        import tomli as _tomllib  # type: ignore[no-redef]
     with open(path, "rb") as f:
-        return _tomllib.load(f)
+        return tomllib.load(f)
 
 
 def _write_toml(path: Path, data: dict) -> None:
@@ -533,9 +506,7 @@ def run_config_set(
     )
 
 
-def run_config_unset(
-    key: str, *, local: bool = False, output_json: bool = False
-) -> None:
+def run_config_unset(key: str, *, local: bool = False, output_json: bool = False) -> None:
     from hafiz.core import tunables as _tunables
 
     try:
@@ -555,9 +526,7 @@ def run_config_unset(
                 json.dumps({"ok": True, "key": key, "target": str(target), "no_op": True})
             )
         else:
-            console.print(
-                f"[dim]No-op: {target} does not exist, nothing to remove.[/dim]"
-            )
+            console.print(f"[dim]No-op: {target} does not exist, nothing to remove.[/dim]")
         return
 
     data = _read_toml(target)
@@ -587,21 +556,15 @@ def run_config_unset(
     reset_settings()
 
     if output_json:
-        console.print_json(
-            json.dumps({"ok": True, "key": key, "target": str(target)})
-        )
+        console.print_json(json.dumps({"ok": True, "key": key, "target": str(target)}))
     else:
-        console.print(
-            f"[green]Unset[/green] [bold]{key}[/bold] from [bold]{target}[/bold]."
-        )
+        console.print(f"[green]Unset[/green] [bold]{key}[/bold] from [bold]{target}[/bold].")
 
 
 # ── `hafiz config apply` / `clear-sticky` ─────────────────────────────
 
 
-def run_config_apply(
-    *, output_json: bool = False, assume_yes: bool = False
-) -> None:
+def run_config_apply(*, output_json: bool = False, assume_yes: bool = False) -> None:
     """Run all probers and persist recommendations to sticky state.
 
     Interactive by default: prompts per recommendation so the user can
@@ -666,8 +629,8 @@ def run_config_apply(
         if a.get("rationale"):
             console.print(f"  [dim]{a['rationale']}[/dim]")
     console.print(
-        f"\n[dim]Persisted to sticky cache. "
-        f"Run [bold]hafiz config clear-sticky[/bold] to revert.[/dim]"
+        "\n[dim]Persisted to sticky cache. "
+        "Run [bold]hafiz config clear-sticky[/bold] to revert.[/dim]"
     )
 
 
@@ -687,9 +650,7 @@ def run_config_clear_sticky(*, output_json: bool = False) -> None:
 # ── helpers ───────────────────────────────────────────────────────────
 
 
-def _config_error(
-    code: str, message: str, output_json: bool, *, exit_code: int = 1
-) -> None:
+def _config_error(code: str, message: str, output_json: bool, *, exit_code: int = 1) -> None:
     import typer as _typer
 
     if output_json:
@@ -723,9 +684,7 @@ def run_doctor(
     checks: list[dict] = []
 
     def _check(name: str, passed: bool, detail: str = "", fix: str = "") -> None:
-        checks.append(
-            {"name": name, "passed": passed, "detail": detail, "fix": fix}
-        )
+        checks.append({"name": name, "passed": passed, "detail": detail, "fix": fix})
 
     # 1. Config file
     config_path = find_config_file()
@@ -753,6 +712,7 @@ def run_doctor(
     async def _async_checks():
         try:
             from sqlalchemy import func, select, text
+
             from hafiz.core.database import (
                 Annotation,
                 Commit,
@@ -782,9 +742,7 @@ def run_doctor(
             try:
                 async with session_factory() as session:
                     result = await session.execute(
-                        text(
-                            "SELECT 1 FROM pg_extension WHERE extname = 'vector'"
-                        )
+                        text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
                     )
                     has_pgvector = result.scalar() is not None
                 _check(
@@ -814,10 +772,7 @@ def run_doctor(
             try:
                 async with session_factory() as session:
                     result = await session.execute(
-                        text(
-                            "SELECT tablename FROM pg_tables "
-                            "WHERE schemaname = 'public'"
-                        )
+                        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
                     )
                     existing_tables = {row[0] for row in result.fetchall()}
 
@@ -842,16 +797,12 @@ def run_doctor(
                 async with session_factory() as session:
                     files_count = (
                         await session.execute(
-                            select(func.count())
-                            .select_from(File)
-                            .where(File.valid_until.is_(None))
+                            select(func.count()).select_from(File).where(File.valid_until.is_(None))
                         )
                     ).scalar() or 0
                     units_count = (
                         await session.execute(
-                            select(func.count())
-                            .select_from(Unit)
-                            .where(Unit.valid_until.is_(None))
+                            select(func.count()).select_from(Unit).where(Unit.valid_until.is_(None))
                         )
                     ).scalar() or 0
                     rev_count = (
@@ -862,9 +813,7 @@ def run_doctor(
                         )
                     ).scalar() or 0
                     emb_count = (
-                        await session.execute(
-                            select(func.count()).select_from(Embedding)
-                        )
+                        await session.execute(select(func.count()).select_from(Embedding))
                     ).scalar() or 0
                     edge_count = (
                         await session.execute(
@@ -874,14 +823,10 @@ def run_doctor(
                         )
                     ).scalar() or 0
                     ann_count = (
-                        await session.execute(
-                            select(func.count()).select_from(Annotation)
-                        )
+                        await session.execute(select(func.count()).select_from(Annotation))
                     ).scalar() or 0
                     commit_count = (
-                        await session.execute(
-                            select(func.count()).select_from(Commit)
-                        )
+                        await session.execute(select(func.count()).select_from(Commit))
                     ).scalar() or 0
 
                 _check(
@@ -909,8 +854,6 @@ def run_doctor(
 
     # 8. Embedding model loadable (sync check — separate from DB)
     try:
-        from fastembed import TextEmbedding
-
         _check("Embedding model loadable", True, detail=settings.embedding.model)
     except Exception as e:
         _check(
@@ -926,16 +869,12 @@ def run_doctor(
 
         registry = get_registry()
         parsers = registry.all_parsers()
-        coverage = ", ".join(
-            f"{p.name}({'+'.join(registry.extensions_for(p))})" for p in parsers
-        )
+        coverage = ", ".join(f"{p.name}({'+'.join(registry.extensions_for(p))})" for p in parsers)
         _check(
             "Parser registry",
             bool(parsers),
             detail=coverage or "(no parsers registered)",
-            fix="Re-install hafiz — in-tree parsers should self-register."
-            if not parsers
-            else "",
+            fix="Re-install hafiz — in-tree parsers should self-register." if not parsers else "",
         )
     except Exception as e:
         _check(
@@ -968,14 +907,9 @@ def run_doctor(
     _check(
         "Runtime deps importable",
         not missing_modules,
-        detail=(
-            "all present"
-            if not missing_modules
-            else f"missing: {', '.join(missing_modules)}"
-        ),
+        detail=("all present" if not missing_modules else f"missing: {', '.join(missing_modules)}"),
         fix=(
-            f"`pipx inject hafiz {' '.join(missing_modules)}` "
-            f"(or `pipx reinstall hafiz`)"
+            f"`pipx inject hafiz {' '.join(missing_modules)}` (or `pipx reinstall hafiz`)"
             if missing_modules
             else ""
         ),
@@ -1079,14 +1013,12 @@ def run_doctor(
                 f"(confidence {a['confidence']})"
             )
         console.print(
-            f"[dim]Persisted to sticky cache. "
-            f"Run [bold]hafiz config clear-sticky[/bold] to revert.[/dim]"
+            "[dim]Persisted to sticky cache. "
+            "Run [bold]hafiz config clear-sticky[/bold] to revert.[/dim]"
         )
     elif apply and not applied:
         console.print()
-        console.print(
-            "[yellow]No probed recommendations to apply.[/yellow]"
-        )
+        console.print("[yellow]No probed recommendations to apply.[/yellow]")
     if not probe:
         console.print(
             "[dim]Run [bold]hafiz doctor --probe[/bold] to measure this host "
@@ -1175,9 +1107,7 @@ def _interactive_filter(rows: list[dict]) -> list[dict]:
             try:
                 t = _tunables.get(r["key"])
             except KeyError:
-                console.print(
-                    f"  [red]Unknown tunable {r['key']!r}; skipping.[/red]"
-                )
+                console.print(f"  [red]Unknown tunable {r['key']!r}; skipping.[/red]")
                 r2["recommended"] = None
                 r2["user_choice"] = "skip"
                 out.append(r2)
@@ -1198,9 +1128,7 @@ def _interactive_filter(rows: list[dict]) -> list[dict]:
                 break
             r2["recommended"] = val
             r2["confidence"] = "user"
-            r2["rationale"] = (
-                f"User-supplied value (probe originally recommended {rec})."
-            )
+            r2["rationale"] = f"User-supplied value (probe originally recommended {rec})."
             r2["measured"] = {"path": "user_override", "probe_recommended": rec}
             r2["user_choice"] = "custom"
         else:
@@ -1346,8 +1274,7 @@ def _render_host_table(host) -> None:
         tbl.add_row("gpu", host.gpu_name)
         tbl.add_row(
             "gpu_vram",
-            f"{host.gpu_vram_free_mb or 0:,} MB free / "
-            f"{host.gpu_vram_total_mb or 0:,} MB total",
+            f"{host.gpu_vram_free_mb or 0:,} MB free / {host.gpu_vram_total_mb or 0:,} MB total",
         )
     tbl.add_row("fingerprint", host.fingerprint)
     console.print(tbl)

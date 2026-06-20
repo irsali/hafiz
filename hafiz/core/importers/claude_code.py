@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from hafiz.core.communications import (
     MessageInput,
@@ -34,7 +35,6 @@ from hafiz.core.sessions import (
     create_session,
     get_session_by_slug,
 )
-
 
 CLAUDE_CODE_AGENT = "claude-code"
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -92,15 +92,15 @@ class ParsedFile:
 
 def _coerce_ts(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     s = str(value).rstrip("Z")
     try:
         parsed = datetime.fromisoformat(s)
     except ValueError:
-        return datetime.now(timezone.utc)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return datetime.now(UTC)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _extract_text_and_tools(
@@ -140,9 +140,7 @@ def _extract_text_and_tools(
             raw_content = block.get("content")
             if isinstance(raw_content, list):
                 preview = "\n".join(
-                    part.get("text", "")
-                    for part in raw_content
-                    if isinstance(part, dict)
+                    part.get("text", "") for part in raw_content if isinstance(part, dict)
                 )
             else:
                 preview = str(raw_content) if raw_content is not None else ""
@@ -245,11 +243,7 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
             our_uuid = uuid.uuid4()
             claude_uuid = rec.get("uuid")
             parent_claude_uuid = rec.get("parentUuid")
-            parent_msg_id = (
-                claude_to_ours.get(parent_claude_uuid)
-                if parent_claude_uuid
-                else None
-            )
+            parent_msg_id = claude_to_ours.get(parent_claude_uuid) if parent_claude_uuid else None
 
             metadata = {
                 "claude_uuid": claude_uuid,
@@ -404,9 +398,7 @@ async def import_claude_code(
         else:
             summary.communications_existing += 1
 
-        written, embedded = await append_messages(
-            comm.id, parsed.messages, embed=embed
-        )
+        written, embedded = await append_messages(comm.id, parsed.messages, embed=embed)
         summary.messages_written += written
         summary.messages_embedded += embedded
 

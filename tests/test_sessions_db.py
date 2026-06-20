@@ -9,7 +9,6 @@ on annotations for human-readable journal/distill output.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 

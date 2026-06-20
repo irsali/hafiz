@@ -32,9 +32,7 @@ def _resolve_text(text: str | None, file: str | None) -> str:
     # Fall back to stdin if something is piped in.
     if not sys.stdin.isatty():
         return sys.stdin.read()
-    console.print(
-        "[red]Error:[/red] no input — pass TEXT, use --file <path>, or pipe via stdin."
-    )
+    console.print("[red]Error:[/red] no input — pass TEXT, use --file <path>, or pipe via stdin.")
     raise SystemExit(1)
 
 

@@ -72,9 +72,7 @@ def run_context(
             if include_transcripts:
                 from hafiz.core.communications import search_messages
 
-                transcripts = await search_messages(
-                    query, limit=limit_chunks
-                )
+                transcripts = await search_messages(query, limit=limit_chunks)
             return bundle, transcripts
         finally:
             await close_engine()
@@ -100,11 +98,7 @@ def run_context(
         console.print_json(json.dumps(payload, default=str))
         return
 
-    title = (
-        f"Context (workspace): {query[:50]}"
-        if workspace
-        else f"Context: {query[:60]}"
-    )
+    title = f"Context (workspace): {query[:50]}" if workspace else f"Context: {query[:60]}"
     console.print()
     md = Markdown(bundle.to_markdown())
     console.print(
@@ -137,10 +131,7 @@ def run_context(
             preview = msg.content[:160].replace("\n", " ").strip()
             if len(msg.content) > 160:
                 preview += "…"
-            ts_lines.append(
-                f"  [bold]{msg.role}[/bold] seq {msg.seq}  "
-                f"[dim]({score:.2%})[/dim]"
-            )
+            ts_lines.append(f"  [bold]{msg.role}[/bold] seq {msg.seq}  [dim]({score:.2%})[/dim]")
             ts_lines.append(f"  [dim]{preview}[/dim]")
             ts_lines.append("")
         console.print(

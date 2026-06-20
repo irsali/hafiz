@@ -31,11 +31,11 @@ built-in default.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from hafiz.core.config import find_config_file, load_toml
-
 
 # ---------------------------------------------------------------------------
 # Types
@@ -100,8 +100,7 @@ def register(tunable: Tunable) -> None:
     of truth, not a merge point."""
     if tunable.key in TUNABLE_REGISTRY:
         raise ValueError(
-            f"Tunable {tunable.key!r} is already registered; "
-            f"tunables must have unique keys."
+            f"Tunable {tunable.key!r} is already registered; tunables must have unique keys."
         )
     TUNABLE_REGISTRY[tunable.key] = tunable
 
@@ -131,7 +130,7 @@ def _env_var_name(key: str) -> str:
     return "HAFIZ_" + key.replace(".", "__").upper()
 
 
-def _coerce(tunable: "Tunable", raw: str) -> Any:
+def _coerce(tunable: Tunable, raw: str) -> Any:
     """Best-effort type coercion for env var strings. Mirrors how
     pydantic-settings would coerce the same value, but we parse it
     explicitly so resolution doesn't depend on re-reading settings."""

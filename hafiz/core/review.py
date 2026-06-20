@@ -112,18 +112,10 @@ async def run_review(project: str | None = None) -> ReviewReport:
 
     async with session_factory() as session:
         # ── Gather stats (live rows only) ───────────────────────────────
-        embedding_count = (
-            await session.execute(_embedding_count(project))
-        ).scalar() or 0
-        unit_count = (
-            await session.execute(_unit_count(project))
-        ).scalar() or 0
-        edge_count = (
-            await session.execute(_edge_count(project))
-        ).scalar() or 0
-        ann_count = (
-            await session.execute(_annotation_count(project))
-        ).scalar() or 0
+        embedding_count = (await session.execute(_embedding_count(project))).scalar() or 0
+        unit_count = (await session.execute(_unit_count(project))).scalar() or 0
+        edge_count = (await session.execute(_edge_count(project))).scalar() or 0
+        ann_count = (await session.execute(_annotation_count(project))).scalar() or 0
 
         report.stats = {
             "units": unit_count,
@@ -148,23 +140,27 @@ async def run_review(project: str | None = None) -> ReviewReport:
         report.stats["annotation_kinds"] = kind_dist
 
         if ann_count > 0 and not kind_dist.get("decision"):
-            report.findings.append(ReviewFinding(
-                category="annotations",
-                severity="suggestion",
-                title="No decisions recorded",
-                detail="Decisions are the most durable annotation kind — "
-                       "they capture why, not just what.",
-                action='hafiz observe "<decision>" --type decision --source agent:<name>',
-            ))
+            report.findings.append(
+                ReviewFinding(
+                    category="annotations",
+                    severity="suggestion",
+                    title="No decisions recorded",
+                    detail="Decisions are the most durable annotation kind — "
+                    "they capture why, not just what.",
+                    action='hafiz observe "<decision>" --type decision --source agent:<name>',
+                )
+            )
 
         if ann_count > 0 and not kind_dist.get("warning"):
-            report.findings.append(ReviewFinding(
-                category="annotations",
-                severity="info",
-                title="No warnings recorded",
-                detail="Warnings capture gotchas and non-obvious behaviors "
-                       "that prevent repeated mistakes.",
-            ))
+            report.findings.append(
+                ReviewFinding(
+                    category="annotations",
+                    severity="info",
+                    title="No warnings recorded",
+                    detail="Warnings capture gotchas and non-obvious behaviors "
+                    "that prevent repeated mistakes.",
+                )
+            )
 
         # Low-confidence annotations
         low_conf = (
@@ -180,14 +176,16 @@ async def run_review(project: str | None = None) -> ReviewReport:
         ).scalar() or 0
 
         if low_conf > 0:
-            report.findings.append(ReviewFinding(
-                category="annotations",
-                severity="suggestion",
-                title=f"{low_conf} low-confidence annotations",
-                detail="Annotations with confidence < 50% may add noise. "
-                       "Review and either boost or remove.",
-                action="hafiz query '' --observations --limit 50 --json  # filter by confidence",
-            ))
+            report.findings.append(
+                ReviewFinding(
+                    category="annotations",
+                    severity="suggestion",
+                    title=f"{low_conf} low-confidence annotations",
+                    detail="Annotations with confidence < 50% may add noise. "
+                    "Review and either boost or remove.",
+                    action="hafiz query '' --observations --limit 50 --json",
+                )
+            )
 
         # Stale annotations (older than 90 days)
         cutoff = datetime.now(UTC) - timedelta(days=90)
@@ -204,14 +202,16 @@ async def run_review(project: str | None = None) -> ReviewReport:
         ).scalar() or 0
 
         if stale > 0:
-            report.findings.append(ReviewFinding(
-                category="staleness",
-                severity="info",
-                title=f"{stale} annotations older than 90 days",
-                detail="Older annotations may still be valid, but periodic "
-                       "review keeps knowledge fresh.",
-                action="hafiz journal --since 90d --json  # review and supersede if outdated",
-            ))
+            report.findings.append(
+                ReviewFinding(
+                    category="staleness",
+                    severity="info",
+                    title=f"{stale} annotations older than 90 days",
+                    detail="Older annotations may still be valid, but periodic "
+                    "review keeps knowledge fresh.",
+                    action="hafiz journal --since 90d --json  # review and supersede if outdated",
+                )
+            )
 
         # ── Graph checks ────────────────────────────────────────────────
 
@@ -265,38 +265,38 @@ async def run_review(project: str | None = None) -> ReviewReport:
                         "(target not yet resolved to a unit), which inflates "
                         "this count — those relations exist but aren't linked."
                     )
-                report.findings.append(ReviewFinding(
-                    category="graph",
-                    severity="suggestion" if pct > 30 else "info",
-                    title=f"{orphan_count} orphan units ({pct}%)",
-                    detail=detail,
-                    action="hafiz graph show <unit> --json  # check if relations are missing",
-                ))
+                report.findings.append(
+                    ReviewFinding(
+                        category="graph",
+                        severity="suggestion" if pct > 30 else "info",
+                        title=f"{orphan_count} orphan units ({pct}%)",
+                        detail=detail,
+                        action="hafiz graph show <unit> --json  # check if relations are missing",
+                    )
+                )
 
         # ── Coverage checks ─────────────────────────────────────────────
 
         # Projects with units but no edges — the graph hasn't been built for
         # them (extraction / structural linking not yet run). Per-project
         # unit and edge presence is reached via the file → project axis.
-        proj_units = (
-            await session.execute(_units_by_project())
-        ).all()
-        proj_edges = (
-            await session.execute(_edges_by_project())
-        ).all()
+        proj_units = (await session.execute(_units_by_project())).all()
+        proj_edges = (await session.execute(_edges_by_project())).all()
 
         edge_projects = {p for p, _ in proj_edges if p}
         for proj, count in proj_units:
             if proj and proj not in edge_projects:
-                report.findings.append(ReviewFinding(
-                    category="coverage",
-                    severity="suggestion",
-                    title=f"Project '{proj}' has {count} units but no edges",
-                    detail="No relations were extracted for this project. "
-                           "Graph queries won't return results.",
-                    action=f"hafiz extract export --project {proj} --limit 200"
-                           "  # then import semantic edges",
-                ))
+                report.findings.append(
+                    ReviewFinding(
+                        category="coverage",
+                        severity="suggestion",
+                        title=f"Project '{proj}' has {count} units but no edges",
+                        detail="No relations were extracted for this project. "
+                        "Graph queries won't return results.",
+                        action=f"hafiz extract export --project {proj} --limit 200"
+                        "  # then import semantic edges",
+                    )
+                )
 
         # Unit-to-embedding ratio (rough index coverage signal)
         if embedding_count > 0 and unit_count > 0:
@@ -325,38 +325,24 @@ def _ann_filter(stmt, project: str | None):
 
 
 def _annotation_count(project: str | None):
-    stmt = (
-        select(func.count())
-        .select_from(Annotation)
-        .where(_ann_live())
-    )
+    stmt = select(func.count()).select_from(Annotation).where(_ann_live())
     return _ann_filter(stmt, project)
 
 
 def _unit_filter(stmt, project: str | None):
     """Scope a Unit-based count to a project via the files join."""
     if project:
-        stmt = stmt.where(
-            Unit.file_id.in_(select(File.id).where(File.project == project))
-        )
+        stmt = stmt.where(Unit.file_id.in_(select(File.id).where(File.project == project)))
     return stmt
 
 
 def _unit_count(project: str | None):
-    stmt = (
-        select(func.count())
-        .select_from(Unit)
-        .where(Unit.valid_until.is_(None))
-    )
+    stmt = select(func.count()).select_from(Unit).where(Unit.valid_until.is_(None))
     return _unit_filter(stmt, project)
 
 
 def _edge_count(project: str | None):
-    stmt = (
-        select(func.count())
-        .select_from(Edge)
-        .where(Edge.superseded_at.is_(None))
-    )
+    stmt = select(func.count()).select_from(Edge).where(Edge.superseded_at.is_(None))
     if project:
         stmt = stmt.where(
             Edge.source_unit_id.in_(

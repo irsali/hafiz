@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.console import Console
 from rich.panel import Panel
@@ -111,11 +111,11 @@ def run_session_end(output_json: bool = False) -> None:
 def _humanize_age(when: datetime | None) -> str:
     if when is None:
         return "—"
-    now = datetime.now(timezone.utc)
-    delta = now - when.astimezone(timezone.utc)
+    now = datetime.now(UTC)
+    delta = now - when.astimezone(UTC)
     days = delta.days
     if days < 0:
-        return when.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        return when.astimezone(UTC).strftime("%Y-%m-%d")
     if days == 0:
         h = delta.seconds // 3600
         if h == 0:
@@ -182,9 +182,7 @@ def run_session_list(
                             "scope_value": r.scope_value,
                             "task": r.task,
                             "started_at": r.started_at.isoformat(),
-                            "ended_at": r.ended_at.isoformat()
-                            if r.ended_at
-                            else None,
+                            "ended_at": r.ended_at.isoformat() if r.ended_at else None,
                         }
                         for r in rows
                     ],

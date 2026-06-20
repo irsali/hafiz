@@ -24,7 +24,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -54,9 +54,7 @@ def _approx_token_count(text: str) -> int:
     return max(1, len(text) // TOKEN_RATIO)
 
 
-_TOOL_RESULT_DOMINANCE_RE = re.compile(
-    r"```[\s\S]+?```|<file[^>]*>[\s\S]+?</file>", re.MULTILINE
-)
+_TOOL_RESULT_DOMINANCE_RE = re.compile(r"```[\s\S]+?```|<file[^>]*>[\s\S]+?</file>", re.MULTILINE)
 
 
 def _is_pure_tool_result_echo(role: str, content: str) -> bool:
@@ -168,7 +166,7 @@ async def upsert_communication(
     Idempotency by ``(agent, external_id)`` — re-importing the same
     Claude Code session JSONL is a no-op at this layer.
     """
-    started_at = started_at or datetime.now(timezone.utc)
+    started_at = started_at or datetime.now(UTC)
     retention = retention_until or _default_retention(started_at)
 
     factory = get_session_factory()
@@ -329,12 +327,10 @@ async def get_communication(
         if row is None:
             return None
         if not include_tombstoned and row.valid_until is not None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if row.valid_until <= now:
                 return None
-        count_stmt = select(func.count()).where(
-            CommunicationMessage.communication_id == row.id
-        )
+        count_stmt = select(func.count()).where(CommunicationMessage.communication_id == row.id)
         count = (await session.execute(count_stmt)).scalar() or 0
         return CommunicationRow(
             id=str(row.id),
@@ -413,24 +409,20 @@ async def search_messages(
     primary by default.
     """
     query_embedding = await embed_query(query)
-    similarity = (
-        1 - CommunicationMessage.embedding.cosine_distance(query_embedding)
-    ).label("similarity")
+    similarity = (1 - CommunicationMessage.embedding.cosine_distance(query_embedding)).label(
+        "similarity"
+    )
 
     factory = get_session_factory()
     async with factory() as session:
         stmt = (
             select(CommunicationMessage, similarity)
             .where(CommunicationMessage.embedding.isnot(None))
-            .order_by(
-                CommunicationMessage.embedding.cosine_distance(query_embedding)
-            )
+            .order_by(CommunicationMessage.embedding.cosine_distance(query_embedding))
             .limit(limit)
         )
         if communication_id is not None:
-            stmt = stmt.where(
-                CommunicationMessage.communication_id == communication_id
-            )
+            stmt = stmt.where(CommunicationMessage.communication_id == communication_id)
         elif agent is not None or session_id is not None:
             stmt = stmt.join(
                 Communication,
@@ -482,7 +474,7 @@ async def tombstone_expired_communications(
 
     Returns ``{"matched": N, "tombstoned": M, "dry_run": bool}``.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     factory = get_session_factory()
     async with factory() as session:
         stmt = select(Communication).where(
@@ -505,9 +497,7 @@ async def tombstone_expired_communications(
         }
 
 
-async def forget_communication(
-    comm_id: uuid.UUID, *, hard: bool = False
-) -> dict:
+async def forget_communication(comm_id: uuid.UUID, *, hard: bool = False) -> dict:
     """Explicit redaction of a communication.
 
     ``hard=False`` (default): tombstone only (sets ``valid_until = now``;
@@ -534,7 +524,7 @@ async def forget_communication(
                 "hard": True,
                 "found": True,
             }
-        row.valid_until = datetime.now(timezone.utc)
+        row.valid_until = datetime.now(UTC)
         await session.commit()
         return {
             "id": str(comm_id),

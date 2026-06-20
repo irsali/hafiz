@@ -38,7 +38,7 @@ import os
 import re
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SESSION_DIR = Path.home() / ".cache" / "hafiz"
@@ -129,9 +129,7 @@ def current_session() -> dict | None:
     return upgraded or data
 
 
-async def _upgrade_legacy_cursor(
-    slug: str, data: dict, path: Path
-) -> dict | None:
+async def _upgrade_legacy_cursor(slug: str, data: dict, path: Path) -> dict | None:
     """Create or look up a sessions row for this slug and rewrite the cursor."""
     from hafiz.core.database import close_engine
     from hafiz.core.sessions import create_session, get_session_by_slug
@@ -180,7 +178,7 @@ def _parse_iso(value) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -213,18 +211,20 @@ def start_session(
     _validate_domain_filters(inc, exc)
 
     slug = make_session_id(name)
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     tty = _tty_key()
-    stored = _run_async(_create_session_db(
-        slug=slug,
-        name=name,
-        agent=agent,
-        scope_kind="project" if project else None,
-        scope_value=project,
-        task=task,
-        tty=tty,
-        started_at=started,
-    ))
+    stored = _run_async(
+        _create_session_db(
+            slug=slug,
+            name=name,
+            agent=agent,
+            scope_kind="project" if project else None,
+            scope_value=project,
+            task=task,
+            tty=tty,
+            started_at=started,
+        )
+    )
 
     data = {
         "session_uuid": str(stored.id),

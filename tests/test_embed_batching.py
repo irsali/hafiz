@@ -27,7 +27,6 @@ import pytest
 
 from hafiz.core import embeddings
 
-
 # ── _safe_batch_size table ─────────────────────────────────────────────
 
 
@@ -50,10 +49,7 @@ def test_safe_batch_size_is_monotone_non_increasing():
     """Larger ``max_part_chars`` must NEVER license a larger batch.
     Per-doc memory grows with chars (quadratic for attention), so
     the safe batch must shrink — anything else is the OOM trap."""
-    sizes = [
-        embeddings._safe_batch_size(c)
-        for c in (1_000, 2_000, 4_000, 8_000, 16_000)
-    ]
+    sizes = [embeddings._safe_batch_size(c) for c in (1_000, 2_000, 4_000, 8_000, 16_000)]
     assert sizes == sorted(sizes, reverse=True)
 
 
@@ -133,7 +129,7 @@ async def test_embed_texts_chunks_long_list(monkeypatch):
 async def test_embed_texts_preserves_order_across_sub_batches(monkeypatch):
     """Sub-batches must be concatenated in order — a vector misalignment
     between texts and embeddings would silently corrupt the index."""
-    fake = _stub_model(monkeypatch)
+    _stub_model(monkeypatch)
     _stub_max_chars(monkeypatch, 4_000)
 
     texts = [f"text-of-length-{i:03d}" for i in range(20)]

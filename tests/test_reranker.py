@@ -30,9 +30,7 @@ async def test_rerank_falls_back_to_input_order_on_model_failure(monkeypatch):
 
 
 async def test_rerank_respects_top_n_on_fallback(monkeypatch):
-    monkeypatch.setattr(
-        reranker, "get_reranker", lambda: (_ for _ in ()).throw(RuntimeError("x"))
-    )
+    monkeypatch.setattr(reranker, "get_reranker", lambda: (_ for _ in ()).throw(RuntimeError("x")))
     items = [{"c": str(i)} for i in range(10)]
     out = await reranker.rerank("q", items, text_of=lambda r: r["c"], top_n=3)
     assert out == items[:3]

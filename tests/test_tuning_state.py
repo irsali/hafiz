@@ -13,7 +13,6 @@ import pytest
 from hafiz.core.tuning_state import (
     CURRENT_SCHEMA,
     TuningEntry,
-    TuningState,
     build_state,
     cache_file_path,
     clear_state,
@@ -151,10 +150,7 @@ def test_get_value_returns_value_when_match():
             entries={"embedding.max_part_chars": TuningEntry(value=8_000)},
         )
     )
-    assert (
-        get_value("embedding.max_part_chars", fingerprint="host1", ort_version=None)
-        == 8_000
-    )
+    assert get_value("embedding.max_part_chars", fingerprint="host1", ort_version=None) == 8_000
 
 
 def test_get_value_ignores_stale_entries():
@@ -167,10 +163,7 @@ def test_get_value_ignores_stale_entries():
             entries={"embedding.max_part_chars": TuningEntry(value=8_000)},
         )
     )
-    assert (
-        get_value("embedding.max_part_chars", fingerprint="new_host", ort_version=None)
-        is None
-    )
+    assert get_value("embedding.max_part_chars", fingerprint="new_host", ort_version=None) is None
 
 
 # ── merge ──────────────────────────────────────────────────────────────

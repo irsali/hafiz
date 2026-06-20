@@ -10,17 +10,12 @@ from __future__ import annotations
 
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
-
 
 CONFIG_FILENAME = "hafiz.toml"
 

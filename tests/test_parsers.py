@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 from hafiz.core.parsers import (
-    Parser,
     ParsedEdge,
     ParsedUnit,
+    Parser,
     ParseResult,
     ParserRegistry,
     get_registry,
@@ -25,10 +25,10 @@ from hafiz.core.parsers.prose import ProseParser
 from hafiz.core.parsers.python_ast import PythonAstParser
 from hafiz.core.parsers.whole_file import WholeFileParser
 
-
 # ---------------------------------------------------------------------------
 # Protocol contract
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "parser",
@@ -60,6 +60,7 @@ def test_parse_returns_parse_result(parser, path, content):
 # PythonAstParser
 # ---------------------------------------------------------------------------
 
+
 def test_python_module_unit_always_emitted():
     result = PythonAstParser().parse(Path("mod.py"), "x = 1\n")
     kinds = [u.kind for u in result.units]
@@ -69,14 +70,7 @@ def test_python_module_unit_always_emitted():
 
 
 def test_python_function_class_method_kinds():
-    code = (
-        "def top_level():\n"
-        "    pass\n"
-        "\n"
-        "class Foo:\n"
-        "    def bar(self):\n"
-        "        return 1\n"
-    )
+    code = "def top_level():\n    pass\n\nclass Foo:\n    def bar(self):\n        return 1\n"
     result = PythonAstParser().parse(Path("a.py"), code)
     kinds_by_name = {u.name: u.kind for u in result.units}
     assert kinds_by_name["top_level"] == "code.function"
@@ -88,10 +82,7 @@ def test_python_inherits_edge():
     code = "class Base:\n    pass\n\nclass Child(Base):\n    pass\n"
     result = PythonAstParser().parse(Path("a.py"), code)
     inherits = [e for e in result.edges if e.relation == "inherits"]
-    assert any(
-        e.source_name == "Child" and e.target_name == "Base"
-        for e in inherits
-    )
+    assert any(e.source_name == "Child" and e.target_name == "Base" for e in inherits)
 
 
 def test_python_imports_edges():
@@ -133,9 +124,7 @@ def test_python_syntax_error_degrades_to_module_unit():
 def test_python_async_function():
     code = "async def fetch():\n    return 1\n"
     result = PythonAstParser().parse(Path("a.py"), code)
-    assert any(
-        u.kind == "code.function" and u.name == "fetch" for u in result.units
-    )
+    assert any(u.kind == "code.function" and u.name == "fetch" for u in result.units)
 
 
 def test_python_nested_class():
@@ -150,6 +139,7 @@ def test_python_nested_class():
 # ---------------------------------------------------------------------------
 # ProseParser
 # ---------------------------------------------------------------------------
+
 
 def test_prose_heading_tree():
     md = (
@@ -181,14 +171,7 @@ def test_prose_no_headings_gives_doc_body():
 
 
 def test_prose_emits_paragraph_children():
-    md = (
-        "# Intro\n"
-        "\n"
-        "First para.\n"
-        "still first para.\n"
-        "\n"
-        "Second para.\n"
-    )
+    md = "# Intro\n\nFirst para.\nstill first para.\n\nSecond para.\n"
     result = ProseParser().parse(Path("n.md"), md)
     paragraphs = [u for u in result.units if u.kind == "doc.paragraph"]
     assert len(paragraphs) == 2
@@ -206,6 +189,7 @@ def test_prose_ignores_headings_in_code_blocks():
 # WholeFileParser
 # ---------------------------------------------------------------------------
 
+
 def test_whole_file_emits_one_unit():
     result = WholeFileParser().parse(Path("mystery.bin"), "opaque content\n")
     assert len(result.units) == 1
@@ -217,6 +201,7 @@ def test_whole_file_emits_one_unit():
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 def test_registry_routes_by_extension():
     r = ParserRegistry()
@@ -280,6 +265,7 @@ def test_default_registry_covers_shipped_parsers():
 # ---------------------------------------------------------------------------
 # Entry-point discovery
 # ---------------------------------------------------------------------------
+
 
 def test_entry_point_parser_is_registered(monkeypatch):
     """A fake `hafiz.parsers` entry point should be picked up by

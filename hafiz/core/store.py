@@ -24,10 +24,10 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +50,6 @@ from hafiz.core.embeddings import embed_texts
 from hafiz.core.git_context import commit_metadata, is_commit_reachable
 from hafiz.core.parsers import ParsedEdge, ParsedUnit, Parser, get_registry
 from hafiz.core.tunables import resolve as resolve_tunable
-
 
 EmbedFn = Callable[[list[str]], Awaitable[list[list[float]]]]
 
@@ -97,7 +96,7 @@ async def _upsert_file(
     """Find the File row for (project, path); create if missing. If the
     row exists but was tombstoned (valid_until set), clear it — the file
     has re-appeared."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = select(File).where(File.project == project, File.path == path)
     existing = (await session.execute(stmt)).scalar_one_or_none()
 
@@ -122,9 +121,7 @@ async def _upsert_file(
     return new_file
 
 
-async def _current_revision(
-    session: AsyncSession, unit_id: uuid.UUID
-) -> UnitRevision | None:
+async def _current_revision(session: AsyncSession, unit_id: uuid.UUID) -> UnitRevision | None:
     stmt = (
         select(UnitRevision)
         .where(
@@ -205,7 +202,7 @@ async def index_file(
     try:
         parser = get_registry().for_path(abs_path)
         parse_result = parser.parse(abs_path, content)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         source_tag = _source_tag(parser)
 
         file = await _upsert_file(
@@ -278,21 +275,16 @@ async def index_file(
         max_chars = resolve_tunable("embedding.max_part_chars")
         per_rev_parts: list[tuple[UnitRevision, list[EmbeddingPart]]] = []
         for rev, rev_content in changed_revisions:
-            per_rev_parts.append(
-                (rev, prepare_embedding_parts(rev_content, max_chars=max_chars))
-            )
+            per_rev_parts.append((rev, prepare_embedding_parts(rev_content, max_chars=max_chars)))
 
-        all_part_texts: list[str] = [
-            p.content for _, parts in per_rev_parts for p in parts
-        ]
+        all_part_texts: list[str] = [p.content for _, parts in per_rev_parts for p in parts]
 
         embeddings_written = 0
         if all_part_texts:
             vectors = await embed_fn(all_part_texts)
             if len(vectors) != len(all_part_texts):
                 raise RuntimeError(
-                    f"Embedder returned {len(vectors)} vectors for "
-                    f"{len(all_part_texts)} inputs"
+                    f"Embedder returned {len(vectors)} vectors for {len(all_part_texts)} inputs"
                 )
             v_idx = 0
             for rev, parts in per_rev_parts:
@@ -406,9 +398,7 @@ async def _sync_edges(
         source_tag_for_writes = source_tag
 
     # ── Resolve source_name / target_name against the file's current units ──
-    file_unit_stmt = select(Unit).where(
-        Unit.file_id == file.id, Unit.valid_until.is_(None)
-    )
+    file_unit_stmt = select(Unit).where(Unit.file_id == file.id, Unit.valid_until.is_(None))
     file_units = (await session.execute(file_unit_stmt)).scalars().all()
     by_name: dict[str, Unit] = {u.name: u for u in file_units}
 
@@ -587,7 +577,7 @@ async def reconcile_orphaned_commits(
         return 0
 
     session_factory = get_session_factory()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     reconciled = 0
 
     async with session_factory() as session:
@@ -616,15 +606,13 @@ async def tombstone_vanished_files(
     """Mark files in DB under ``project`` whose paths weren't seen this
     pass as tombstoned. Their units cascade-tombstone via the same
     pass in the next ingest or via explicit prune. Returns the count."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     owns_session = session is None
     if owns_session:
         factory = get_session_factory()
         session = factory()
     try:
-        stmt = select(File).where(
-            File.project == project, File.valid_until.is_(None)
-        )
+        stmt = select(File).where(File.project == project, File.valid_until.is_(None))
         all_files = (await session.execute(stmt)).scalars().all()
         tombstoned = 0
         for f in all_files:

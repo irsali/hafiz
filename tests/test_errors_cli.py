@@ -153,9 +153,7 @@ def test_list_group_by_exception_type_json_shape():
     _inject(RuntimeError, "b", ["ingest"])
     _inject(ValueError, "c", ["query", "x"])
 
-    result = runner.invoke(
-        app, ["errors", "list", "--group-by", "exception_type", "--json"]
-    )
+    result = runner.invoke(app, ["errors", "list", "--group-by", "exception_type", "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
 
@@ -194,9 +192,7 @@ def test_list_group_by_with_suggestions_count():
         error_log.log_exception(e, argv=["graph", "stats"])
     _inject(RuntimeError, "no advice for me", ["ingest"])
 
-    result = runner.invoke(
-        app, ["errors", "list", "--group-by", "exception_type", "--json"]
-    )
+    result = runner.invoke(app, ["errors", "list", "--group-by", "exception_type", "--json"])
     payload = json.loads(result.stdout)
     assert payload["total"] == 2
     assert payload["with_suggestions"] == 1
@@ -206,9 +202,7 @@ def test_list_group_by_with_suggestions_count():
 
 
 def test_list_group_by_empty_log():
-    result = runner.invoke(
-        app, ["errors", "list", "--group-by", "exception_type", "--json"]
-    )
+    result = runner.invoke(app, ["errors", "list", "--group-by", "exception_type", "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["total"] == 0
@@ -217,9 +211,7 @@ def test_list_group_by_empty_log():
 
 
 def test_list_group_by_invalid_value_errors():
-    result = runner.invoke(
-        app, ["errors", "list", "--group-by", "command", "--json"]
-    )
+    result = runner.invoke(app, ["errors", "list", "--group-by", "command", "--json"])
     assert result.exit_code != 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is False

@@ -23,7 +23,6 @@ from rich.tree import Tree
 
 from hafiz.core import graph_analysis as ga
 
-
 console = Console()
 
 
@@ -72,8 +71,7 @@ def _resolve_or_exit(
         raise SystemExit(1)
     if len(matches) > 1:
         alternatives = ", ".join(
-            f"{G.nodes[n].get('name')} ({G.nodes[n].get('kind')})"
-            for n in matches
+            f"{G.nodes[n].get('name')} ({G.nodes[n].get('kind')})" for n in matches
         )
         console.print(
             f"[yellow]Warning: {len(matches)} units share the name "
@@ -165,11 +163,7 @@ def _walk_and_render(
     distances = ga.walk(G, node, depth=depth, direction=direction)
 
     # Drop self, sort by distance then name
-    reachable = [
-        (n, d)
-        for n, d in distances.items()
-        if n != node
-    ]
+    reachable = [(n, d) for n, d in distances.items() if n != node]
     reachable.sort(key=lambda kv: (kv[1], (G.nodes[kv[0]].get("name") or "").lower()))
 
     if output_json:
@@ -343,9 +337,7 @@ def run_graph_path(
         console.print()
         return
 
-    tree = Tree(
-        f"[bold]Path[/bold] ({len(path) - 1} hop{'s' if len(path) - 1 != 1 else ''})"
-    )
+    tree = Tree(f"[bold]Path[/bold] ({len(path) - 1} hop{'s' if len(path) - 1 != 1 else ''})")
     for i, nid in enumerate(path):
         label = _entity_label(G, nid)
         if i + 1 < len(path):
@@ -438,8 +430,7 @@ def run_graph_stats(
         payload = asdict(stats)
         payload["project"] = project
         payload["top_by_pagerank"] = [
-            {**_node_payload(G, nid), "score": score}
-            for nid, score in stats.top_by_pagerank
+            {**_node_payload(G, nid), "score": score} for nid, score in stats.top_by_pagerank
         ]
         payload["cache_built_at"] = meta.built_at.isoformat()
         console.print_json(json.dumps(payload, default=str))

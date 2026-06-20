@@ -49,9 +49,7 @@ def _isolated_env(tmp_path, monkeypatch):
 
 
 def test_config_get_reports_default_when_nothing_set():
-    result = runner.invoke(
-        app, ["config", "get", "embedding.max_part_chars", "--json"]
-    )
+    result = runner.invoke(app, ["config", "get", "embedding.max_part_chars", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["key"] == "embedding.max_part_chars"
@@ -89,9 +87,7 @@ def test_config_set_writes_user_scope_toml_and_get_sees_it(tmp_path):
     assert "max_part_chars = 4096" in content
 
     # A subsequent `config get` must see the TOML-sourced value.
-    got = runner.invoke(
-        app, ["config", "get", "embedding.max_part_chars", "--json"]
-    )
+    got = runner.invoke(app, ["config", "get", "embedding.max_part_chars", "--json"])
     assert got.exit_code == 0
     payload2 = json.loads(got.stdout)
     assert payload2["value"] == 4096
@@ -128,9 +124,7 @@ def test_config_unset_removes_key_and_prunes_empty_tables():
     target = Path.home() / ".config" / "hafiz" / "hafiz.toml"
     assert "max_part_chars" in target.read_text()
 
-    result = runner.invoke(
-        app, ["config", "unset", "embedding.max_part_chars", "--json"]
-    )
+    result = runner.invoke(app, ["config", "unset", "embedding.max_part_chars", "--json"])
     assert result.exit_code == 0, result.output
 
     # After unset the key should be gone — and, since `[embedding]` now
@@ -141,9 +135,7 @@ def test_config_unset_removes_key_and_prunes_empty_tables():
 
 
 def test_config_unset_noop_when_file_absent():
-    result = runner.invoke(
-        app, ["config", "unset", "embedding.max_part_chars", "--json"]
-    )
+    result = runner.invoke(app, ["config", "unset", "embedding.max_part_chars", "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload.get("no_op") is True
@@ -156,9 +148,7 @@ def test_resolution_env_wins_over_toml(monkeypatch):
     runner.invoke(app, ["config", "set", "embedding.max_part_chars", "4000"])
     monkeypatch.setenv("HAFIZ_EMBEDDING__MAX_PART_CHARS", "9999")
 
-    got = runner.invoke(
-        app, ["config", "get", "embedding.max_part_chars", "--json"]
-    )
+    got = runner.invoke(app, ["config", "get", "embedding.max_part_chars", "--json"])
     payload = json.loads(got.stdout)
     assert payload["value"] == 9999
     assert payload["source"] == "env"
@@ -179,9 +169,7 @@ def test_resolution_toml_wins_over_sticky():
     # TOML-set a different value.
     runner.invoke(app, ["config", "set", "embedding.max_part_chars", "4096"])
 
-    got = runner.invoke(
-        app, ["config", "get", "embedding.max_part_chars", "--json"]
-    )
+    got = runner.invoke(app, ["config", "get", "embedding.max_part_chars", "--json"])
     payload = json.loads(got.stdout)
     assert payload["source"] == "toml"
     assert payload["value"] == 4096
@@ -199,9 +187,7 @@ def test_resolution_sticky_wins_over_default():
         )
     )
 
-    got = runner.invoke(
-        app, ["config", "get", "embedding.max_part_chars", "--json"]
-    )
+    got = runner.invoke(app, ["config", "get", "embedding.max_part_chars", "--json"])
     payload = json.loads(got.stdout)
     assert payload["source"] == "sticky"
     assert payload["value"] == 16_000

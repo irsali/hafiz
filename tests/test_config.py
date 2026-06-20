@@ -1,16 +1,13 @@
 """Tests for hafiz.core.config."""
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 from hafiz.core.config import (
-    HafizSettings,
     DatabaseSettings,
     EmbeddingSettings,
-    LLMSettings,
+    HafizSettings,
     WorkspaceSettings,
-    load_settings,
     reset_settings,
 )
 
@@ -27,7 +24,9 @@ def test_default_settings():
 
 def test_env_override():
     """Environment variables should override defaults."""
-    with patch.dict(os.environ, {"HAFIZ_DATABASE__URL": "postgresql+asyncpg://test:test@db:5432/test"}):
+    with patch.dict(
+        os.environ, {"HAFIZ_DATABASE__URL": "postgresql+asyncpg://test:test@db:5432/test"}
+    ):
         reset_settings()
         settings = HafizSettings()
         assert settings.database.url == "postgresql+asyncpg://test:test@db:5432/test"
