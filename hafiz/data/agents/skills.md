@@ -153,11 +153,32 @@ The reasoning loop:
    hafiz observe "<distilled decision>" --type decision --derived-from <note-id>,<note-id>
    ```
 
-4. **Supersede when things change.** Never silently delete — write the
-   new decision with `--supersedes <old-id>` so the old stays auditable:
+4. **Handle contradicting knowledge — never overwrite.** When new
+   information conflicts with something already recorded, Hafiz's model
+   is *write-new, tombstone-old* (the old row is kept for audit, just
+   hidden from default recall). Pick the path by what changed:
+
+   | Situation | Action |
+   |---|---|
+   | New info **contradicts or replaces** an existing annotation | `hafiz observe "<new>" --type <kind> --supersedes <old-id>` — inserts the new row and atomically marks the old one inactive |
+   | An existing annotation is **simply wrong**, with no replacement | `hafiz forget <old-id> --annotation` — retires it (soft tombstone; drops from recall, kept for audit) |
+   | The info is **net-new** (no conflict) | plain `hafiz observe "<text>" --type <kind>` — no supersession |
+
    ```bash
    hafiz observe "<new decision>" --type decision --supersedes <old-id>
+   hafiz forget <old-id> --annotation          # retire without a replacement
    ```
+
+   **Guardrails:** supersede only on *genuine* contradiction or
+   replacement — not on a reword or a related-but-still-true fact, or
+   the brain fills with near-duplicates. **Verify the `<old-id>` first**
+   (`hafiz query --observations "<topic>"`) so you don't bury a good row
+   by superseding the wrong one. Both `--supersedes` and
+   `forget --annotation` are *soft* tombstones — the row stays auditable
+   and you can read prior beliefs with
+   `hafiz query --observations "<topic>" --include-superseded`. Never use
+   `hafiz forget --hard` on knowledge-layer annotations; `--hard` is for
+   the source layer (transcripts) only.
 
 Sessions (optional) group everything you record in one terminal:
 ```bash
@@ -416,6 +437,9 @@ workstation is a no-op, not a hazard.
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz observe "<text>"` | Store a fact / decision / learning / pattern / warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
+| `hafiz observe ... --supersedes <id>` | Replace a now-wrong annotation: insert the new row, mark the old one inactive (kept for audit) | `--supersedes`, plus all `observe` flags |
+| `hafiz forget <id> --annotation` | Retire a wrong annotation with no replacement (soft tombstone; drops from recall, kept for audit) | `--annotation`, `--json` |
+| `hafiz query --observations "<topic>" --include-superseded` | Read prior beliefs — superseded/expired annotations, dimmed | `--include-superseded`, plus all `query --observations` flags |
 | `hafiz note "<text>"` | Low-bar capture — `kind="note"` | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
@@ -427,7 +451,7 @@ workstation is a no-op, not a hazard.
 - **Expiration** (`observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01`. Sets `valid_until`; expired rows are hidden from `query --observations` by default.
 - **Git auto-captured**: `commit_hash` on every write inside a repo; `branch` / `is_dirty` on annotations.
 - **Staleness**: `query --observations` shows age (`3mo ago`) and dims rows older than 90d.
-- **Supersession**: replace a decision with `--supersedes <old-uuid>`; prefer over silent deletion.
+- **Contradicting knowledge**: never overwrite. Replace with `--supersedes <old-uuid>`, retire (no replacement) with `forget <id> --annotation`, read prior beliefs with `--include-superseded`. See *Capture → Distill* step 4 for the full decision tree.
 - **Lineage**: `--derived-from <ids>` records distillation source without replacing.
 
 ### Extraction (agent contract v2)
