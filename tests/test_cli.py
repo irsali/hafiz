@@ -105,6 +105,31 @@ def test_forget_help_documents_annotation_mode():
     assert "--annotation" in result.output
 
 
+def test_export_help_lists_flags():
+    result = runner.invoke(app, ["export", "--help"])
+    assert result.exit_code == 0
+    assert "--format" in result.output
+    assert "--include-transcripts" in result.output
+    assert "--out" in result.output
+
+
+def test_export_help_distinguishes_from_extract_export():
+    """The contract collision with `extract export` must be documented."""
+    result = runner.invoke(app, ["export", "--help"])
+    assert result.exit_code == 0
+    assert "extract export" in result.output
+
+
+def test_export_rejects_bad_format(tmp_path):
+    result = runner.invoke(
+        app, ["export", "--format", "xml", "--out", str(tmp_path / "e"), "--json"]
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert "unknown format" in payload["error"]
+
+
 def test_query_mutual_exclusion():
     result = runner.invoke(app, ["query", "test", "--project", "x", "--workspace"])
     assert result.exit_code == 1

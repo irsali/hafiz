@@ -273,8 +273,8 @@ Ideas, not committed — most are unblocked by the Structural Grounding work (Ph
 - [ ] **Cross-Domain Learning** — "How did I reason about X in code? Apply that to my research notes." (Generalized from the original *Cross-Project Learning* under second-brain scope.)
 - [ ] **Dashboard** — simple web UI showing the knowledge graph visually.
 - [ ] **Embedding Model Migration** — install-time model choice + `hafiz embeddings migrate` to re-embed corpus when switching models (enforce one model per DB).
-- [ ] **Markdown Dump/Export** — export captures, transcripts, observations, and journal entries as `.md` files for portability, backup, and human review.
-- [ ] **DB export/import** — `hafiz export --format json` / `hafiz import` for backup and portability.
+- [x] **Markdown Dump/Export** — `hafiz export` dumps observations (+ optional transcripts) as `.md` for portability, backup, and human review. Code excluded (git is its sovereign copy). The eject complement to `forget`. See [workitems/active/sovereignty-export.md](../workitems/active/sovereignty-export.md).
+- [ ] **DB export/import** — `hafiz export --format json` ships (lossless JSONL); the round-trip `hafiz import` is still open — see [workitems/active/sovereignty-export.md](../workitems/active/sovereignty-export.md) Phase 2.
 - [ ] **Unify `device_state` onto the Tunable registry** — collapse the GPU/CPU sticky-fallback into the same `Tunable` resolution chain as `embedding.max_part_chars`. Deferred from [workitems/done/tunable-registry.md](../workitems/done/tunable-registry.md) Phase 4 until post-2.0.0; revisit when adding the third tunable forces a decision.
 
 ---

@@ -253,6 +253,23 @@ Defaults:
 - Retention: 90 days from `started_at` unless explicitly overridden at insert time.
 - Selective embedding: skip messages under ~30 tokens; skip pure tool-result echoes; embed when `marked_salient=true` regardless of length.
 
+### Sovereignty (export)
+
+The data-portability complement to `forget`. Dumps the brain's **wisdom layer** — annotations (decisions / facts / learnings / patterns / warnings) — to plain files for backup, human review, or migration. Code and AST structure are **excluded** (git is their sovereign copy). Forgotten (`valid_until`) and retention-expired rows are never included — export reflects only live data.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `export` | One-way dump of annotations (+ optional transcripts) to a plain-files directory | Annotations | `--json` → `{ok, path, format, counts, warning}` | rich table + path + secrets warning |
+
+Defaults & flags:
+- `--out` / `-o`: output directory (default `./hafiz-export`). Written atomically (temp dir → rename); an existing directory is replaced.
+- `--format` / `-f`: `md` (human-readable tree, default) or `json` (per-table JSONL — `knowledge/annotations.jsonl`, plus `source/*.jsonl` when transcripts are included). Lossless except embeddings.
+- `--include-transcripts`: also dump source-layer agent transcripts (opt-in, mirrors `query` / `context`). Off by default.
+- `--project`: limit to one project; default is the whole brain.
+- Every export writes a `manifest.json` (tool/schema version, format, generated-at, scope, counts).
+- **Distinct from `extract export`**, which emits AST units as an agent-extraction payload — not a portability dump.
+- `import` (round-trip restore) is **not yet implemented**; the `json` format is designed to enable it later.
+
 ### Review
 
 | Command | Purpose | Brain | Agent use | Terminal use |

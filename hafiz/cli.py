@@ -1361,6 +1361,63 @@ def forget(
         run_forget_target(target, hard=hard, output_json=json_output)
 
 
+# ─── EXPORT ───────────────────────────────────────────────────────────
+
+
+@app.command()
+def export(
+    out: str = typer.Option(
+        "./hafiz-export",
+        "--out",
+        "-o",
+        help="Output directory. Replaced atomically if it exists.",
+    ),
+    fmt: str = typer.Option(
+        "md",
+        "--format",
+        "-f",
+        help="Output format: 'md' (human-readable, default) or 'json' (lossless JSONL).",
+    ),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        help="Limit the export to a single project. Default: the whole brain.",
+    ),
+    include_transcripts: bool = typer.Option(
+        False,
+        "--include-transcripts",
+        help=(
+            "Also dump source-layer agent transcripts (opt-in, mirrors "
+            "query/context). Off by default."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output a JSON summary."),
+) -> None:
+    """Export your brain's wisdom to plain files — the sovereignty eject.
+
+    Dumps the irreplaceable layer (decisions, facts, learnings, patterns,
+    warnings — and optionally agent transcripts) to a directory of plain
+    files for backup, human review, or migration. The natural complement
+    to ``hafiz forget``: forgotten and retention-expired rows are never
+    included.
+
+    Code is intentionally excluded — your git repository is already its
+    sovereign copy.
+
+    Distinct from ``hafiz extract export``, which emits AST units as an
+    agent-extraction payload.
+    """
+    from hafiz.commands.export import run_export
+
+    run_export(
+        out_dir=out,
+        fmt=fmt,
+        project=project,
+        include_transcripts=include_transcripts,
+        output_json=json_output,
+    )
+
+
 # ─── IMPORT ───────────────────────────────────────────────────────────
 
 import_app = typer.Typer(

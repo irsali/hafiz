@@ -134,6 +134,7 @@ You MUST follow these rules in every session:
 | `hafiz import claude-code --project <name>` | Post-hoc importer for Claude Code session JSONL (idempotent) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
+| `hafiz export --out <dir>` | Sovereignty eject — dump the wisdom layer (observations, +``--include-transcripts``) to plain ``.md`` (``--format json`` for lossless JSONL). Excludes code and forgotten/expired rows. Complements ``forget`` |
 
 ## Capture → Distill Workflow
 
@@ -454,6 +455,21 @@ workstation is a no-op, not a hazard.
 | `hafiz recall <target>` | Ordered messages for a session/communication, optionally vector-searched | `--query`, `--role`, `--from`, `--to`, `--has-tool-call`/`--no-tool-call`, `--limit`, `--json` |
 | `hafiz forget <target>` | Targeted redaction (soft tombstone by default). | `--hard`, `--json` |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past `retention_until`. | `--dry-run`, `--json` |
+
+### Sovereignty (export)
+
+The portability complement to `forget`: a one-way dump of the brain's
+**wisdom** (annotations) to plain files. Code/AST structure is excluded
+(git is its sovereign copy); forgotten and retention-expired rows are
+never included. **Not** `extract export` — that emits AST units as an
+agent-extraction payload.
+
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `hafiz export` | One-way dump of observations (+ optional transcripts) to a plain-files directory. JSON ``--json`` summary: `{ok, path, format, counts, warning}`. | `--out`/`-o`, `--format`/`-f md\|json`, `--include-transcripts`, `--project`, `--json` |
+
+Round-trip `hafiz import` is not yet implemented; the `json` format is
+designed to enable it later.
 
 ### Error reporting
 
