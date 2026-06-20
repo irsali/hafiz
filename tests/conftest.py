@@ -24,6 +24,11 @@ Two responsibilities:
      ``HAFIZ_TEST_DB_DISABLE``   — set to ``1`` to opt out and run
                                    tests against the real DB. Use only
                                    when inspecting test residue.
+     ``HAFIZ_TEST_NO_DB``        — set to ``1`` to skip DB setup entirely
+                                   and run only the DB-free subset (the
+                                   macOS CI leg uses this; Postgres isn't
+                                   provisioned there). DB-dependent test
+                                   modules are dropped at collection.
 
 Remove an entry from ``collect_ignore`` when its module is rewired.
 """
@@ -34,10 +39,8 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
-
 
 collect_ignore = [
     # Uses the old chunker API (ChunkResult, chunk_file, LANGUAGE_MAP). The
@@ -48,6 +51,32 @@ collect_ignore = [
     # Chunk from database. Un-quarantine when capture is rewired.
     "test_capture.py",
 ]
+
+
+# Test modules that require a live Postgres + pgvector. In ``HAFIZ_TEST_NO_DB``
+# mode (the macOS CI leg, where Postgres isn't provisioned) these are dropped
+# at collection so the DB-free subset can still run. Keep in sync as DB-touching
+# modules are added — a missing entry surfaces as a connection error, not a
+# silent skip.
+_DB_DEPENDENT = [
+    "test_cli.py",
+    "test_communications_schema.py",
+    "test_config.py",
+    "test_extract_v2.py",
+    "test_git_axis.py",
+    "test_graph_analysis.py",
+    "test_importer_claude_code.py",
+    "test_ingest_flow.py",
+    "test_polymorphic_lineage.py",
+    "test_recall_and_transcripts.py",
+    "test_rewrite_resilience.py",
+    "test_search.py",
+    "test_sessions_db.py",
+    "test_structural_schema.py",
+]
+
+if os.environ.get("HAFIZ_TEST_NO_DB") == "1":
+    collect_ignore += _DB_DEPENDENT
 
 
 # ---------------------------------------------------------------------------
@@ -113,17 +142,13 @@ def _ensure_test_db(test_async_url: str, base_async_url: str, recreate: bool) ->
     admin_url = _swap_db(_to_psql_url(base_async_url), "postgres")
 
     if recreate:
-        rc, _out, err = _psql(
-            admin_url, f'DROP DATABASE IF EXISTS "{test_db_name}"'
-        )
+        rc, _out, err = _psql(admin_url, f'DROP DATABASE IF EXISTS "{test_db_name}"')
         if rc != 0:
             raise RuntimeError(f"DROP DATABASE failed: {err}")
 
     # CREATE DATABASE doesn't have IF NOT EXISTS in PostgreSQL, so we
     # branch on a probe.
-    probe = (
-        f"SELECT 1 FROM pg_database WHERE datname = '{test_db_name}'"
-    )
+    probe = f"SELECT 1 FROM pg_database WHERE datname = '{test_db_name}'"
     rc, out, err = _psql(admin_url, probe)
     if rc != 0:
         raise RuntimeError(f"DB existence probe failed: {err}")
@@ -137,9 +162,7 @@ def _ensure_test_db(test_async_url: str, base_async_url: str, recreate: bool) ->
 def _ensure_pgvector(test_async_url: str) -> None:
     """The hafiz schema needs the ``vector`` extension; a fresh DB
     doesn't have it until we ask. Idempotent."""
-    rc, _out, err = _psql(
-        _to_psql_url(test_async_url), "CREATE EXTENSION IF NOT EXISTS vector"
-    )
+    rc, _out, err = _psql(_to_psql_url(test_async_url), "CREATE EXTENSION IF NOT EXISTS vector")
     if rc != 0:
         raise RuntimeError(f"CREATE EXTENSION vector failed: {err}")
 
@@ -223,5 +246,6 @@ _ = shlex
 
 
 # Eagerly evaluated at module load — establishes the test DB before
-# any test's imports resolve hafiz.core.config.
-_TEST_DB_URL = _setup_test_db_once()
+# any test's imports resolve hafiz.core.config. Skipped in NO_DB mode,
+# where the DB-dependent modules have already been pruned from collection.
+_TEST_DB_URL = None if os.environ.get("HAFIZ_TEST_NO_DB") == "1" else _setup_test_db_once()

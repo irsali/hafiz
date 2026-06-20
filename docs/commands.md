@@ -151,10 +151,10 @@ Rejected at import time: `kind` starting with `code.*`; relations in `{calls, im
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `query "<text>"` | Vector similarity search over the `embeddings` table (joined back to units + files for context) | Embed | `--json` | rich output |
-| `query "<text>" --recall` | Vector search over annotations, **cross-encoder reranked** by default for precision. `--no-rerank` for pure vector order. | Embed + Rerank | `--json` | rich output |
+| `query "<text>" --observations` | Vector search over annotations (wisdom layer), **cross-encoder reranked** by default for precision. `--no-rerank` for pure vector order. Renamed from `--recall` (collided with the top-level `recall` command); `--recall` is a hidden deprecation-warned alias for one release. | Embed + Rerank | `--json` | rich output |
 | `context "<task>"` | Synthesize units + graph + annotations for a task | Embed | `--json` | rich panel |
 
-**Reranking** (on `query --recall`): vector similarity compresses relevant rows and near-random noise into a narrow band; a cross-encoder re-scores the top `limit × rerank.candidate_multiplier` candidates against the query and reorders them, then returns the top `limit`. On by default (`rerank.enabled` config); `--no-rerank` skips it. The reranker model (`Xenova/ms-marco-MiniLM-L-6-v2`, ~80 MB) ships with fastembed — no extra dependency — and loads lazily, cached alongside the embedding model. Reranking is strictly a reordering: if the model is unavailable it falls back to vector order. Warm via the daemon it adds ~300-400ms; the gain is sharp signal/noise separation. Disable on constrained hosts with `hafiz config set rerank.enabled false`.
+**Reranking** (on `query --observations`): vector similarity compresses relevant rows and near-random noise into a narrow band; a cross-encoder re-scores the top `limit × rerank.candidate_multiplier` candidates against the query and reorders them, then returns the top `limit`. On by default (`rerank.enabled` config); `--no-rerank` skips it. The reranker model (`Xenova/ms-marco-MiniLM-L-6-v2`, ~80 MB) ships with fastembed — no extra dependency — and loads lazily, cached alongside the embedding model. Reranking is strictly a reordering: if the model is unavailable it falls back to vector order. Warm via the daemon it adds ~300-400ms; the gain is sharp signal/noise separation. Disable on constrained hosts with `hafiz config set rerank.enabled false`.
 
 **Scoping flags** (on `context`, `query`):
 
@@ -201,8 +201,8 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 
 - **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`.
 - **Auto-captured git context**: `commit_hash` column; `branch` / `is_dirty` in metadata JSONB. Captured when writing inside a git repo.
-- **Expiration** (on `observe` / `note`, mutually exclusive): `--expires-in <30d|2w|6m|1y>` or `--expires <ISO-date>`. Sets `valid_until`; `--recall` hides expired rows by default.
-- **Staleness hint**: `--recall` surfaces age (e.g. `3mo ago`) and dims rows older than 90 days.
+- **Expiration** (on `observe` / `note`, mutually exclusive): `--expires-in <30d|2w|6m|1y>` or `--expires <ISO-date>`. Sets `valid_until`; `query --observations` hides expired rows by default.
+- **Staleness hint**: `query --observations` surfaces age (e.g. `3mo ago`) and dims rows older than 90 days.
 - **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive and records the link. Nothing is deleted.
 - **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` records distillation source without replacing.
 - **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
@@ -268,7 +268,7 @@ Defaults:
 | `--workspace` / `-w` | `context`, `query`, `journal` | Scope to sibling projects in parent directory |
 | `--type` / `-t` | `query`, `observe`, `journal` | Unit kind or annotation kind depending on context |
 | `--limit` / `-l` | `query`, `extract export`, `journal` | Maximum results |
-| `--recall` | `query` | Search annotations instead of content |
+| `--observations` | `query` | Search annotations (wisdom layer) instead of content. Renamed from `--recall`, which remains a hidden alias for one release. |
 | `--since` | `journal` / `distill` | Duration window ending now (default `7d`) |
 | `--day` | `journal` | Specific UTC day (ISO date). Exclusive with `--since` |
 | `--expires-in` | `observe`, `note` | Expire after duration. Exclusive with `--expires` |
@@ -278,7 +278,7 @@ Defaults:
 | `--task` | `observe`, `note`, `journal`, `distill` | Explicit task label |
 | `--supersedes` | `observe`, `note` | UUID of annotation being replaced |
 | `--derived-from` | `observe`, `note` | UUIDs this row was distilled from |
-| `--include-superseded` | `query --recall` | Return superseded / expired rows |
+| `--include-superseded` | `query --observations` | Return superseded / expired rows |
 | `--include-transcripts` | `query`, `context` | Add source-layer transcript matches to results (off by default) |
 | `--include-domain` | `query`, `context`, `session start` | Comma-separated data-domain allowlist (`code`, `doc`, `chat`, …). Domain = `kind` prefix before the first dot. |
 | `--exclude-domain` | `query`, `context`, `session start` | Comma-separated data-domain denylist. Mutually exclusive *per-domain* with `--include-domain`. |

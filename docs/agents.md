@@ -47,7 +47,7 @@ hafiz <command>
 |---------|---------|-----------|
 | `hafiz query "<text>"` | Semantic search over code and docs | `--type`, `--project`, `--limit`, `--json` |
 | `hafiz context "<task>"` | Full context bundle for a task | `--project`, `--json` |
-| `hafiz query "<query>" --recall` | Search observations only | `--type`, `--project`, `--limit`, `--json` |
+| `hafiz query "<query>" --observations` | Search observations only (was `--recall`) | `--type`, `--project`, `--limit`, `--json` |
 | `hafiz observe "<text>"` | Store a decision/fact/learning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--json` |
 | `hafiz graph show <name>` | Entity and its connections | `--project`, `--json` |
 | `hafiz graph deps <name>` | What this entity depends on | `--project`, `--json` |
@@ -62,7 +62,7 @@ hafiz <command>
 ### Type values
 
 - **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`
-- **Observation types** (`--type` for `observe` / `query --recall`): `fact`, `decision`, `learning`, `pattern`, `warning`
+- **Observation types** (`--type` for `observe` / `query --observations`): `fact`, `decision`, `learning`, `pattern`, `warning`
 - **Source** (`--source` for `observe`): `agent:aider`, `agent:claude-code`, `agent:codex`, `user:irshad`
 
 ## Copy-Paste System Prompt Snippet
@@ -80,7 +80,7 @@ To search for relevant code:
   hafiz query "<question>" --json
 
 To check past decisions and known gotchas:
-  hafiz query "<topic>" --recall --json
+  hafiz query "<topic>" --observations --json
 
 After making architectural decisions, record them:
   hafiz observe "<decision and reasoning>" --type decision --source agent:<your-name>
@@ -97,7 +97,7 @@ Always use --json flag when parsing output programmatically.
 ### Starting a task
 
 1. Run `hafiz context "<task description>" --json` to get a full context bundle
-2. Run `hafiz query "<related topic>" --recall --type decision --json` to check for existing decisions
+2. Run `hafiz query "<related topic>" --observations --type decision --json` to check for existing decisions
 3. Begin implementation with full context
 
 ### During implementation

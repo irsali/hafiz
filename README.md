@@ -18,7 +18,7 @@ See the full setup guide below. Doing a cross-machine or cross-agent test? See [
 
 - **Python 3.12+** -- `python3 --version`
 - **Docker** -- for PostgreSQL + pgvector (or a native PostgreSQL install)
-- **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify)
+- **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify). CUDA-only: the `[gpu]` extra is a no-op on macOS (it resolves to nothing), so Apple Silicon runs CPU embeddings — `pipx install "hafiz[gpu]"` is safe but installs the plain CPU path there.
 
 ## Install
 
@@ -254,7 +254,7 @@ hafiz observe "Use Bearer header, not cookies" \
   --supersedes <old-decision-id>
 ```
 
-By default `hafiz query --recall` hides superseded / expired rows. Pass `--include-superseded` to see the full history, dimmed with a `(superseded)` marker.
+By default `hafiz query --observations` hides superseded / expired rows. Pass `--include-superseded` to see the full history, dimmed with a `(superseded)` marker.
 
 ### Expire
 
@@ -273,8 +273,8 @@ Recall also shows each row's age (e.g. `3mo ago`) and dims results older than 90
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j`, `--recall` |
-| `hafiz query "<text>" --recall` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
+| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j`, `--observations` |
+| `hafiz query "<text>" --observations` | Search observations (decisions, facts, learnings). Renamed from `--recall`; the alias still works one release. | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
 | `hafiz context "<task>"` | Synthesize relevant code, graph, and observations for a task | `--project/-p`, `--workspace/-w`, `--json/-j` |
 
 ### Knowledge Graph
@@ -551,7 +551,7 @@ hafiz/
     ingest.py          -- hafiz ingest (with JSON progress)
     journal.py         -- hafiz journal (time-bounded digest)
     maintenance.py     -- hafiz init/status/doctor/config
-    observe.py         -- hafiz observe / note (recall via query --recall)
+    observe.py         -- hafiz observe / note (search via query --observations)
     parsers.py         -- hafiz parsers list
     prune.py           -- hafiz prune
     query.py           -- hafiz query

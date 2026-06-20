@@ -186,7 +186,7 @@ async def run_review(project: str | None = None) -> ReviewReport:
                 title=f"{low_conf} low-confidence annotations",
                 detail="Annotations with confidence < 50% may add noise. "
                        "Review and either boost or remove.",
-                action="hafiz query '' --recall --limit 50 --json  # then filter by confidence",
+                action="hafiz query '' --observations --limit 50 --json  # filter by confidence",
             ))
 
         # Stale annotations (older than 90 days)

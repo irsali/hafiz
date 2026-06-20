@@ -41,8 +41,11 @@ hafiz = "hafiz.cli:main"
 
 [project.optional-dependencies]
 gpu = [
-    "fastembed-gpu>=0.8",
-    "onnxruntime-gpu>=1.20",
+    # CUDA-only wheels; no macOS build. The markers let `pip install hafiz[gpu]`
+    # succeed on a Mac (the extra resolves to nothing) instead of erroring — Apple
+    # Silicon runs CPU embeddings, which the `auto` device path falls back to.
+    "fastembed-gpu>=0.8 ; sys_platform != 'darwin'",
+    "onnxruntime-gpu>=1.20 ; sys_platform != 'darwin'",
 ]
 dev = [
     "pytest>=8.0",

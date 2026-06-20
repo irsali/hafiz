@@ -2,8 +2,9 @@
 
 Gathers the facts every tunable prober needs to make recommendations:
 total/available RAM, CPU count, onnxruntime providers, GPU name + VRAM.
-No heavy deps — Linux /proc parsing + subprocess to nvidia-smi, both
-fail-soft so the probe never blocks hafiz on an unusual host.
+No heavy deps — Linux /proc parsing, macOS sysctl/vm_stat, and a
+subprocess to nvidia-smi, all fail-soft so the probe never blocks hafiz
+on an unusual host.
 
 The :class:`HostProbe` is frozen and hashable so it can key cache
 invalidation later (phase 3 uses ``fingerprint`` to decide whether
@@ -106,7 +107,7 @@ class HostProbe:
 
 def probe_host() -> HostProbe:
     """Gather host facts. Never raises — unreachable fields come back None."""
-    ram = _read_meminfo()
+    ram = _read_memory()
     cpu = _cpu_count()
     ort_providers, ort_version = _onnxruntime_info()
     gpu_name, gpu_total, gpu_free = _nvidia_smi()
@@ -147,11 +148,19 @@ def _cpu_count() -> int | None:
         return None
 
 
-def _read_meminfo() -> dict[str, int]:
+def _read_memory() -> dict[str, int]:
+    """Total/available RAM + swap in MB, by platform. Empty dict if unknown."""
+    system = _platform.system()
+    if system == "Darwin":
+        return _read_memory_darwin()
+    return _read_meminfo_linux()
+
+
+def _read_meminfo_linux() -> dict[str, int]:
     """Parse /proc/meminfo on Linux. Returns empty dict on other platforms."""
     out: dict[str, int] = {}
     try:
-        with open("/proc/meminfo", "r") as f:
+        with open("/proc/meminfo") as f:
             lines = f.readlines()
     except OSError:
         return out
@@ -179,10 +188,85 @@ def _read_meminfo() -> dict[str, int]:
         out["swap_total_mb"] = parsed["SwapTotal"] // 1024
         if "_swap_free_kb" in parsed:
             # Used = total - free. /proc doesn't publish SwapUsed directly.
-            out["swap_used_mb"] = (
-                parsed["SwapTotal"] - parsed["_swap_free_kb"]
-            ) // 1024
+            out["swap_used_mb"] = (parsed["SwapTotal"] - parsed["_swap_free_kb"]) // 1024
     return out
+
+
+def _sysctl_int(key: str) -> int | None:
+    """Read an integer sysctl value, or None if unavailable."""
+    try:
+        out = subprocess.check_output(["sysctl", "-n", key], stderr=subprocess.DEVNULL, timeout=2)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    text = out.decode().strip()
+    return int(text) if text.isdigit() else None
+
+
+def _read_memory_darwin() -> dict[str, int]:
+    """RAM + swap on macOS via sysctl / vm_stat. Empty dict if unreadable.
+
+    Total RAM is ``hw.memsize`` (bytes). "Available" has no direct equivalent
+    to Linux's MemAvailable; we approximate it as (free + inactive) pages from
+    ``vm_stat`` — inactive pages are reclaimable on demand. Swap comes from
+    ``vm.swapusage``. Every field is independent and fail-soft.
+    """
+    out: dict[str, int] = {}
+
+    total_bytes = _sysctl_int("hw.memsize")
+    if total_bytes is not None:
+        out["mem_total_mb"] = total_bytes // (1024 * 1024)
+
+    page_size = _sysctl_int("hw.pagesize") or 4096
+    try:
+        vm = subprocess.check_output(["vm_stat"], stderr=subprocess.DEVNULL, timeout=2).decode()
+    except (subprocess.SubprocessError, OSError):
+        vm = ""
+    if vm:
+        pages: dict[str, int] = {}
+        for line in vm.splitlines():
+            key, _, rest = line.partition(":")
+            digits = rest.strip().rstrip(".")
+            if digits.isdigit():
+                pages[key.strip()] = int(digits)
+        free = pages.get("Pages free", 0)
+        inactive = pages.get("Pages inactive", 0)
+        if free or inactive:
+            out["mem_available_mb"] = (free + inactive) * page_size // (1024 * 1024)
+
+    # vm.swapusage → "total = 2048.00M  used = 512.00M  free = 1536.00M"
+    try:
+        swap = subprocess.check_output(
+            ["sysctl", "-n", "vm.swapusage"], stderr=subprocess.DEVNULL, timeout=2
+        ).decode()
+    except (subprocess.SubprocessError, OSError):
+        swap = ""
+    swap_fields = dict(_parse_swapusage(swap))
+    if "total" in swap_fields:
+        out["swap_total_mb"] = swap_fields["total"]
+        if "used" in swap_fields:
+            out["swap_used_mb"] = swap_fields["used"]
+    return out
+
+
+def _parse_swapusage(text: str) -> list[tuple[str, int]]:
+    """Pull (label, MB) pairs from ``vm.swapusage`` output. Tolerates K/M/G."""
+    multiplier = {"K": 1 / 1024, "M": 1.0, "G": 1024.0}
+    pairs: list[tuple[str, int]] = []
+    for label in ("total", "used", "free"):
+        marker = f"{label} = "
+        idx = text.find(marker)
+        if idx < 0:
+            continue
+        token = text[idx + len(marker) :].split()[0]  # e.g. "512.00M"
+        unit = token[-1].upper()
+        if unit not in multiplier:
+            continue
+        try:
+            mb = float(token[:-1]) * multiplier[unit]
+        except ValueError:
+            continue
+        pairs.append((label, int(mb)))
+    return pairs
 
 
 def _onnxruntime_info() -> tuple[list[str], str | None]:
@@ -201,16 +285,21 @@ def _onnxruntime_info() -> tuple[list[str], str | None]:
 def _nvidia_smi() -> tuple[str | None, int | None, int | None]:
     """Return (gpu_name, vram_total_mb, vram_free_mb) for GPU 0, or Nones."""
     try:
-        out = subprocess.check_output(
-            [
-                "nvidia-smi",
-                "--query-gpu=name,memory.total,memory.free",
-                "--format=csv,noheader,nounits",
-                "-i", "0",
-            ],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        ).decode().strip()
+        out = (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total,memory.free",
+                    "--format=csv,noheader,nounits",
+                    "-i",
+                    "0",
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            .decode()
+            .strip()
+        )
     except (subprocess.SubprocessError, OSError):
         return None, None, None
 

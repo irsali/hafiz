@@ -60,8 +60,10 @@ def test_query_help():
     result = runner.invoke(app, ["query", "--help"])
     assert result.exit_code == 0
     assert "json" in result.output.lower()
-    assert "--recall" in result.output
+    assert "--observations" in result.output
     assert "--source" in result.output
+    # --recall is the deprecated alias; it works but is hidden from help.
+    assert "--recall" not in result.output
 
 
 def test_serve_status_help():
@@ -221,10 +223,11 @@ def test_extract_import_help():
 
 
 def test_recall_command_is_source_layer_recall():
-    """Phase 4 of communications-and-sessions: ``hafiz recall`` is the
-    source-layer entry point (messages from a session/communication).
-    Annotation recall stays under ``hafiz query --recall`` — the two
-    commands intentionally cover different layers and don't collide."""
+    """``hafiz recall`` is the source-layer entry point (messages from a
+    session/communication). Annotation search lives under
+    ``hafiz query --observations`` — the two commands cover different
+    layers. The word "recall" now belongs solely to this command; the old
+    ``query --recall`` flag was renamed to resolve the collision."""
     result = runner.invoke(app, ["recall", "--help"])
     assert result.exit_code == 0
     assert "session" in result.output.lower()
@@ -232,12 +235,24 @@ def test_recall_command_is_source_layer_recall():
     assert "--include-transcripts" not in result.output  # belongs on query/context
 
 
-def test_query_keeps_recall_flag_for_annotations():
-    """`query --recall` continues to search annotations (the wisdom
-    layer). The new top-level `hafiz recall` covers the source layer."""
+def test_query_observations_flag_replaces_recall():
+    """`query --observations` searches annotations (the wisdom layer). The
+    old `--recall` is a hidden, deprecation-warned alias for one release;
+    the top-level `hafiz recall` now owns the word."""
     result = runner.invoke(app, ["query", "--help"])
     assert result.exit_code == 0
-    assert "--recall" in result.output
+    assert "--observations" in result.output
+    assert "--recall" not in result.output  # alias is hidden
+
+
+def test_query_recall_alias_still_works_with_warning():
+    """The deprecated `--recall` alias still dispatches to annotation search
+    and prints a one-line deprecation warning. Output stream is merged in
+    this Typer/Click version, so we assert on the combined output."""
+    result = runner.invoke(app, ["query", "anything", "--recall", "--json"])
+    # The command may exit non-zero if no DB is reachable, but the
+    # deprecation notice fires before dispatch regardless.
+    assert "--recall is deprecated" in result.output
 
 
 def test_doctor_command_exists():

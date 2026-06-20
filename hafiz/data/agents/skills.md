@@ -106,7 +106,7 @@ You MUST follow these rules in every session:
    "remembers" shape your behavior without the user re-asking:
 
    ```bash
-   hafiz query --recall --source user:<name> --limit 50 --json
+   hafiz query --observations --source user:<name> --limit 50 --json
    ```
 
    Carve-out: truly harness-specific preferences (slash commands, hook
@@ -122,8 +122,8 @@ You MUST follow these rules in every session:
 | `hafiz query "<text>" --json` | Semantic search over indexed content (knowledge layer) |
 | `hafiz query "<text>" --include-transcripts --json` | Add matching transcript turns to results, tagged ``layer="source"`` |
 | `hafiz query "<text>" --include-domain code --json` | Restrict to a data domain (``code``, ``doc``, ``chat``, …). Inverse: ``--exclude-domain``. Comma-separated for multiple. |
-| `hafiz query "<topic>" --recall --type decision --json` | Search annotations (decisions, facts, learnings, patterns, warnings) |
-| `hafiz recall <session-or-comm-id>` | List ordered messages from a session/communication. Add ``--query "<text>"`` for similarity search across the session's turns. Source-layer access — use deliberately. |
+| `hafiz query "<topic>" --observations --type decision --json` | Search the wisdom layer (annotations: decisions, facts, learnings, patterns, warnings). *(Was `--recall`; the flag was renamed to end the collision with the command below. `--recall` still works as a hidden alias for one release, with a deprecation warning.)* |
+| `hafiz recall <session-or-comm-id>` | List ordered messages from a session/communication (source layer). Add ``--query "<text>"`` for similarity search across the session's turns. Use deliberately. *(`recall` is the source layer; `query --observations` is the wisdom layer — different jobs.)* |
 | `hafiz graph deps <name> --json` | What this unit depends on (outgoing edges) |
 | `hafiz graph impact <name> --json` | Blast radius — what depends on this unit (incoming edges) |
 | `hafiz observe "<text>" --type <kind> --source agent:<name>` | Record a decision / warning / pattern / learning / fact |
@@ -395,7 +395,7 @@ workstation is a no-op, not a hazard.
 |---------|---------|-----------|
 | `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--limit`, `--json` |
-| `hafiz query "<text>" --recall` | Semantic search over annotations | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Renamed from `--recall`; that alias still works one release. | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
 
 - **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the TTY.
 
@@ -423,9 +423,9 @@ workstation is a no-op, not a hazard.
 
 - **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`
 - **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
-- **Expiration** (`observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01`. Sets `valid_until`; expired rows are hidden from `--recall` by default.
+- **Expiration** (`observe` / `note`): `--expires-in 30d|2w|6m|1y` or `--expires 2026-06-01`. Sets `valid_until`; expired rows are hidden from `query --observations` by default.
 - **Git auto-captured**: `commit_hash` on every write inside a repo; `branch` / `is_dirty` on annotations.
-- **Staleness**: `--recall` shows age (`3mo ago`) and dims rows older than 90d.
+- **Staleness**: `query --observations` shows age (`3mo ago`) and dims rows older than 90d.
 - **Supersession**: replace a decision with `--supersedes <old-uuid>`; prefer over silent deletion.
 - **Lineage**: `--derived-from <ids>` records distillation source without replacing.
 

@@ -20,7 +20,7 @@ flowchart LR
     db[("PostgreSQL<br>+ pgvector")]
 
     user -->|"observe / note / journal / query / distill / review"| cli
-    agent -->|"context / query --recall / observe / extract import"| cli
+    agent -->|"context / query --observations / observe / extract import"| cli
     git -.->|"auto re-ingest on commit"| cli
     cli -->|"walk + parse"| fs
     cli <-->|"7-table model<br>+ vector search"| db
@@ -31,7 +31,7 @@ flowchart LR
 | Surface | What it gives |
 |---|---|
 | **Index** — `ingest`, `hooks install` | Parses code (Python AST), prose (Markdown/RST/TXT), and any other file (whole-file fallback) into stable units + embeddings. Diff-driven on re-runs ([commands/ingest.py:110-122](../hafiz/commands/ingest.py#L110-L122)). |
-| **Recall** — `query`, `query --recall`, `context` | Vector search over indexed bodies; vector search over annotations; combined "context bundle" of chunks + graph neighborhood + annotations for a task ([core/context.py:175-186](../hafiz/core/context.py#L175-L186)). |
+| **Recall** — `query`, `query --observations`, `context` | Vector search over indexed bodies; vector search over annotations (`--observations`, formerly `--recall`); combined "context bundle" of chunks + graph neighborhood + annotations for a task ([core/context.py:175-186](../hafiz/core/context.py#L175-L186)). |
 | **Reason** — `graph deps/impact/path/rank/show/stats` | Walks the AST-derived edge table to answer blast-radius and dependency questions. |
 | **Remember** — `observe`, `note`, `capture` | Persists decisions, learnings, warnings, raw notes; auto-tags git commit, branch, session, task. |
 | **Curate** — `journal`, `distill`, `review` | Time-windowed digests of what was recorded; surfaces promotable notes; (Layer 2 self-review is still a stub). |

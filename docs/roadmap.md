@@ -172,7 +172,7 @@ hafiz prune         [--project] [--dry-run] [--json]
 
 # ─── SEARCH ───
 hafiz query   "<text>" [--project|--workspace] [--type] [--limit] [--json]
-hafiz query   "<text>" --recall [--type] …   # search observations instead of chunks
+hafiz query   "<text>" --observations [--type] …   # search annotations instead of chunks (was --recall)
 hafiz context "<task>" [--project|--workspace] [--json]   # chunks + graph + observations
 
 # ─── GRAPH (NetworkX-backed) ───

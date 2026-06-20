@@ -143,7 +143,8 @@ def run_forget_annotation(
 ) -> None:
     """Retire a knowledge-layer annotation by uuid (soft — sets valid_until=now).
 
-    The row is kept for audit; it simply drops out of ``--recall`` and context.
+    The row is kept for audit; it simply drops out of ``query --observations``
+    and context.
     Use when a recorded decision/fact/learning is wrong, obsolete, or test
     litter. Unlike supersession, this needs no replacement annotation.
     """

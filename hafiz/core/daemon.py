@@ -51,15 +51,20 @@ _RECV_LIMIT = 16 * 1024 * 1024  # 16 MiB per line — generous for capture paylo
 
 
 def runtime_dir() -> Path:
-    """User-scoped runtime dir for the socket. Prefers ``$XDG_RUNTIME_DIR``.
+    """User-scoped runtime dir for the socket.
 
-    Falls back to ``/tmp/hafiz-<uid>`` when XDG isn't set (e.g. macOS, some
-    minimal containers). Always created 0700 so only the owner can reach the
-    socket inside it.
+    Resolution order: ``$XDG_RUNTIME_DIR`` (Linux), then ``$TMPDIR`` (set
+    per-user on macOS, e.g. ``/var/folders/.../T/`` — preferred over the
+    world-shared ``/tmp``), then ``/tmp/hafiz-<uid>`` as a last resort
+    (minimal containers). Always created 0700 so only the owner can reach
+    the socket inside it.
     """
-    base = os.environ.get("XDG_RUNTIME_DIR")
-    if base and Path(base).is_dir():
-        d = Path(base) / "hafiz"
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    tmpdir = os.environ.get("TMPDIR")
+    if xdg and Path(xdg).is_dir():
+        d = Path(xdg) / "hafiz"
+    elif tmpdir and Path(tmpdir).is_dir():
+        d = Path(tmpdir) / f"hafiz-{os.getuid()}"
     else:
         d = Path(f"/tmp/hafiz-{os.getuid()}")  # noqa: S108 — uid-scoped, 0700 below
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -196,9 +201,7 @@ class _Server:
         if self._server is not None:
             self._server.close()
 
-    async def handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Serve one connection: read newline-framed requests, reply per line."""
         try:
             while not reader.at_eof():
@@ -308,9 +311,7 @@ async def serve(*, idle_timeout: float = DEFAULT_IDLE_TIMEOUT) -> None:
     server = _Server(idle_timeout=idle_timeout, _embed_lock=asyncio.Lock())
     server._loop = asyncio.get_running_loop()
 
-    aio_server = await asyncio.start_unix_server(
-        server.handle, path=str(sock), limit=_RECV_LIMIT
-    )
+    aio_server = await asyncio.start_unix_server(server.handle, path=str(sock), limit=_RECV_LIMIT)
     server._server = aio_server
 
     # Lock the socket to owner-only (0600). start_unix_server honors umask,

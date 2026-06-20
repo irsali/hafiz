@@ -35,9 +35,20 @@ def test_socket_path_uses_xdg_runtime_dir(monkeypatch, tmp_path):
     assert oct(os.stat(tmp_path / "hafiz").st_mode & 0o777) == "0o700"
 
 
+def test_socket_path_prefers_tmpdir_over_tmp(monkeypatch, tmp_path):
+    # macOS sets a per-user $TMPDIR; prefer it over the world-shared /tmp.
+    monkeypatch.delenv("HAFIZ_DAEMON_SOCKET", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    sock = daemon.socket_path()
+    assert sock == tmp_path / f"hafiz-{os.getuid()}" / "daemon.sock"
+    assert oct(os.stat(tmp_path / f"hafiz-{os.getuid()}").st_mode & 0o777) == "0o700"
+
+
 def test_socket_path_falls_back_to_tmp(monkeypatch):
     monkeypatch.delenv("HAFIZ_DAEMON_SOCKET", raising=False)
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("TMPDIR", raising=False)
     sock = daemon.socket_path()
     assert str(sock).startswith(f"/tmp/hafiz-{os.getuid()}")
 

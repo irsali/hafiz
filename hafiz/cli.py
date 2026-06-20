@@ -228,25 +228,33 @@ def query(
     limit: int = typer.Option(
         10, "--limit", "-l", help="Maximum number of results."
     ),
-    recall: bool = typer.Option(
-        False, "--recall", help="Search observations instead of code chunks."
+    observations: bool = typer.Option(
+        False,
+        "--observations",
+        help="Search the wisdom layer (annotations) instead of code chunks.",
+    ),
+    recall_alias: bool = typer.Option(
+        False,
+        "--recall",
+        hidden=True,
+        help="Deprecated alias for --observations.",
     ),
     source: Optional[str] = typer.Option(
         None,
         "--source",
-        help="(with --recall) Filter by source (e.g. user:anjum, agent:claude-code).",
+        help="(with --observations) Filter by source (e.g. user:anjum, agent:claude-code).",
     ),
     include_superseded: bool = typer.Option(
         False,
         "--include-superseded",
-        help="(with --recall) Also return superseded/expired observations, dimmed.",
+        help="(with --observations) Also return superseded/expired annotations, dimmed.",
     ),
     no_rerank: bool = typer.Option(
         False,
         "--no-rerank",
         help=(
-            "(with --recall) Skip cross-encoder reranking; return pure vector "
-            "order. Reranking is on by default for sharper recall precision."
+            "(with --observations) Skip cross-encoder reranking; return pure vector "
+            "order. Reranking is on by default for sharper precision."
         ),
     ),
     include_transcripts: bool = typer.Option(
@@ -279,8 +287,8 @@ def query(
 ) -> None:
     """Search indexed content with vector similarity.
 
-    By default, searches code chunks. Use --recall to search observations
-    (decisions, facts, learnings, patterns, warnings). Use
+    By default, searches code chunks. Use --observations to search the
+    wisdom layer (decisions, facts, learnings, patterns, warnings). Use
     --include-transcripts to additionally search the source layer
     (imported agent transcripts).
     """
@@ -288,7 +296,15 @@ def query(
         typer.echo("Error: --project and --workspace are mutually exclusive.")
         raise typer.Exit(1)
 
-    if recall:
+    if recall_alias:
+        # `--recall` collided with the top-level `hafiz recall` (source layer).
+        # Renamed to `--observations`; keep the alias working one release.
+        typer.echo(
+            "Warning: --recall is deprecated; use --observations.",
+            err=True,
+        )
+
+    if observations or recall_alias:
         from hafiz.commands.observe import run_recall
 
         run_recall(
