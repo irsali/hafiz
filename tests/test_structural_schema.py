@@ -12,8 +12,6 @@ Integration tests — skip gracefully when no DB is reachable.
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -127,21 +125,15 @@ async def test_unit_revision_current_partial_unique():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
 
-        r1 = UnitRevision(
-            unit_id=u.id, content="v1", content_hash="h1", source="ast"
-        )
+        r1 = UnitRevision(unit_id=u.id, content="v1", content_hash="h1", source="ast")
         s.add(r1)
         await s.commit()
 
-        r2 = UnitRevision(
-            unit_id=u.id, content="v2", content_hash="h2", source="ast"
-        )
+        r2 = UnitRevision(unit_id=u.id, content="v2", content_hash="h2", source="ast")
         s.add(r2)
         with pytest.raises(IntegrityError):
             await s.commit()
@@ -155,9 +147,7 @@ async def test_unit_revision_source_check():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
 
@@ -180,31 +170,22 @@ async def test_supersession_then_new_current():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
 
-        r1 = UnitRevision(
-            unit_id=u.id, content="v1", content_hash="h1", source="ast"
-        )
+        r1 = UnitRevision(unit_id=u.id, content="v1", content_hash="h1", source="ast")
         s.add(r1)
         await s.commit()
 
         # Mark r1 superseded.
         await s.execute(
-            text(
-                "UPDATE unit_revisions SET superseded_at = now() "
-                "WHERE id = :id"
-            ),
+            text("UPDATE unit_revisions SET superseded_at = now() WHERE id = :id"),
             {"id": r1.id},
         )
         await s.commit()
 
-        r2 = UnitRevision(
-            unit_id=u.id, content="v2", content_hash="h2", source="ast"
-        )
+        r2 = UnitRevision(unit_id=u.id, content="v2", content_hash="h2", source="ast")
         s.add(r2)
         await s.commit()  # must not raise
 
@@ -216,14 +197,10 @@ async def test_embedding_revision_part_unique_and_cascade():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
-        r = UnitRevision(
-            unit_id=u.id, content="v", content_hash="h", source="ast"
-        )
+        r = UnitRevision(unit_id=u.id, content="v", content_hash="h", source="ast")
         s.add(r)
         await s.flush()
 
@@ -265,9 +242,7 @@ async def test_edge_source_check():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
 
@@ -289,9 +264,7 @@ async def test_edge_unresolved_target():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
 
@@ -315,9 +288,7 @@ async def test_annotation_free_and_linked():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
 
@@ -347,23 +318,15 @@ async def test_file_cascade_to_units_and_revisions():
         f = File(project="hafiz", path="/a.py")
         s.add(f)
         await s.flush()
-        u = Unit(
-            file_id=f.id, kind="code.function", name="foo", identity_key="k"
-        )
+        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
         s.add(u)
         await s.flush()
-        r = UnitRevision(
-            unit_id=u.id, content="v", content_hash="h", source="ast"
-        )
+        r = UnitRevision(unit_id=u.id, content="v", content_hash="h", source="ast")
         s.add(r)
         await s.commit()
 
         await s.delete(f)
         await s.commit()
 
-        assert (
-            await s.execute(text("SELECT COUNT(*) FROM units"))
-        ).scalar() == 0
-        assert (
-            await s.execute(text("SELECT COUNT(*) FROM unit_revisions"))
-        ).scalar() == 0
+        assert (await s.execute(text("SELECT COUNT(*) FROM units"))).scalar() == 0
+        assert (await s.execute(text("SELECT COUNT(*) FROM unit_revisions"))).scalar() == 0

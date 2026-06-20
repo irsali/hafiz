@@ -9,9 +9,8 @@ with message candidates when a session has communications.
 
 from __future__ import annotations
 
-import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -58,12 +57,14 @@ async def test_derived_from_classifies_annotation_targets():
     factory = get_session_factory()
     async with factory() as s:
         rows = (
-            await s.execute(
-                select(AnnotationTarget).where(
-                    AnnotationTarget.annotation_id == child.id
+            (
+                await s.execute(
+                    select(AnnotationTarget).where(AnnotationTarget.annotation_id == child.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert len(rows) == 1
     assert rows[0].target_kind == "annotation"
     assert rows[0].target_id == parent.id
@@ -83,7 +84,7 @@ async def test_derived_from_classifies_message_targets():
         external_id=f"phase-5-{uuid.uuid4().hex[:8]}",
         session_id=sess.id,
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await append_messages(
         comm.id,
         [
@@ -128,12 +129,14 @@ async def test_derived_from_classifies_message_targets():
 
     async with factory() as s:
         rows = (
-            await s.execute(
-                select(AnnotationTarget).where(
-                    AnnotationTarget.annotation_id == decision.id
+            (
+                await s.execute(
+                    select(AnnotationTarget).where(AnnotationTarget.annotation_id == decision.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert len(rows) == 2
     assert {r.target_kind for r in rows} == {"message"}
     assert {str(r.target_id) for r in rows} == set(msg_ids)
@@ -153,12 +156,14 @@ async def test_derived_from_unknown_uuid_is_skipped_not_raised():
     factory = get_session_factory()
     async with factory() as s:
         rows = (
-            await s.execute(
-                select(AnnotationTarget).where(
-                    AnnotationTarget.annotation_id == ann.id
+            (
+                await s.execute(
+                    select(AnnotationTarget).where(AnnotationTarget.annotation_id == ann.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     # Bogus uuid skipped — no row written.
     assert rows == []
 
@@ -197,7 +202,7 @@ async def test_distill_surfaces_message_candidates_for_session():
         scope_kind="project",
         scope_value="hafiz-test",
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await append_messages(
         comm.id,
         [
@@ -227,7 +232,5 @@ async def test_distill_surfaces_message_candidates_for_session():
 async def test_distill_unknown_session_returns_no_messages():
     """An unresolvable session_slug shouldn't surface every message
     in the window — bundle.messages stays empty."""
-    bundle = await find_distill_candidates(
-        session_id=f"unknown-session-{uuid.uuid4().hex[:6]}"
-    )
+    bundle = await find_distill_candidates(session_id=f"unknown-session-{uuid.uuid4().hex[:6]}")
     assert bundle.messages == []

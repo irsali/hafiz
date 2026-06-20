@@ -81,9 +81,9 @@ _CPU_CEILING_CHARS = 8_000
 # GPU-accelerated app — IDE, browser compositor, video call — moves it).
 # A recommendation that's safe at probe time but unsafe when the user
 # resumes their normal apps is exactly the failure mode we're fixing.
-_GPU_VRAM_TOTAL_MB_FOR_8K = 16_000   # 16 GB-class card (e.g. RTX 4080, 5060 Ti)
+_GPU_VRAM_TOTAL_MB_FOR_8K = 16_000  # 16 GB-class card (e.g. RTX 4080, 5060 Ti)
 _GPU_VRAM_TOTAL_MB_FOR_16K = 24_000  # 24 GB-class card (e.g. RTX 3090, 4090)
-_GPU_VRAM_FREE_MB_REQUIRED = 6_000   # leave headroom for compositor + apps
+_GPU_VRAM_FREE_MB_REQUIRED = 6_000  # leave headroom for compositor + apps
 
 
 # Subprocess script — embedded as a string. Imports are intentionally
@@ -262,8 +262,10 @@ def _run_measurement(
             timeout=timeout,
         )
         raw = proc.stdout
-        incomplete_reason = None if proc.returncode == 0 else (
-            proc.stderr.strip()[:300] or f"exit {proc.returncode}"
+        incomplete_reason = (
+            None
+            if proc.returncode == 0
+            else (proc.stderr.strip()[:300] or f"exit {proc.returncode}")
         )
     except subprocess.TimeoutExpired as e:
         raw = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
@@ -391,10 +393,7 @@ def probe_max_part_chars(host: HostProbe) -> ProbeResult:
         safety_ceiling_mb=safety_ceiling_mb,
     )
 
-    ok_rows = [
-        r for r in measurements
-        if r.get("ok") and isinstance(r.get("peak_rss_mb"), int)
-    ]
+    ok_rows = [r for r in measurements if r.get("ok") and isinstance(r.get("peak_rss_mb"), int)]
 
     # ── 3. Conservative fallback ──────────────────────────────────────
     if not ok_rows:
@@ -409,8 +408,7 @@ def probe_max_part_chars(host: HostProbe) -> ProbeResult:
         return ProbeResult(
             recommended_value=2_000,
             rationale=(
-                f"Probe could not measure — staying on the CPU-safe default. "
-                f"Reason: {reason}"
+                f"Probe could not measure — staying on the CPU-safe default. Reason: {reason}"
             ),
             confidence="low",
             measured={

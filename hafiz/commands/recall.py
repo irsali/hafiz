@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import datetime
 
 from rich.console import Console
 from rich.table import Table
@@ -126,7 +125,9 @@ def run_recall(
     query_text: str | None = None,
     output_json: bool = False,
 ) -> None:
-    async def _do() -> tuple[uuid.UUID | None, list[uuid.UUID], list[tuple[MessageRow, float | None]]]:
+    async def _do() -> tuple[
+        uuid.UUID | None, list[uuid.UUID], list[tuple[MessageRow, float | None]]
+    ]:
         try:
             session_id, comm_ids = await _resolve_target(target)
             if not comm_ids:
@@ -135,9 +136,7 @@ def run_recall(
                 # Vector search across the session's messages.
                 results: list[tuple[MessageRow, float | None]] = []
                 if session_id is not None:
-                    rows = await search_messages(
-                        query_text, limit=limit, session_id=session_id
-                    )
+                    rows = await search_messages(query_text, limit=limit, session_id=session_id)
                     results.extend([(r, s) for r, s in rows])
                 else:
                     # Single communication path.
@@ -185,9 +184,7 @@ def run_recall(
                 )
             )
         else:
-            console.print(
-                f"[yellow]No communications found for target {target!r}.[/yellow]"
-            )
+            console.print(f"[yellow]No communications found for target {target!r}.[/yellow]")
         return
 
     if output_json:

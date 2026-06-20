@@ -58,13 +58,9 @@ def run_extract_import(
                 console.print(f"[red]Contract error:[/red] {exc}")
                 raise SystemExit(2)
 
-            ann_count, edge_count, unresolved = await store_extraction(
-                result, project=project
-            )
+            ann_count, edge_count, unresolved = await store_extraction(result, project=project)
 
-            console.print(
-                f"[green]Imported {ann_count} annotations, {edge_count} edges[/green]"
-            )
+            console.print(f"[green]Imported {ann_count} annotations, {edge_count} edges[/green]")
             if unresolved:
                 console.print(
                     f"  [yellow]{unresolved} reference(s) could not be "
@@ -111,8 +107,7 @@ def run_extract_export(
                     .join(File, File.id == Unit.file_id)
                     .join(
                         UnitRevision,
-                        (UnitRevision.unit_id == Unit.id)
-                        & (UnitRevision.superseded_at.is_(None)),
+                        (UnitRevision.unit_id == Unit.id) & (UnitRevision.superseded_at.is_(None)),
                     )
                     .where(Unit.valid_until.is_(None))
                     .where(File.valid_until.is_(None))
@@ -126,18 +121,12 @@ def run_extract_export(
                 unit_ids = [u.id for u, _, _ in unit_rows]
 
                 edge_stmt = (
-                    select(Edge)
-                    .where(Edge.superseded_at.is_(None))
-                    .where(Edge.source == "ast")
+                    select(Edge).where(Edge.superseded_at.is_(None)).where(Edge.source == "ast")
                 )
                 if unit_ids:
-                    edge_stmt = edge_stmt.where(
-                        Edge.source_unit_id.in_(unit_ids)
-                    )
+                    edge_stmt = edge_stmt.where(Edge.source_unit_id.in_(unit_ids))
                 else:
-                    edge_stmt = edge_stmt.where(
-                        Edge.source_unit_id.in_([])
-                    )
+                    edge_stmt = edge_stmt.where(Edge.source_unit_id.in_([]))
                 edges = (await session.execute(edge_stmt)).scalars().all()
 
             return {
@@ -158,11 +147,7 @@ def run_extract_export(
                 "edges": [
                     {
                         "source_unit_id": str(e.source_unit_id),
-                        "target_unit_id": (
-                            str(e.target_unit_id)
-                            if e.target_unit_id
-                            else None
-                        ),
+                        "target_unit_id": (str(e.target_unit_id) if e.target_unit_id else None),
                         "target_name": e.target_name,
                         "relation": e.relation,
                     }

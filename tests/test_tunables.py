@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from hafiz.core import tunables
 from hafiz.core.config import reset_settings
 from hafiz.core.tunables import (
-    Tunable,
     TUNABLE_REGISTRY,
+    Tunable,
     all_tunables,
     get,
     register,

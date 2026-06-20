@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from hafiz.core.database import Session as SessionRow, get_session_factory
+from hafiz.core.database import Session as SessionRow
+from hafiz.core.database import get_session_factory
 
 
 @dataclass
@@ -74,7 +75,7 @@ async def create_session(
             scope_value=scope_value,
             task=task,
             tty=tty,
-            started_at=started_at or datetime.now(timezone.utc),
+            started_at=started_at or datetime.now(UTC),
             metadata_=metadata or {},
         )
         s.add(row)
@@ -87,9 +88,7 @@ async def get_session_by_slug(slug: str) -> StoredSession | None:
     """Look up a session by its human-readable slug."""
     factory = get_session_factory()
     async with factory() as s:
-        result = await s.execute(
-            select(SessionRow).where(SessionRow.slug == slug)
-        )
+        result = await s.execute(select(SessionRow).where(SessionRow.slug == slug))
         row = result.scalar_one_or_none()
         return _to_stored(row) if row else None
 
@@ -129,7 +128,7 @@ async def end_session_db(session_id: uuid.UUID) -> StoredSession | None:
         if row is None:
             return None
         if row.ended_at is None:
-            row.ended_at = datetime.now(timezone.utc)
+            row.ended_at = datetime.now(UTC)
             await s.commit()
             await s.refresh(row)
         return _to_stored(row)
@@ -145,11 +144,7 @@ async def list_sessions(
 ) -> list[StoredSession]:
     factory = get_session_factory()
     async with factory() as s:
-        stmt = (
-            select(SessionRow)
-            .order_by(SessionRow.started_at.desc())
-            .limit(limit)
-        )
+        stmt = select(SessionRow).order_by(SessionRow.started_at.desc()).limit(limit)
         if agent:
             stmt = stmt.where(SessionRow.agent == agent)
         if scope_kind:

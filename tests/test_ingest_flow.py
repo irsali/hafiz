@@ -33,8 +33,8 @@ from hafiz.core.database import (
 )
 from hafiz.core.store import index_file
 
-
 # ── Mock embedder ──────────────────────────────────────────────────────
+
 
 async def mock_embed(texts: list[str]) -> list[list[float]]:
     """Deterministic 768-dim vectors derived from text hashes. Collisions
@@ -49,6 +49,7 @@ async def mock_embed(texts: list[str]) -> list[list[float]]:
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────
+
 
 async def _db_available() -> bool:
     try:
@@ -84,6 +85,7 @@ async def _skip_and_clean():
 
 # ── Small helpers ──────────────────────────────────────────────────────
 
+
 async def _count(table: str, *, where: str | None = None) -> int:
     factory = get_session_factory()
     async with factory() as s:
@@ -99,11 +101,11 @@ def _py(body: str) -> tuple[Path, str]:
 
 # ── Tests ──────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_first_ingest_creates_units_revisions_embeddings(tmp_path):
     abs_path, content = _py(
-        "def hello():\n    return 'world'\n\n"
-        "class Foo:\n    def bar(self):\n        return 1\n"
+        "def hello():\n    return 'world'\n\nclass Foo:\n    def bar(self):\n        return 1\n"
     )
     result = await index_file(
         abs_path,
@@ -121,21 +123,15 @@ async def test_first_ingest_creates_units_revisions_embeddings(tmp_path):
     assert await _count("files") == 1
     assert await _count("units") == 4
     assert await _count("unit_revisions") == 4
-    assert (
-        await _count("unit_revisions", where="superseded_at IS NULL") == 4
-    )
+    assert await _count("unit_revisions", where="superseded_at IS NULL") == 4
 
 
 @pytest.mark.asyncio
 async def test_reingesting_unchanged_content_is_noop():
     abs_path, content = _py("def foo():\n    return 1\n")
 
-    first = await index_file(
-        abs_path, content, project="t", embed_fn=mock_embed
-    )
-    second = await index_file(
-        abs_path, content, project="t", embed_fn=mock_embed
-    )
+    first = await index_file(abs_path, content, project="t", embed_fn=mock_embed)
+    second = await index_file(abs_path, content, project="t", embed_fn=mock_embed)
 
     assert first.revisions_created == 2  # module + function
     assert second.revisions_created == 0
@@ -144,19 +140,14 @@ async def test_reingesting_unchanged_content_is_noop():
 
     # Still exactly one current revision per unit.
     assert await _count("units") == 2
-    assert (
-        await _count("unit_revisions", where="superseded_at IS NULL") == 2
-    )
+    assert await _count("unit_revisions", where="superseded_at IS NULL") == 2
     assert await _count("unit_revisions") == 2
 
 
 @pytest.mark.asyncio
 async def test_changing_one_function_body_supersedes_exactly_one_revision():
     abs_path = Path("/tmp/mod.py")
-    v1 = (
-        "def stable():\n    return 'unchanged'\n\n"
-        "def mutating():\n    return 1\n"
-    )
+    v1 = "def stable():\n    return 'unchanged'\n\ndef mutating():\n    return 1\n"
     v2 = (
         "def stable():\n    return 'unchanged'\n\n"
         "def mutating():\n    return 2\n"  # body changed
@@ -171,16 +162,11 @@ async def test_changing_one_function_body_supersedes_exactly_one_revision():
     assert result.units_tombstoned == 0
 
     # One current revision per unit (3 units: module, stable, mutating).
-    assert (
-        await _count("unit_revisions", where="superseded_at IS NULL") == 3
-    )
+    assert await _count("unit_revisions", where="superseded_at IS NULL") == 3
     # Total revisions = 3 original + 2 new = 5.
     assert await _count("unit_revisions") == 5
     # Exactly 2 revisions were superseded (module v1 and mutating v1).
-    assert (
-        await _count("unit_revisions", where="superseded_at IS NOT NULL")
-        == 2
-    )
+    assert await _count("unit_revisions", where="superseded_at IS NOT NULL") == 2
 
 
 @pytest.mark.asyncio
@@ -218,9 +204,7 @@ async def test_partial_edit_in_long_doc_reembeds_only_changed_parts():
     abs_path = Path("/tmp/long.md")
 
     # Build a 10-section doc well over the default 24k-char part cap.
-    sections = [
-        f"## Section {i}\n\n" + ("x" * 4000) + "\n" for i in range(10)
-    ]
+    sections = [f"## Section {i}\n\n" + ("x" * 4000) + "\n" for i in range(10)]
     v1 = "# Doc\n\n" + "".join(sections)
 
     first = await index_file(abs_path, v1, project="t", embed_fn=mock_embed)
@@ -250,20 +234,16 @@ async def test_embedding_cascade_delete_on_revision_removal():
     """Removing a unit_revision cascades-deletes its embedding rows —
     required for supersession cleanup downstream."""
     abs_path = Path("/tmp/tiny.py")
-    await index_file(
-        abs_path, "x = 1\n", project="t", embed_fn=mock_embed
-    )
+    await index_file(abs_path, "x = 1\n", project="t", embed_fn=mock_embed)
 
     factory = get_session_factory()
     async with factory() as s:
-        rev = (
-            await s.execute(select(UnitRevision).limit(1))
-        ).scalar_one()
+        rev = (await s.execute(select(UnitRevision).limit(1))).scalar_one()
         emb_count_before = (
             await s.execute(
-                select(text("COUNT(*)")).select_from(Embedding).where(
-                    Embedding.unit_revision_id == rev.id
-                )
+                select(text("COUNT(*)"))
+                .select_from(Embedding)
+                .where(Embedding.unit_revision_id == rev.id)
             )
         ).scalar()
         assert emb_count_before >= 1
@@ -271,12 +251,7 @@ async def test_embedding_cascade_delete_on_revision_removal():
         await s.delete(rev)
         await s.commit()
 
-    assert (
-        await _count(
-            "embeddings", where=f"unit_revision_id = '{rev.id}'"
-        )
-        == 0
-    )
+    assert await _count("embeddings", where=f"unit_revision_id = '{rev.id}'") == 0
 
 
 @pytest.mark.asyncio

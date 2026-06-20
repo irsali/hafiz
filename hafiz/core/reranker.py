@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import TypeVar
 
 from hafiz.core.config import load_settings
 from hafiz.core.embeddings import _model_cache_dir, _purge_if_incomplete
@@ -34,8 +33,6 @@ _reranker_lock = threading.Lock()
 # cross-encoder Run() concurrency safety isn't guaranteed across fastembed
 # versions, and a single user's recall load is low, so a lock is the safe call.
 _infer_lock = asyncio.Lock()
-
-T = TypeVar("T")
 
 # Cross-encoder cost scales with (query + doc) token length: reranking 24
 # full-length annotation bodies (~2 KB each) costs ~400-850ms, but 24 short
@@ -88,7 +85,7 @@ async def warm_reranker() -> None:
     await asyncio.to_thread(get_reranker)
 
 
-async def rerank(
+async def rerank[T](
     query: str,
     items: list[T],
     *,

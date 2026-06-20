@@ -56,17 +56,15 @@ def run_ingest(
     *,
     project: str | None = None,
     prune: bool = False,  # retained for CLI compat; the new pipeline
-                          # tombstones on-the-fly, so explicit prune is a
-                          # no-op here. Kept so `--prune` still parses.
+    # tombstones on-the-fly, so explicit prune is a
+    # no-op here. Kept so `--prune` still parses.
     output_json: bool = False,
 ) -> None:
     """Run the ingestion pipeline for a path."""
 
     async def _ingest():
         try:
-            return await _do_ingest(
-                path, project=project, output_json=output_json
-            )
+            return await _do_ingest(path, project=project, output_json=output_json)
         finally:
             await close_engine()
 
@@ -92,9 +90,7 @@ async def _do_ingest(
 
     # ── Step 0: git-axis — race safety + resolve HEAD + diff base ────────
     repo_root = target if target.is_dir() else target.parent
-    in_flight = (
-        git_operation_in_progress(repo_root) if is_git_repo(repo_root) else None
-    )
+    in_flight = git_operation_in_progress(repo_root) if is_git_repo(repo_root) else None
     if in_flight:
         msg = (
             f"Git operation in progress ({in_flight}); refusing to ingest an "
@@ -182,15 +178,15 @@ async def _do_ingest(
         return
 
     if output_json:
-        _emit({
-            "event": "walk",
-            "status": "done",
-            "files": len(files),
-        })
-    else:
-        console.print(
-            f"Found [bold]{len(files)}[/bold] files under [bold]{target}[/bold]"
+        _emit(
+            {
+                "event": "walk",
+                "status": "done",
+                "files": len(files),
+            }
         )
+    else:
+        console.print(f"Found [bold]{len(files)}[/bold] files under [bold]{target}[/bold]")
 
     # ── Step 2: parse + embed + store, one file per transaction ──────────
     session_factory = get_session_factory()
@@ -277,15 +273,17 @@ async def _do_ingest(
         totals["units_tombstoned"] += result.units_tombstoned
 
         if output_json:
-            _emit({
-                "event": "index",
-                "status": "progress",
-                "path": str(file_path),
-                "parser": result.parser_name,
-                "units_seen": result.units_seen,
-                "revisions_created": result.revisions_created,
-                "embeddings_written": result.embeddings_written,
-            })
+            _emit(
+                {
+                    "event": "index",
+                    "status": "progress",
+                    "path": str(file_path),
+                    "parser": result.parser_name,
+                    "units_seen": result.units_seen,
+                    "revisions_created": result.revisions_created,
+                    "embeddings_written": result.embeddings_written,
+                }
+            )
         else:
             prog.update(task, advance=1)
 
@@ -308,23 +306,19 @@ async def _do_ingest(
     # If a rebase happened since last ingest without the post-rewrite hook
     # firing, stale commit rows get marked `rewritten_at=now` so they stop
     # looking like live history.
-    reconciled = (
-        await reconcile_orphaned_commits(project, repo_root)
-        if head_sha
-        else 0
-    )
+    reconciled = await reconcile_orphaned_commits(project, repo_root) if head_sha else 0
 
     # ── Step 4: summary ──────────────────────────────────────────────────
     if output_json:
-        _emit({
-            "event": "complete",
-            **totals,
-            "files_tombstoned": files_tombstoned,
-            "commits_reconciled": reconciled,
-            "failures": [
-                {"path": p, "error": e} for p, e in failures
-            ],
-        })
+        _emit(
+            {
+                "event": "complete",
+                **totals,
+                "files_tombstoned": files_tombstoned,
+                "commits_reconciled": reconciled,
+                "failures": [{"path": p, "error": e} for p, e in failures],
+            }
+        )
     else:
         console.print(
             f"[green]Indexed {totals['files_processed']} files[/green] — "
@@ -333,21 +327,13 @@ async def _do_ingest(
             f"{totals['embeddings_written']} new embeddings"
         )
         if totals["units_tombstoned"]:
-            console.print(
-                f"  [dim]Tombstoned {totals['units_tombstoned']} vanished units[/dim]"
-            )
+            console.print(f"  [dim]Tombstoned {totals['units_tombstoned']} vanished units[/dim]")
         if files_tombstoned:
-            console.print(
-                f"  [dim]Tombstoned {files_tombstoned} vanished files[/dim]"
-            )
+            console.print(f"  [dim]Tombstoned {files_tombstoned} vanished files[/dim]")
         if reconciled:
-            console.print(
-                f"  [dim]Marked {reconciled} rewritten commits as orphaned[/dim]"
-            )
+            console.print(f"  [dim]Marked {reconciled} rewritten commits as orphaned[/dim]")
         if failures:
-            console.print(
-                f"  [yellow]{len(failures)} file(s) failed to index:[/yellow]"
-            )
+            console.print(f"  [yellow]{len(failures)} file(s) failed to index:[/yellow]")
             for p, e in failures[:5]:
                 console.print(f"    [dim]{p}: {e}[/dim]")
             if len(failures) > 5:

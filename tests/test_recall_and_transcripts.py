@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 from typer.testing import CliRunner
@@ -57,7 +56,7 @@ async def _seed_session_with_messages(
             scope_kind="project",
             scope_value=project,
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await append_messages(
             comm.id,
             [
@@ -70,7 +69,10 @@ async def _seed_session_with_messages(
                     author="claude-opus-4-7",
                 ),
                 MessageInput(
-                    seq=2, role="tool", content="(tool result)", ts=now,
+                    seq=2,
+                    role="tool",
+                    content="(tool result)",
+                    ts=now,
                 ),
             ],
             embed=True,
@@ -141,9 +143,7 @@ def test_recall_filters_by_role():
         )
     )
     runner = CliRunner()
-    result = runner.invoke(
-        app, ["recall", str(sess_id), "--role", "user", "--json"]
-    )
+    result = runner.invoke(app, ["recall", str(sess_id), "--role", "user", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     roles = {m["role"] for m in payload["messages"]}

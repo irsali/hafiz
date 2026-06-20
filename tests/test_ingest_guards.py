@@ -88,7 +88,6 @@ def test_undersize_file_is_not_skipped_by_guard(tmp_path, monkeypatch):
     # Whatever happens downstream (DB may not be reachable in this test
     # env), the size guard must not be why this file failed.
     size_skips = [
-        f for f in complete["failures"]
-        if str(ok) == f["path"] and "skipped" in f["error"]
+        f for f in complete["failures"] if str(ok) == f["path"] and "skipped" in f["error"]
     ]
     assert size_skips == [], f"file at cap should not be size-skipped: {complete['failures']}"

@@ -62,9 +62,7 @@ class TestClassifyException:
         assert "VRAM" in msg
 
     def test_provider_unavailable(self):
-        cat, _ = dstate.classify_exception(
-            RuntimeError("Failed to create CUDAExecutionProvider")
-        )
+        cat, _ = dstate.classify_exception(RuntimeError("Failed to create CUDAExecutionProvider"))
         assert cat == "provider_unavailable"
 
     def test_unsupported_arch(self):
@@ -80,9 +78,7 @@ class TestClassifyException:
         assert cat == "provider_unavailable"
 
     def test_unknown(self):
-        cat, msg = dstate.classify_exception(
-            RuntimeError("some weird totally unrelated error")
-        )
+        cat, msg = dstate.classify_exception(RuntimeError("some weird totally unrelated error"))
         assert cat == "unknown"
         assert "weird" in msg
 
@@ -102,9 +98,7 @@ class TestStateFile:
         assert dstate.load_state() is None
 
     def test_round_trip(self):
-        state = dstate.build_state(
-            "gpu", reason=None, category=None, gpu_name="RTX 5060 Ti"
-        )
+        state = dstate.build_state("gpu", reason=None, category=None, gpu_name="RTX 5060 Ti")
         dstate.save_state(state)
         loaded = dstate.load_state()
         assert loaded is not None
@@ -119,9 +113,7 @@ class TestStateFile:
         assert not path.exists()
 
     def test_clear_state(self):
-        dstate.save_state(
-            dstate.build_state("cpu", reason="x", category="unknown", gpu_name=None)
-        )
+        dstate.save_state(dstate.build_state("cpu", reason="x", category="unknown", gpu_name=None))
         assert dstate.clear_state() is True
         assert dstate.clear_state() is False
 
@@ -275,9 +267,7 @@ class TestProbeDevice:
 class TestSelection:
     def test_config_cpu_wins_over_sticky_gpu(self, fake_models, monkeypatch):
         cpu, _gpu = fake_models
-        dstate.save_state(
-            dstate.build_state("gpu", reason=None, category=None, gpu_name="Old")
-        )
+        dstate.save_state(dstate.build_state("gpu", reason=None, category=None, gpu_name="Old"))
         monkeypatch.setenv("HAFIZ_EMBEDDING__DEVICE", "cpu")
         cfg_mod.reset_settings()
         monkeypatch.setattr(
@@ -310,9 +300,7 @@ class TestSelection:
 
     def test_sticky_gpu_reused(self, fake_models, monkeypatch):
         _cpu, gpu = fake_models
-        dstate.save_state(
-            dstate.build_state("gpu", reason=None, category=None, gpu_name="FakeGPU")
-        )
+        dstate.save_state(dstate.build_state("gpu", reason=None, category=None, gpu_name="FakeGPU"))
         monkeypatch.setattr(
             embeddings,
             "_cuda_available",
@@ -325,9 +313,7 @@ class TestSelection:
         _cpu, gpu = fake_models
         monkeypatch.setattr(dstate, "_ort_version", lambda: "1.24.4")
         dstate.save_state(
-            dstate.build_state(
-                "cpu", reason="old", category="unknown", gpu_name=None
-            )
+            dstate.build_state("cpu", reason="old", category="unknown", gpu_name=None)
         )
         monkeypatch.setattr(dstate, "_ort_version", lambda: "2.0.0")
         monkeypatch.setattr(embeddings, "_cuda_available", lambda: True)
@@ -344,9 +330,7 @@ class TestSelection:
 
     def test_cached_gpu_failing_reinit_reprobes(self, fake_models, monkeypatch):
         _cpu, gpu = fake_models
-        dstate.save_state(
-            dstate.build_state("gpu", reason=None, category=None, gpu_name="Old")
-        )
+        dstate.save_state(dstate.build_state("gpu", reason=None, category=None, gpu_name="Old"))
 
         calls = {"gpu": 0}
 
@@ -422,9 +406,7 @@ class TestCLI:
     def test_retry_with_explicit_config_is_noop(self, fake_models, monkeypatch):
         monkeypatch.setenv("HAFIZ_EMBEDDING__DEVICE", "cpu")
         cfg_mod.reset_settings()
-        dstate.save_state(
-            dstate.build_state("gpu", reason=None, category=None, gpu_name=None)
-        )
+        dstate.save_state(dstate.build_state("gpu", reason=None, category=None, gpu_name=None))
         result = runner.invoke(app, ["embedding", "retry", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)

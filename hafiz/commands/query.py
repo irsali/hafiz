@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
-from hafiz.core.database import get_engine, close_engine
+from hafiz.core.database import close_engine
 from hafiz.core.search import vector_search
 
 console = Console()
@@ -128,13 +126,10 @@ def _run_query(
             location += f" (L{r.line_start}-{r.line_end})"
 
         kind_tag = f"[dim]{r.kind}[/dim] "
-        score_color = (
-            "green" if r.score > 0.7 else "yellow" if r.score > 0.5 else "red"
-        )
+        score_color = "green" if r.score > 0.7 else "yellow" if r.score > 0.5 else "red"
 
         panel_content.append(
-            f"  {kind_tag}[bold]{location}[/bold]  "
-            f"[{score_color}]{r.score:.2%}[/{score_color}]"
+            f"  {kind_tag}[bold]{location}[/bold]  [{score_color}]{r.score:.2%}[/{score_color}]"
         )
         preview = r.content[:200].replace("\n", " ").strip()
         if len(r.content) > 200:
@@ -155,9 +150,7 @@ def _run_query(
     if transcript_hits:
         ts_panel = []
         for msg, score in transcript_hits:
-            score_color = (
-                "green" if score > 0.7 else "yellow" if score > 0.5 else "red"
-            )
+            score_color = "green" if score > 0.7 else "yellow" if score > 0.5 else "red"
             preview = msg.content[:200].replace("\n", " ").strip()
             if len(msg.content) > 200:
                 preview += "..."
@@ -170,10 +163,7 @@ def _run_query(
         console.print(
             Panel(
                 "\n".join(ts_panel),
-                title=(
-                    f"Source-layer transcripts "
-                    f"({len(transcript_hits)} matches, opt-in)"
-                ),
+                title=(f"Source-layer transcripts ({len(transcript_hits)} matches, opt-in)"),
                 border_style="magenta",
             )
         )

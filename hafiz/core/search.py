@@ -48,15 +48,11 @@ def _normalize_domains(domains: list[str] | None) -> list[str]:
     return cleaned
 
 
-def _validate_domain_filters(
-    include: list[str], exclude: list[str]
-) -> None:
+def _validate_domain_filters(include: list[str], exclude: list[str]) -> None:
     """Raise if include and exclude share a domain."""
     overlap = set(include) & set(exclude)
     if overlap:
-        raise ValueError(
-            f"--include-domain and --exclude-domain overlap: {sorted(overlap)}"
-        )
+        raise ValueError(f"--include-domain and --exclude-domain overlap: {sorted(overlap)}")
 
 
 @dataclass
@@ -64,11 +60,11 @@ class SearchResult:
     """A single search result. Fields are populated from the joined
     ``embeddings`` → ``unit_revisions`` → ``units`` → ``files`` row."""
 
-    id: str                       # embedding row id
+    id: str  # embedding row id
     unit_id: str
     unit_name: str
-    kind: str                     # namespaced: code.function, doc.heading, file.raw, …
-    content: str                  # the embedded part (may be a slice of the unit body)
+    kind: str  # namespaced: code.function, doc.heading, file.raw, …
+    content: str  # the embedded part (may be a slice of the unit body)
     source_file: str
     line_start: int | None
     line_end: int | None
@@ -115,9 +111,7 @@ async def vector_search(
     _validate_domain_filters(inc, exc)
     query_embedding = await embed_query(query)
 
-    similarity = (
-        1 - Embedding.embedding.cosine_distance(query_embedding)
-    ).label("similarity")
+    similarity = (1 - Embedding.embedding.cosine_distance(query_embedding)).label("similarity")
 
     stmt = (
         select(Embedding, UnitRevision, Unit, File, similarity)

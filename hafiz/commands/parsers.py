@@ -40,10 +40,7 @@ def run_parsers_list(*, output_json: bool = False) -> None:
         return
 
     if not rows:
-        console.print(
-            "[yellow]No parsers registered — this is a bug. "
-            "Re-install hafiz.[/yellow]"
-        )
+        console.print("[yellow]No parsers registered — this is a bug. Re-install hafiz.[/yellow]")
         return
 
     table = Table(title="Registered parsers", border_style="cyan")

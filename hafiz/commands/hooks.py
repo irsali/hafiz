@@ -118,6 +118,4 @@ def run_hooks_install(repo_path: str, *, project: str | None = None) -> None:
                 f"[yellow]Existing {hook_name} hook found — appended Hafiz hook.[/yellow]"
             )
         else:
-            console.print(
-                f"[green]Installed {hook_name} hook:[/green] {hooks_dir / hook_name}"
-            )
+            console.print(f"[green]Installed {hook_name} hook:[/green] {hooks_dir / hook_name}")

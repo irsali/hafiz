@@ -13,17 +13,16 @@ jobs:
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
-    # Non-blocking for now: the repo carries pre-existing ruff debt (lint +
-    # format) that predates CI. This job surfaces it on every PR without
-    # gating merges. Flip `continue-on-error` to false once the backlog is
-    # cleared in a dedicated cleanup pass — tracked in cli-surface-audit.md.
-    continue-on-error: true
+    # Blocking: the repo is clean (ruff check + format) as of the cleanup pass.
+    # Keep it that way — a failing lint gate now means real new debt.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      # Install the pinned ruff from the [dev] extra so the gate is
+      # reproducible with local runs (avoids a new ruff minor failing CI).
+      - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 from typer.testing import CliRunner
@@ -62,9 +61,7 @@ def test_session_list_help():
 def test_session_list_returns_seeded_session_in_json():
     slug = _seed(agent="claude-code", project="hafiz-list-test")
     runner = CliRunner()
-    result = runner.invoke(
-        app, ["session", "list", "--project", "hafiz-list-test", "--json"]
-    )
+    result = runner.invoke(app, ["session", "list", "--project", "hafiz-list-test", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["filters"]["project"] == "hafiz-list-test"

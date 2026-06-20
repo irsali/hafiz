@@ -9,24 +9,22 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 from typer.testing import CliRunner
 
 from hafiz.cli import app
 from hafiz.core.communications import list_messages
-from hafiz.core.database import close_engine, get_session_factory
+from hafiz.core.database import Communication, close_engine, get_session_factory
 from hafiz.core.importers.claude_code import (
     discover_jsonl_files,
     import_claude_code,
     parse_jsonl_file,
 )
 from hafiz.core.sessions import get_session_by_slug
-from sqlalchemy import select
-
-from hafiz.core.database import Communication
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +51,7 @@ def _record(
     extra_msg: dict | None = None,
 ) -> str:
     """Build a JSONL line in the Claude Code shape."""
-    ts = (timestamp or datetime.now(timezone.utc)).isoformat()
+    ts = (timestamp or datetime.now(UTC)).isoformat()
     rec: dict = {
         "type": record_type,
         "uuid": rec_uuid,
@@ -89,7 +87,7 @@ def jsonl_session(tmp_path: Path) -> Path:
     care about: user, assistant, tool_use, tool_result, thinking,
     plus a queue-operation skipper and a short-message skipper."""
     sid = str(uuid.uuid4())
-    base_ts = datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+    base_ts = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
     u1 = str(uuid.uuid4())
     a1 = str(uuid.uuid4())
     a2 = str(uuid.uuid4())
@@ -215,9 +213,7 @@ def test_parse_jsonl_file_extracts_roles_and_tools(jsonl_session: Path):
 @pytest.mark.asyncio
 async def test_import_claude_code_round_trip(jsonl_session: Path):
     project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
-    summary = await import_claude_code(
-        root=jsonl_session, project=project
-    )
+    summary = await import_claude_code(root=jsonl_session, project=project)
     assert summary.files_seen == 1
     assert summary.communications_created == 1
     assert summary.messages_written == 5

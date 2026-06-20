@@ -14,7 +14,6 @@ import pytest
 from hafiz.core.context import _graph_from_chunks
 from hafiz.core.search import SearchResult
 
-
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
 
@@ -54,24 +53,15 @@ def _context_graph() -> nx.MultiDiGraph:
     project "other" and shares a file with `handler` (used for project-filter tests).
     """
     G = nx.MultiDiGraph()
-    G.add_node("n-handler", name="handler", kind="function",
-               source_file="api.py", project="demo")
-    G.add_node("n-router", name="router", kind="function",
-               source_file="router.py", project="demo")
-    G.add_node("n-auth", name="auth", kind="function",
-               source_file="auth.py", project="demo")
-    G.add_node("n-secrets", name="secrets", kind="module",
-               source_file="sec.py", project="demo")
-    G.add_node("n-vault", name="vault", kind="service",
-               source_file="v.py", project="demo")
-    G.add_node("n-db", name="db_client", kind="class",
-               source_file="db.py", project="demo")
-    G.add_node("n-pool", name="pool", kind="class",
-               source_file="db.py", project="demo")
-    G.add_node("n-orphan", name="orphan", kind="function",
-               source_file="other.py", project="demo")
-    G.add_node("n-oos", name="out_of_scope", kind="function",
-               source_file="api.py", project="other")
+    G.add_node("n-handler", name="handler", kind="function", source_file="api.py", project="demo")
+    G.add_node("n-router", name="router", kind="function", source_file="router.py", project="demo")
+    G.add_node("n-auth", name="auth", kind="function", source_file="auth.py", project="demo")
+    G.add_node("n-secrets", name="secrets", kind="module", source_file="sec.py", project="demo")
+    G.add_node("n-vault", name="vault", kind="service", source_file="v.py", project="demo")
+    G.add_node("n-db", name="db_client", kind="class", source_file="db.py", project="demo")
+    G.add_node("n-pool", name="pool", kind="class", source_file="db.py", project="demo")
+    G.add_node("n-orphan", name="orphan", kind="function", source_file="other.py", project="demo")
+    G.add_node("n-oos", name="out_of_scope", kind="function", source_file="api.py", project="other")
 
     G.add_edge("n-handler", "n-router", key="r1", relation="calls", weight=1.0)
     G.add_edge("n-router", "n-auth", key="r2", relation="calls", weight=1.0)

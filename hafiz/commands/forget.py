@@ -66,9 +66,7 @@ async def _resolve_target_comm_ids(
             if sess is not None:
                 rows = (
                     await s.execute(
-                        select(Communication.id).where(
-                            Communication.session_id == sess.id
-                        )
+                        select(Communication.id).where(Communication.session_id == sess.id)
                     )
                 ).all()
                 return [r[0] for r in rows]
@@ -87,11 +85,7 @@ async def _resolve_target_comm_ids(
     factory = get_session_factory()
     async with factory() as s:
         rows = (
-            await s.execute(
-                select(Communication.id).where(
-                    Communication.session_id == sess.id
-                )
-            )
+            await s.execute(select(Communication.id).where(Communication.session_id == sess.id))
         ).all()
     return [r[0] for r in rows]
 
@@ -125,9 +119,7 @@ def run_forget_target(
         return
 
     if summary["communications_affected"] == 0:
-        console.print(
-            f"[yellow]No communications matched target {target!r}.[/yellow]"
-        )
+        console.print(f"[yellow]No communications matched target {target!r}.[/yellow]")
         return
     mode = "deleted (hard)" if hard else "tombstoned (soft)"
     console.print(
@@ -210,7 +202,5 @@ def run_forget_sweep(
     table.add_column("Metric", style="bold")
     table.add_column("Count", justify="right")
     table.add_row("Past retention", str(result["matched"]))
-    table.add_row(
-        "Tombstoned", str(result["tombstoned"]) + (" (dry run)" if dry_run else "")
-    )
+    table.add_row("Tombstoned", str(result["tombstoned"]) + (" (dry run)" if dry_run else ""))
     console.print(table)

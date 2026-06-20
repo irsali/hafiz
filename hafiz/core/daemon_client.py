@@ -27,7 +27,7 @@ from hafiz.core.daemon import PROTOCOL_VERSION, socket_path
 
 logger = logging.getLogger(__name__)
 
-_CONNECT_TIMEOUT = 1.0   # connecting to a live daemon is instant; cap it low
+_CONNECT_TIMEOUT = 1.0  # connecting to a live daemon is instant; cap it low
 _REQUEST_TIMEOUT = 30.0  # a warm op is ~tens of ms; this is the wedged-daemon cap
 _SPAWN_WARMUP_TIMEOUT = 20.0  # cold start loads the model — allow it to come up
 

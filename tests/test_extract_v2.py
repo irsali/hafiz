@@ -23,8 +23,6 @@ from hafiz.core.agents import (
     load_skills_content,
 )
 from hafiz.core.database import (
-    Annotation,
-    Edge,
     File,
     Unit,
     UnitRevision,
@@ -37,7 +35,6 @@ from hafiz.core.extractor import (
     parse_extraction_payload,
     store_extraction,
 )
-
 
 # ── Contract parsing ──────────────────────────────────────────────────────
 
@@ -64,15 +61,11 @@ def test_parse_missing_version_rejected():
 
 def test_parse_wrong_version_rejected():
     with pytest.raises(ExtractContractError, match="version"):
-        parse_extraction_payload(
-            {"version": 99, "annotations": [], "edges": []}
-        )
+        parse_extraction_payload({"version": 99, "annotations": [], "edges": []})
 
 
 def test_parse_empty_v2_payload_is_valid():
-    result = parse_extraction_payload(
-        {"version": 2, "annotations": [], "edges": []}
-    )
+    result = parse_extraction_payload({"version": 2, "annotations": [], "edges": []})
     assert result.annotations == []
     assert result.edges == []
     assert result.warnings == []
@@ -83,9 +76,7 @@ def test_parse_annotation_kind_code_star_rejected():
         parse_extraction_payload(
             {
                 "version": 2,
-                "annotations": [
-                    {"content": "nope", "kind": "code.function"}
-                ],
+                "annotations": [{"content": "nope", "kind": "code.function"}],
             }
         )
 
@@ -111,9 +102,7 @@ def test_parse_unknown_kind_warns_not_errors():
     result = parse_extraction_payload(
         {
             "version": 2,
-            "annotations": [
-                {"content": "hi", "kind": "weird_kind"}
-            ],
+            "annotations": [{"content": "hi", "kind": "weird_kind"}],
         }
     )
     assert len(result.annotations) == 1
@@ -185,9 +174,7 @@ async def seed_graph():
 
     factory = get_session_factory()
     async with factory() as s:
-        file = File(
-            id=uuid.uuid4(), project="demo", path="/src/auth.py"
-        )
+        file = File(id=uuid.uuid4(), project="demo", path="/src/auth.py")
         s.add(file)
         await s.flush()
         unit_a = Unit(
@@ -244,19 +231,14 @@ async def test_store_extraction_binds_annotation_to_unit_by_identity_key(
             "edges": [],
         }
     )
-    ann_n, edge_n, unresolved = await store_extraction(
-        result, project="demo"
-    )
+    ann_n, edge_n, unresolved = await store_extraction(result, project="demo")
     assert (ann_n, edge_n, unresolved) == (1, 0, 0)
 
     factory = get_session_factory()
     async with factory() as s:
         row = (
             await s.execute(
-                text(
-                    "SELECT unit_id FROM annotations WHERE content = "
-                    "'canonical auth entry'"
-                )
+                text("SELECT unit_id FROM annotations WHERE content = 'canonical auth entry'")
             )
         ).first()
         assert row is not None
@@ -281,18 +263,14 @@ async def test_store_extraction_writes_semantic_edge(seed_graph):
             ],
         }
     )
-    ann_n, edge_n, unresolved = await store_extraction(
-        result, project="demo"
-    )
+    ann_n, edge_n, unresolved = await store_extraction(result, project="demo")
     assert edge_n == 1
     assert unresolved == 0
 
     factory = get_session_factory()
     async with factory() as s:
         edges = (
-            await s.execute(
-                text("SELECT source, relation FROM edges WHERE source = 'agent'")
-            )
+            await s.execute(text("SELECT source, relation FROM edges WHERE source = 'agent'"))
         ).all()
         assert len(edges) == 1
         assert edges[0][1] == "implements_pattern"

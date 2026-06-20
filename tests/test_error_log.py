@@ -7,7 +7,6 @@ user's real error log.
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
@@ -79,11 +78,7 @@ def test_append_and_tail_roundtrip():
 
 def test_tail_limit():
     for i in range(5):
-        append(
-            _make_record(
-                id=f"{i:036d}", timestamp=f"2026-04-22T12:0{i}:00+00:00"
-            )
-        )
+        append(_make_record(id=f"{i:036d}", timestamp=f"2026-04-22T12:0{i}:00+00:00"))
     rs = tail(limit=2)
     assert len(rs) == 2
 
@@ -143,11 +138,7 @@ def test_rotation_on_entries_cap(monkeypatch):
     monkeypatch.setattr(error_log, "MAX_ENTRIES", 3)
 
     for i in range(5):
-        append(
-            _make_record(
-                id=f"{i:036d}", timestamp=f"2026-04-22T12:0{i}:00+00:00"
-            )
-        )
+        append(_make_record(id=f"{i:036d}", timestamp=f"2026-04-22T12:0{i}:00+00:00"))
 
     rs = tail()
     # Only the last 3 should remain (newest → oldest).
@@ -224,9 +215,7 @@ def test_log_exception_persists_and_returns_record():
 
 def test_count_recent_since_filters_by_duration():
     # Append one old, one new. "old" is 10 days ago (ISO string).
-    append(
-        _make_record(id="old" + "0" * 33, timestamp="2020-01-01T00:00:00+00:00")
-    )
+    append(_make_record(id="old" + "0" * 33, timestamp="2020-01-01T00:00:00+00:00"))
     # "new" uses now-ish (whatever tail interprets as recent).
     from datetime import UTC, datetime
 
@@ -281,9 +270,7 @@ def _make_sa_operational_error(message: str):
 
 def test_recognize_pgvector_missing_extension():
     exc = _make_sa_programming_error('extension "vector" does not exist')
-    result = _recognize_pgvector_missing(
-        exc, argv=["init"], traceback_text=""
-    )
+    result = _recognize_pgvector_missing(exc, argv=["init"], traceback_text="")
     assert result is not None
     suggestion, ctx = result
     assert "pgvector" in suggestion.lower()
@@ -293,17 +280,13 @@ def test_recognize_pgvector_missing_extension():
 
 def test_recognize_pgvector_missing_type():
     exc = _make_sa_programming_error('type "vector" does not exist')
-    result = _recognize_pgvector_missing(
-        exc, argv=["status"], traceback_text=""
-    )
+    result = _recognize_pgvector_missing(exc, argv=["status"], traceback_text="")
     assert result is not None
 
 
 def test_pgvector_recognizer_skips_unrelated_programming_error():
     exc = _make_sa_programming_error('relation "users" does not exist')
-    result = _recognize_pgvector_missing(
-        exc, argv=["status"], traceback_text=""
-    )
+    result = _recognize_pgvector_missing(exc, argv=["status"], traceback_text="")
     assert result is None
 
 
@@ -360,14 +343,12 @@ def _make_pydantic_validation_error():
 def test_recognize_config_validation_when_traceback_points_at_config_loader():
     exc = _make_pydantic_validation_error()
     fake_tb = (
-        'Traceback (most recent call last):\n'
+        "Traceback (most recent call last):\n"
         '  File "/path/to/hafiz/core/config.py", line 143, in load_settings\n'
-        '    return HafizSettings(**toml_data)\n'
-        'pydantic_core._pydantic_core.ValidationError: 1 validation error\n'
+        "    return HafizSettings(**toml_data)\n"
+        "pydantic_core._pydantic_core.ValidationError: 1 validation error\n"
     )
-    result = _recognize_config_validation(
-        exc, argv=["status"], traceback_text=fake_tb
-    )
+    result = _recognize_config_validation(exc, argv=["status"], traceback_text=fake_tb)
     assert result is not None
     suggestion, ctx = result
     assert "hafiz config show" in suggestion
@@ -427,9 +408,7 @@ def test_suggest_action_buggy_recognizer_does_not_break_logging(monkeypatch):
         raise RuntimeError("recognizer bug")
 
     monkeypatch.setattr(error_log, "_RECOGNIZERS", (_explosive,))
-    suggestion, ctx = _suggest_action(
-        ValueError("x"), argv=[], traceback_text=""
-    )
+    suggestion, ctx = _suggest_action(ValueError("x"), argv=[], traceback_text="")
     assert suggestion is None
     assert ctx == {}
 

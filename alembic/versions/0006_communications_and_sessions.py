@@ -32,18 +32,19 @@ column to a real ``uuid`` FK to ``sessions.id``:
 See workitems/active/communications-and-sessions.md for the full design
 (decisions, embedding policy, retention, agent contract).
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-from pgvector.sqlalchemy import Vector
-
 
 revision: str = "0006"
-down_revision: Union[str, None] = "0005"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0005"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -72,12 +73,8 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.Column(
-            "ended_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
-        sa.Column(
-            "valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("ended_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "metadata",
             postgresql.JSONB(),
@@ -87,9 +84,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("slug", name="uq_sessions_slug"),
     )
     op.create_index("idx_sessions_agent", "sessions", ["agent"])
-    op.create_index(
-        "idx_sessions_scope", "sessions", ["scope_kind", "scope_value"]
-    )
+    op.create_index("idx_sessions_scope", "sessions", ["scope_kind", "scope_value"])
     op.create_index("idx_sessions_started_at", "sessions", ["started_at"])
     op.create_index("idx_sessions_ended_at", "sessions", ["ended_at"])
     op.create_index("idx_sessions_valid_until", "sessions", ["valid_until"])
@@ -129,17 +124,13 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.Column(
-            "ended_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("ended_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "retention_until",
             postgresql.TIMESTAMP(timezone=True),
             nullable=True,
         ),
-        sa.Column(
-            "valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("valid_until", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "metadata",
             postgresql.JSONB(),
@@ -159,15 +150,9 @@ def upgrade() -> None:
     )
     op.create_index("idx_communications_session", "communications", ["session_id"])
     op.create_index("idx_communications_agent", "communications", ["agent"])
-    op.create_index(
-        "idx_communications_started_at", "communications", ["started_at"]
-    )
-    op.create_index(
-        "idx_communications_retention", "communications", ["retention_until"]
-    )
-    op.create_index(
-        "idx_communications_valid_until", "communications", ["valid_until"]
-    )
+    op.create_index("idx_communications_started_at", "communications", ["started_at"])
+    op.create_index("idx_communications_retention", "communications", ["retention_until"])
+    op.create_index("idx_communications_valid_until", "communications", ["valid_until"])
     op.create_index(
         "idx_communications_scope",
         "communications",
@@ -234,24 +219,16 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
-        sa.UniqueConstraint(
-            "communication_id", "seq", name="uq_messages_comm_seq"
-        ),
+        sa.UniqueConstraint("communication_id", "seq", name="uq_messages_comm_seq"),
         sa.CheckConstraint(
             "role IN ('user', 'assistant', 'tool', 'system')",
             name="ck_messages_role",
         ),
     )
-    op.create_index(
-        "idx_messages_comm_seq", "communication_messages", ["communication_id", "seq"]
-    )
+    op.create_index("idx_messages_comm_seq", "communication_messages", ["communication_id", "seq"])
     op.create_index("idx_messages_ts", "communication_messages", ["ts"])
-    op.create_index(
-        "idx_messages_role", "communication_messages", ["role"]
-    )
-    op.create_index(
-        "idx_messages_parent", "communication_messages", ["parent_message_id"]
-    )
+    op.create_index("idx_messages_role", "communication_messages", ["role"])
+    op.create_index("idx_messages_parent", "communication_messages", ["parent_message_id"])
     op.create_index(
         "idx_messages_salient",
         "communication_messages",
@@ -294,27 +271,21 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
         sa.CheckConstraint(
-            "target_kind IN ('unit', 'annotation', 'message', "
-            "'communication', 'session')",
+            "target_kind IN ('unit', 'annotation', 'message', 'communication', 'session')",
             name="ck_annotation_targets_kind",
         ),
         sa.CheckConstraint(
-            "relation IN ('derived_from', 'about', 'supersedes', "
-            "'cites', 'rebuts', 'related_to')",
+            "relation IN ('derived_from', 'about', 'supersedes', 'cites', 'rebuts', 'related_to')",
             name="ck_annotation_targets_relation",
         ),
     )
-    op.create_index(
-        "idx_ann_targets_annotation", "annotation_targets", ["annotation_id"]
-    )
+    op.create_index("idx_ann_targets_annotation", "annotation_targets", ["annotation_id"])
     op.create_index(
         "idx_ann_targets_target",
         "annotation_targets",
         ["target_kind", "target_id"],
     )
-    op.create_index(
-        "idx_ann_targets_relation", "annotation_targets", ["relation"]
-    )
+    op.create_index("idx_ann_targets_relation", "annotation_targets", ["relation"])
 
     # ─── annotations.session_id pivot ───────────────────────────
     # Rename the existing text column to legacy_session_id (kept for
@@ -341,9 +312,7 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.create_index(
-        "idx_annotations_session", "annotations", ["session_id"]
-    )
+    op.create_index("idx_annotations_session", "annotations", ["session_id"])
 
 
 def downgrade() -> None:

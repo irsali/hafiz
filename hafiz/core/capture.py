@@ -16,7 +16,7 @@ import re
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from hafiz.core.communications import (
     MessageInput,
@@ -98,7 +98,7 @@ async def store_transcript(
         raise ValueError("Transcript is empty after splitting — nothing to store.")
 
     total = len(turns)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     resolved_session_uuid = await resolve_session_uuid(session_id)
 
     metadata = {

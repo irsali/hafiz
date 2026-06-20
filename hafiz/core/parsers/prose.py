@@ -55,9 +55,7 @@ class ProseParser:
             while stack and stack[-1][0] >= level:
                 stack.pop()
 
-            parent_name = (
-                " > ".join(name for _, name in stack) if stack else None
-            )
+            parent_name = " > ".join(name for _, name in stack) if stack else None
             qualified = f"{parent_name} > {text}" if parent_name else text
 
             # Section extent: up to the next heading at same-or-higher level,
@@ -84,9 +82,7 @@ class ProseParser:
             # Paragraph children: blank-line-separated blocks inside this
             # heading's section, excluding the heading line itself and
             # nested headings (they'll be their own units).
-            for para_start, para_end, para_text in _extract_paragraphs(
-                lines, lineno + 1, end_line
-            ):
+            for para_start, para_end, para_text in _extract_paragraphs(lines, lineno + 1, end_line):
                 units.append(
                     ParsedUnit(
                         kind="doc.paragraph",
@@ -120,9 +116,7 @@ def _find_headings(lines: list[str]) -> list[tuple[int, int, str]]:
     return out
 
 
-def _extract_paragraphs(
-    lines: list[str], start: int, end: int
-) -> list[tuple[int, int, str]]:
+def _extract_paragraphs(lines: list[str], start: int, end: int) -> list[tuple[int, int, str]]:
     """Split the range (1-indexed, inclusive) into paragraph blocks.
     Skips sub-heading lines so they don't leak into parent paragraphs."""
     paragraphs: list[tuple[int, int, str]] = []
@@ -137,9 +131,7 @@ def _extract_paragraphs(
 
         if is_heading or is_blank:
             if current:
-                paragraphs.append(
-                    (current_start, offset - 1, "".join(current))
-                )
+                paragraphs.append((current_start, offset - 1, "".join(current)))
                 current = []
             current_start = offset + 1
         else:

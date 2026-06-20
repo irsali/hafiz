@@ -12,7 +12,7 @@ returns an empty list and the bundle is annotation-only.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -70,10 +70,10 @@ class JournalBundle:
         """Return [(YYYY-MM-DD, entries, captures), ...] newest day first."""
         buckets: dict[str, tuple[list[JournalEntry], list[JournalCapture]]] = {}
         for e in self.entries:
-            day = e.valid_from.astimezone(timezone.utc).strftime("%Y-%m-%d")
+            day = e.valid_from.astimezone(UTC).strftime("%Y-%m-%d")
             buckets.setdefault(day, ([], []))[0].append(e)
         for c in self.captures:
-            day = c.captured_at.astimezone(timezone.utc).strftime("%Y-%m-%d")
+            day = c.captured_at.astimezone(UTC).strftime("%Y-%m-%d")
             buckets.setdefault(day, ([], []))[1].append(c)
         return sorted(
             ((d, es, cs) for d, (es, cs) in buckets.items()),
@@ -102,11 +102,9 @@ async def build_journal(
     ``session_id`` / ``task`` filter both annotations and captures to items
     tagged with the given thread of work.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if day is not None:
-        start = day.astimezone(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        start = day.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1) - timedelta(microseconds=1)
     else:
         start = now - (since or timedelta(days=7))

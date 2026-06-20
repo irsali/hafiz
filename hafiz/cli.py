@@ -5,14 +5,12 @@ Entry point for the `hafiz` command. Built with Typer + Rich.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import typer
 
 from hafiz import __version__
 
 
-def _parse_domain_csv(value: Optional[str]) -> Optional[list[str]]:
+def _parse_domain_csv(value: str | None) -> list[str] | None:
     """Parse a ``--include-domain a,b,c`` flag into ``["a","b","c"]``.
 
     Returns ``None`` when the flag wasn't passed (so callers can
@@ -31,8 +29,8 @@ app = typer.Typer(
         "Hafiz — sovereign intelligence layer for your workspace.\n\n"
         "[bold]Getting started:[/bold] hafiz init  →  hafiz status --diagnose"
         "  →  hafiz doctor --probe  →  hafiz ingest <path> --project <name>\n"
-        "[bold]Day-to-day:[/bold]    hafiz context \"<task>\"  ·  hafiz query \"<text>\""
-        "  ·  hafiz observe \"<decision>\" --type decision  ·  hafiz note \"<thought>\"\n"
+        '[bold]Day-to-day:[/bold]    hafiz context "<task>"  ·  hafiz query "<text>"'
+        '  ·  hafiz observe "<decision>" --type decision  ·  hafiz note "<thought>"\n'
         "[bold]When stuck:[/bold]    hafiz errors list  ·  hafiz status --diagnose"
         "  ·  hafiz doctor"
     ),
@@ -49,7 +47,7 @@ def version_callback(value: bool) -> None:
 
 @app.callback()
 def _top_level_callback(
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None,
         "--version",
         "-v",
@@ -67,6 +65,7 @@ def _top_level_callback(
 
 # ─── INIT ───────────────────────────────────────────────────────────────
 
+
 @app.command()
 def init() -> None:
     """Initialize the Hafiz database (create tables + pgvector extension)."""
@@ -77,18 +76,17 @@ def init() -> None:
 
 # ─── INGEST ─────────────────────────────────────────────────────────────
 
+
 @app.command()
 def ingest(
-    path: Optional[str] = typer.Argument(None, help="Path to file or directory to index."),
-    project: Optional[str] = typer.Option(
+    path: str | None = typer.Argument(None, help="Path to file or directory to index."),
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Tag chunks with a project name."
     ),
     git_hook: bool = typer.Option(
         False, "--git-hook", help="Index only files changed in the latest commit."
     ),
-    prune: bool = typer.Option(
-        False, "--prune", help="Remove stale chunks before indexing."
-    ),
+    prune: bool = typer.Option(False, "--prune", help="Remove stale chunks before indexing."),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Emit newline-delimited JSON progress events."
     ),
@@ -115,10 +113,11 @@ def ingest(
 
 # ─── WATCH ──────────────────────────────────────────────────────────
 
+
 @app.command()
 def watch(
     path: str = typer.Argument(..., help="Directory to watch for changes."),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Tag indexed chunks with a project name."
     ),
     json_output: bool = typer.Option(
@@ -152,9 +151,7 @@ def serve_main(
     detach: bool = typer.Option(
         False, "--detach", help="Daemonize into the background and return."
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Machine-readable output."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Machine-readable output."),
 ) -> None:
     """Start the daemon. Subcommands: `status`, `stop`."""
     if ctx.invoked_subcommand is not None:
@@ -166,9 +163,7 @@ def serve_main(
 
 @serve_app.command("status")
 def serve_status(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Machine-readable output."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Machine-readable output."),
 ) -> None:
     """Report whether the daemon is running."""
     from hafiz.commands.serve import run_status
@@ -178,9 +173,7 @@ def serve_status(
 
 @serve_app.command("stop")
 def serve_stop(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Machine-readable output."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Machine-readable output."),
 ) -> None:
     """Stop the running daemon (best-effort)."""
     from hafiz.commands.serve import run_stop
@@ -190,17 +183,12 @@ def serve_stop(
 
 # ─── PRUNE ──────────────────────────────────────────────────────────
 
+
 @app.command()
 def prune(
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="List stale files without deleting."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List stale files without deleting."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """No-op — stale-file cleanup is automatic on ingest. Kept for compatibility."""
     from hafiz.commands.prune import run_prune
@@ -210,24 +198,27 @@ def prune(
 
 # ─── QUERY ──────────────────────────────────────────────────────────────
 
+
 @app.command()
 def query(
     text: str = typer.Argument(..., help="Search query text."),
     json_output: bool = typer.Option(
         False, "--json", "-j", help="Output results as JSON (for agents)."
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter results by project."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter results by project."),
     workspace: bool = typer.Option(
         False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
     ),
-    type: Optional[str] = typer.Option(
-        None, "--type", "-t", help="Filter by type (chunk: code/doc/note/decision; observation: fact/decision/learning/pattern/warning)."
+    type: str | None = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help=(
+            "Filter by type (chunk: code/doc/note/decision; "
+            "observation: fact/decision/learning/pattern/warning)."
+        ),
     ),
-    limit: int = typer.Option(
-        10, "--limit", "-l", help="Maximum number of results."
-    ),
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of results."),
     observations: bool = typer.Option(
         False,
         "--observations",
@@ -239,7 +230,7 @@ def query(
         hidden=True,
         help="Deprecated alias for --observations.",
     ),
-    source: Optional[str] = typer.Option(
+    source: str | None = typer.Option(
         None,
         "--source",
         help="(with --observations) Filter by source (e.g. user:anjum, agent:claude-code).",
@@ -266,7 +257,7 @@ def query(
             "results. Off by default — the wisdom layer must remain primary."
         ),
     ),
-    include_domain: Optional[str] = typer.Option(
+    include_domain: str | None = typer.Option(
         None,
         "--include-domain",
         help=(
@@ -275,7 +266,7 @@ def query(
             "the dot. Overrides any session default."
         ),
     ),
-    exclude_domain: Optional[str] = typer.Option(
+    exclude_domain: str | None = typer.Option(
         None,
         "--exclude-domain",
         help=(
@@ -350,40 +341,31 @@ def query(
 
 # ─── RECALL ─────────────────────────────────────────────────────────
 
+
 @app.command()
 def recall(
     target: str = typer.Argument(
         ...,
-        help=(
-            "Session slug, session uuid, or communication uuid to recall."
-        ),
+        help=("Session slug, session uuid, or communication uuid to recall."),
     ),
-    role: Optional[str] = typer.Option(
+    role: str | None = typer.Option(
         None, "--role", help="Filter to a single role (user/assistant/tool/system)."
     ),
-    seq_from: Optional[int] = typer.Option(
-        None, "--from", help="Start at this seq (inclusive)."
-    ),
-    seq_to: Optional[int] = typer.Option(
-        None, "--to", help="Stop at this seq (inclusive)."
-    ),
-    has_tool_call: Optional[bool] = typer.Option(
+    seq_from: int | None = typer.Option(None, "--from", help="Start at this seq (inclusive)."),
+    seq_to: int | None = typer.Option(None, "--to", help="Stop at this seq (inclusive)."),
+    has_tool_call: bool | None = typer.Option(
         None,
         "--has-tool-call/--no-tool-call",
         help="Filter to messages that do (or don't) carry tool_calls.",
     ),
-    query_text: Optional[str] = typer.Option(
+    query_text: str | None = typer.Option(
         None,
         "--query",
         "-q",
         help="Vector search across the session's messages instead of a linear walk.",
     ),
-    limit: int = typer.Option(
-        1000, "--limit", "-l", help="Maximum messages to return."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    limit: int = typer.Option(1000, "--limit", "-l", help="Maximum messages to return."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Surface source-layer messages from a session or communication.
 
@@ -408,11 +390,10 @@ def recall(
 
 # ─── STATUS ─────────────────────────────────────────────────────────────
 
+
 @app.command()
 def status(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
     diagnose: bool = typer.Option(
         False, "--diagnose", help="Run diagnostic checks (config, DB, pgvector, embeddings)."
     ),
@@ -490,9 +471,7 @@ app.add_typer(config_app)
 
 @config_app.command("show")
 def config_show(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Show current Hafiz configuration and per-tunable resolution sources."""
     from hafiz.commands.maintenance import run_config_show
@@ -503,9 +482,7 @@ def config_show(
 @config_app.command("get")
 def config_get(
     key: str = typer.Argument(..., help="Tunable key, e.g. embedding.max_part_chars"),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Print a single tunable's effective value and its source layer."""
     from hafiz.commands.maintenance import run_config_get
@@ -525,9 +502,7 @@ def config_set(
             "at ~/.config/hafiz/hafiz.toml."
         ),
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Persist a tunable value to hafiz.toml.
 
@@ -542,12 +517,8 @@ def config_set(
 @config_app.command("unset")
 def config_unset(
     key: str = typer.Argument(..., help="Tunable key to remove from hafiz.toml"),
-    local: bool = typer.Option(
-        False, "--local", help="Target ./hafiz.toml instead of user scope."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    local: bool = typer.Option(False, "--local", help="Target ./hafiz.toml instead of user scope."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Remove a tunable from hafiz.toml so it falls through to sticky / default."""
     from hafiz.commands.maintenance import run_config_unset
@@ -557,9 +528,7 @@ def config_unset(
 
 @config_app.command("apply")
 def config_apply(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
     assume_yes: bool = typer.Option(
         False,
         "--yes",
@@ -590,9 +559,7 @@ def config_apply(
 
 @config_app.command("clear-sticky")
 def config_clear_sticky(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Delete the sticky tuning-state cache (re-probe is required to repopulate)."""
     from hafiz.commands.maintenance import run_config_clear_sticky
@@ -612,12 +579,8 @@ def graph_show(
     depth: int = typer.Option(
         1, "--depth", "-d", min=0, help="Include neighbors up to N hops (undirected)."
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Show an entity and its N-hop neighborhood (undirected walk)."""
     from hafiz.commands.graph import run_graph_show
@@ -628,15 +591,9 @@ def graph_show(
 @graph_app.command("deps")
 def graph_deps(
     name: str = typer.Argument(..., help="Entity name to look up."),
-    depth: int = typer.Option(
-        1, "--depth", "-d", min=0, help="Walk outgoing edges up to N hops."
-    ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    depth: int = typer.Option(1, "--depth", "-d", min=0, help="Walk outgoing edges up to N hops."),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Show what an entity depends on, transitively (outgoing walk)."""
     from hafiz.commands.graph import run_graph_deps
@@ -647,15 +604,9 @@ def graph_deps(
 @graph_app.command("impact")
 def graph_impact(
     name: str = typer.Argument(..., help="Entity name to look up."),
-    depth: int = typer.Option(
-        1, "--depth", "-d", min=0, help="Walk incoming edges up to N hops."
-    ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    depth: int = typer.Option(1, "--depth", "-d", min=0, help="Walk incoming edges up to N hops."),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Show the blast radius — what breaks if this entity changes (incoming walk)."""
     from hafiz.commands.graph import run_graph_impact
@@ -667,12 +618,8 @@ def graph_impact(
 def graph_path(
     source: str = typer.Argument(..., help="Source entity name."),
     target: str = typer.Argument(..., help="Target entity name."),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Find the shortest directed path from SOURCE to TARGET."""
     from hafiz.commands.graph import run_graph_path
@@ -688,15 +635,9 @@ def graph_rank(
         "-m",
         help="Centrality metric: pagerank, betweenness, degree, in_degree, out_degree.",
     ),
-    top: int = typer.Option(
-        20, "--top", "-n", min=1, help="Number of results to show."
-    ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    top: int = typer.Option(20, "--top", "-n", min=1, help="Number of results to show."),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Rank entities by a centrality metric (importance ranking)."""
     from hafiz.commands.graph import run_graph_rank
@@ -706,18 +647,14 @@ def graph_rank(
 
 @graph_app.command("stats")
 def graph_stats(
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
     top_central: int = typer.Option(
         5,
         "--top-central",
         min=0,
         help="Number of top-central nodes to include (by PageRank).",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Show graph-level health: counts, density, components, top-central nodes."""
     from hafiz.commands.graph import run_graph_stats
@@ -737,13 +674,11 @@ app.add_typer(session_app)
 @session_app.command("start")
 def session_start(
     name: str = typer.Argument(..., help="Human-readable session name (a slug is auto-generated)."),
-    task: Optional[str] = typer.Option(
-        None, "--task", help="Default task for this session."
-    ),
-    project: Optional[str] = typer.Option(
+    task: str | None = typer.Option(None, "--task", help="Default task for this session."),
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Default project for this session."
     ),
-    include_domain: Optional[str] = typer.Option(
+    include_domain: str | None = typer.Option(
         None,
         "--include-domain",
         help=(
@@ -751,7 +686,7 @@ def session_start(
             "terminal (comma-separated, e.g. 'code,doc')."
         ),
     ),
-    exclude_domain: Optional[str] = typer.Option(
+    exclude_domain: str | None = typer.Option(
         None,
         "--exclude-domain",
         help=(
@@ -759,9 +694,7 @@ def session_start(
             "terminal (comma-separated)."
         ),
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Start a named session for this terminal."""
     from hafiz.commands.session import run_session_start
@@ -778,9 +711,7 @@ def session_start(
 
 @session_app.command("end")
 def session_end(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """End the active session for this terminal."""
     from hafiz.commands.session import run_session_end
@@ -790,9 +721,7 @@ def session_end(
 
 @session_app.command("show")
 def session_show(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Show the active session for this terminal."""
     from hafiz.commands.session import run_session_show
@@ -802,10 +731,10 @@ def session_show(
 
 @session_app.command("list")
 def session_list(
-    agent: Optional[str] = typer.Option(
+    agent: str | None = typer.Option(
         None, "--agent", help="Filter by agent (claude-code, cursor, ...)."
     ),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Filter to sessions scoped to a project."
     ),
     active: bool = typer.Option(
@@ -813,12 +742,8 @@ def session_list(
         "--active",
         help="Only show sessions whose ended_at is NULL.",
     ),
-    limit: int = typer.Option(
-        50, "--limit", "-l", help="Maximum sessions to return (default 50)."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    limit: int = typer.Option(50, "--limit", "-l", help="Maximum sessions to return (default 50)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """List recent sessions, newest first.
 
@@ -838,6 +763,7 @@ def session_list(
 
 # ─── OBSERVE ──────────────────────────────────────────────────────────
 
+
 @app.command()
 def observe(
     text: str = typer.Argument(..., help="The annotation text to store."),
@@ -847,51 +773,46 @@ def observe(
         "-t",
         help="Kind: fact, decision, learning, pattern, warning, note.",
     ),
-    source: Optional[str] = typer.Option(
+    source: str | None = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:bilal, user:manual)."
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Tag with a project name."
-    ),
-    tags: Optional[str] = typer.Option(
-        None, "--tags", help="Comma-separated tags."
-    ),
-    confidence: float = typer.Option(
-        1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."
-    ),
-    expires_in: Optional[str] = typer.Option(
+    project: str | None = typer.Option(None, "--project", "-p", help="Tag with a project name."),
+    tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
+    confidence: float = typer.Option(1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."),
+    expires_in: str | None = typer.Option(
         None,
         "--expires-in",
         help="Expire after a duration (e.g. 30d, 2w, 6m, 1y).",
     ),
-    expires: Optional[str] = typer.Option(
+    expires: str | None = typer.Option(
         None,
         "--expires",
         help="Expire at an ISO date/datetime (e.g. 2026-06-01).",
     ),
-    session: Optional[str] = typer.Option(
+    session: str | None = typer.Option(
         None,
         "--session",
         help="Session id to tag (overrides any active `hafiz session`).",
     ),
-    task: Optional[str] = typer.Option(
+    task: str | None = typer.Option(
         None,
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
-    supersedes: Optional[str] = typer.Option(
+    supersedes: str | None = typer.Option(
         None,
         "--supersedes",
         help="UUID of an observation this one replaces — marks the old row inactive atomically.",
     ),
-    derived_from: Optional[str] = typer.Option(
+    derived_from: str | None = typer.Option(
         None,
         "--derived-from",
-        help="Comma-separated UUIDs this observation was distilled from (lineage, stored in metadata).",
+        help=(
+            "Comma-separated UUIDs this observation was distilled from "
+            "(lineage, stored in metadata)."
+        ),
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Store a fact, decision, or learning as an observation."""
     from hafiz.commands.observe import run_observe
@@ -919,37 +840,31 @@ def observe(
 
 @app.command()
 def capture(
-    text: Optional[str] = typer.Argument(
+    text: str | None = typer.Argument(
         None, help="Transcript text. Omit to read from --file or stdin."
     ),
-    file: Optional[str] = typer.Option(
-        None, "--file", "-f", help="Read transcript from a file."
-    ),
-    title: Optional[str] = typer.Option(
+    file: str | None = typer.Option(None, "--file", "-f", help="Read transcript from a file."),
+    title: str | None = typer.Option(
         None, "--title", help="Human-readable title (used in the synthetic path)."
     ),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Tag chunks with a project name."
     ),
-    source: Optional[str] = typer.Option(
+    source: str | None = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:claude-code, user:you)."
     ),
-    tags: Optional[str] = typer.Option(
-        None, "--tags", help="Comma-separated tags."
-    ),
-    session: Optional[str] = typer.Option(
+    tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
+    session: str | None = typer.Option(
         None,
         "--session",
         help="Session id to tag (overrides any active `hafiz session`).",
     ),
-    task: Optional[str] = typer.Option(
+    task: str | None = typer.Option(
         None,
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Ingest a transcript / multi-page dump as searchable transcript chunks."""
     from hafiz.commands.capture import run_capture
@@ -974,51 +889,43 @@ def capture(
 @app.command()
 def note(
     text: str = typer.Argument(..., help="The note text to store."),
-    source: Optional[str] = typer.Option(
+    source: str | None = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:claude-code, user:you)."
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Tag with a project name."
-    ),
-    tags: Optional[str] = typer.Option(
-        None, "--tags", help="Comma-separated tags."
-    ),
-    confidence: float = typer.Option(
-        1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."
-    ),
-    expires_in: Optional[str] = typer.Option(
+    project: str | None = typer.Option(None, "--project", "-p", help="Tag with a project name."),
+    tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
+    confidence: float = typer.Option(1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."),
+    expires_in: str | None = typer.Option(
         None,
         "--expires-in",
         help="Expire after a duration (e.g. 30d, 2w, 6m, 1y).",
     ),
-    expires: Optional[str] = typer.Option(
+    expires: str | None = typer.Option(
         None,
         "--expires",
         help="Expire at an ISO date/datetime (e.g. 2026-06-01).",
     ),
-    session: Optional[str] = typer.Option(
+    session: str | None = typer.Option(
         None,
         "--session",
         help="Session id to tag (overrides any active `hafiz session`).",
     ),
-    task: Optional[str] = typer.Option(
+    task: str | None = typer.Option(
         None,
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
-    supersedes: Optional[str] = typer.Option(
+    supersedes: str | None = typer.Option(
         None,
         "--supersedes",
         help="UUID of a note this one replaces.",
     ),
-    derived_from: Optional[str] = typer.Option(
+    derived_from: str | None = typer.Option(
         None,
         "--derived-from",
         help="Comma-separated UUIDs this note was distilled from.",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Capture a raw thought as a note — low-bar lane, distill later."""
     from hafiz.commands.observe import run_note
@@ -1045,43 +952,31 @@ def note(
 
 @app.command()
 def journal(
-    since: Optional[str] = typer.Option(
+    since: str | None = typer.Option(
         None,
         "--since",
         help="Duration window ending now (e.g. 7d, 2w, 6h). Default: 7d.",
     ),
-    day: Optional[str] = typer.Option(
+    day: str | None = typer.Option(
         None,
         "--day",
         help="Specific UTC day (ISO date, e.g. 2026-04-20). Exclusive with --since.",
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
     workspace: bool = typer.Option(
         False,
         "--workspace",
         "-w",
         help="Scope to sibling projects in parent directory.",
     ),
-    source: Optional[str] = typer.Option(
+    source: str | None = typer.Option(
         None, "--source", help="Filter by source (e.g. agent:claude-code)."
     ),
-    type: Optional[str] = typer.Option(
-        None, "--type", "-t", help="Filter by observation type."
-    ),
-    session: Optional[str] = typer.Option(
-        None, "--session", help="Filter by session id."
-    ),
-    task: Optional[str] = typer.Option(
-        None, "--task", help="Filter by task label."
-    ),
-    limit: int = typer.Option(
-        500, "--limit", "-l", help="Maximum entries (default 500)."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    type: str | None = typer.Option(None, "--type", "-t", help="Filter by observation type."),
+    session: str | None = typer.Option(None, "--session", help="Filter by session id."),
+    task: str | None = typer.Option(None, "--task", help="Filter by task label."),
+    limit: int = typer.Option(500, "--limit", "-l", help="Maximum entries (default 500)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Time-bounded digest of observations — what you captured recently."""
     if project and workspace:
@@ -1109,37 +1004,27 @@ def journal(
 
 @app.command()
 def distill(
-    since: Optional[str] = typer.Option(
+    since: str | None = typer.Option(
         None,
         "--since",
         help="Duration window (e.g. 7d, 2w, 6h). Default: 7d.",
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
     workspace: bool = typer.Option(
         False,
         "--workspace",
         "-w",
         help="Scope to sibling projects in parent directory.",
     ),
-    session: Optional[str] = typer.Option(
-        None, "--session", help="Filter by session id."
-    ),
-    task: Optional[str] = typer.Option(
-        None, "--task", help="Filter by task label."
-    ),
+    session: str | None = typer.Option(None, "--session", help="Filter by session id."),
+    task: str | None = typer.Option(None, "--task", help="Filter by task label."),
     no_transcripts: bool = typer.Option(
         False,
         "--no-transcripts",
         help="Only surface notes; skip transcript candidates.",
     ),
-    limit: int = typer.Option(
-        200, "--limit", "-l", help="Maximum notes (default 200)."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    limit: int = typer.Option(200, "--limit", "-l", help="Maximum notes (default 200)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Surface recent notes + transcripts as promotable candidates.
 
@@ -1166,12 +1051,11 @@ def distill(
 
 # ─── CONTEXT ──────────────────────────────────────────────────────────
 
+
 @app.command()
 def context(
     query: str = typer.Argument(..., help="Task description or question."),
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
     workspace: bool = typer.Option(
         False, "--workspace", "-w", help="Scope to sibling projects in parent directory."
     ),
@@ -1183,7 +1067,7 @@ def context(
             "Off by default — wisdom layer stays primary."
         ),
     ),
-    include_domain: Optional[str] = typer.Option(
+    include_domain: str | None = typer.Option(
         None,
         "--include-domain",
         help=(
@@ -1192,17 +1076,14 @@ def context(
             "default. Domain = `kind` prefix before the dot."
         ),
     ),
-    exclude_domain: Optional[str] = typer.Option(
+    exclude_domain: str | None = typer.Option(
         None,
         "--exclude-domain",
         help=(
-            "Drop chunks in these data domains (comma-separated). "
-            "Overrides any session default."
+            "Drop chunks in these data domains (comma-separated). Overrides any session default."
         ),
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Synthesize relevant code, graph, and observations for a task."""
     if project and workspace:
@@ -1238,14 +1119,11 @@ def context(
 
 # ─── REVIEW ──────────────────────────────────────────────────────────
 
+
 @app.command()
 def review(
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Review a specific project."
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Review a specific project."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Review knowledge quality and get improvement suggestions."""
     from hafiz.commands.review import run_review
@@ -1261,15 +1139,9 @@ app.add_typer(extract_app)
 
 @extract_app.command("export")
 def extract_export_cmd(
-    project: Optional[str] = typer.Option(
-        None, "--project", "-p", help="Filter by project."
-    ),
-    limit: int = typer.Option(
-        500, "--limit", "-l", help="Maximum units to surface."
-    ),
-    pretty: bool = typer.Option(
-        False, "--pretty", help="Human-readable summary instead of JSON."
-    ),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
+    limit: int = typer.Option(500, "--limit", "-l", help="Maximum units to surface."),
+    pretty: bool = typer.Option(False, "--pretty", help="Human-readable summary instead of JSON."),
 ) -> None:
     """Emit the AST-known units + structural edges agents can annotate
     against. JSON by default (agents parse it); --pretty for humans."""
@@ -1280,10 +1152,10 @@ def extract_export_cmd(
 
 @extract_app.command("import")
 def extract_import_cmd(
-    file: Optional[str] = typer.Option(
+    file: str | None = typer.Option(
         None, "--file", "-f", help="JSON file (reads stdin if omitted)."
     ),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Project tag for stored rows."
     ),
 ) -> None:
@@ -1303,7 +1175,7 @@ app.add_typer(hooks_app)
 @hooks_app.command("install")
 def hooks_install(
     repo_path: str = typer.Argument(".", help="Path to the git repository."),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Project name to pass to the hook."
     ),
 ) -> None:
@@ -1324,9 +1196,7 @@ app.add_typer(embedding_app)
 
 @embedding_app.command("status")
 def embedding_status(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Show the current embedding device and its provenance (config / sticky / probe)."""
     from hafiz.commands.embedding import run_embedding_status
@@ -1336,11 +1206,12 @@ def embedding_status(
 
 @embedding_app.command("retry")
 def embedding_retry(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """Clear sticky state and re-probe the embedding device (use after freeing VRAM, upgrading drivers, etc.)."""
+    """Clear sticky state and re-probe the embedding device.
+
+    Use after freeing VRAM, upgrading drivers, etc.
+    """
     from hafiz.commands.embedding import run_embedding_retry
 
     run_embedding_retry(output_json=json_output)
@@ -1354,18 +1225,14 @@ app.add_typer(agent_app)
 
 @agent_app.command("install")
 def agent_install(
-    name: Optional[str] = typer.Argument(
+    name: str | None = typer.Argument(
         None, help="Agent name (claude-code, cursor, github-copilot)."
     ),
     local: bool = typer.Option(
         False, "--local", "-l", help="Install in current project instead of globally."
     ),
-    path: Optional[str] = typer.Option(
-        None, "--path", help="Override destination directory."
-    ),
-    file: Optional[str] = typer.Option(
-        None, "--file", "-f", help="Override destination filename."
-    ),
+    path: str | None = typer.Option(None, "--path", help="Override destination directory."),
+    file: str | None = typer.Option(None, "--file", "-f", help="Override destination filename."),
 ) -> None:
     """Install hafiz skills for an AI coding agent."""
     from hafiz.commands.agent import run_agent_install
@@ -1375,21 +1242,11 @@ def agent_install(
 
 @agent_app.command("uninstall")
 def agent_uninstall(
-    name: Optional[str] = typer.Argument(
-        None, help="Agent name to uninstall."
-    ),
-    local: bool = typer.Option(
-        False, "--local", "-l", help="Uninstall from current project."
-    ),
-    path: Optional[str] = typer.Option(
-        None, "--path", help="Override destination directory."
-    ),
-    file: Optional[str] = typer.Option(
-        None, "--file", "-f", help="Override destination filename."
-    ),
-    force: bool = typer.Option(
-        False, "--force", help="Remove even if not installed by hafiz."
-    ),
+    name: str | None = typer.Argument(None, help="Agent name to uninstall."),
+    local: bool = typer.Option(False, "--local", "-l", help="Uninstall from current project."),
+    path: str | None = typer.Option(None, "--path", help="Override destination directory."),
+    file: str | None = typer.Option(None, "--file", "-f", help="Override destination filename."),
+    force: bool = typer.Option(False, "--force", help="Remove even if not installed by hafiz."),
 ) -> None:
     """Remove hafiz skills for an AI coding agent."""
     from hafiz.commands.agent import run_agent_uninstall
@@ -1413,9 +1270,7 @@ app.add_typer(parsers_app)
 
 @parsers_app.command("list")
 def parsers_list_cmd(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """List registered parsers (in-tree + entry-point-loaded) and their
     language coverage. Useful for answering "is AST active for my .go
@@ -1425,12 +1280,12 @@ def parsers_list_cmd(
     run_parsers_list(output_json=json_output)
 
 
-
 # ─── FORGET ───────────────────────────────────────────────────────────
+
 
 @app.command()
 def forget(
-    target: Optional[str] = typer.Argument(
+    target: str | None = typer.Argument(
         None,
         help=(
             "Communication uuid, session uuid, or session slug to redact. "
@@ -1468,9 +1323,7 @@ def forget(
         "--dry-run",
         help="(with --all-expired) Report counts without modifying rows.",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Redact source-layer rows.
 
@@ -1519,20 +1372,18 @@ app.add_typer(import_app)
 
 @import_app.command("claude-code")
 def import_claude_code_cmd(
-    path: Optional[str] = typer.Argument(
+    path: str | None = typer.Argument(
         None,
         help=(
             "Path to a JSONL file or a directory of session JSONL files. "
             "Defaults to ~/.claude/projects (every session you've ever had)."
         ),
     ),
-    project: Optional[str] = typer.Option(
+    project: str | None = typer.Option(
         None, "--project", "-p", help="Tag stored communications with this project."
     ),
-    limit: Optional[int] = typer.Option(
-        None, "--limit", "-l", help="Stop after N JSONL files."
-    ),
-    since: Optional[str] = typer.Option(
+    limit: int | None = typer.Option(None, "--limit", "-l", help="Stop after N JSONL files."),
+    since: str | None = typer.Option(
         None, "--since", help="Only import sessions ending after this duration ago (e.g. 7d)."
     ),
     dry_run: bool = typer.Option(
@@ -1541,9 +1392,7 @@ def import_claude_code_cmd(
     no_embed: bool = typer.Option(
         False, "--no-embed", help="Skip embedding (text only). Useful for fast imports."
     ),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON (for agents)."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Import Claude Code session JSONL files into the source layer.
 
@@ -1576,13 +1425,13 @@ app.add_typer(errors_app)
 
 @errors_app.command("list")
 def errors_list(
-    since: Optional[str] = typer.Option(
+    since: str | None = typer.Option(
         None, "--since", help="Relative duration: 1h, 30m, 2d, 1w. Default: all."
     ),
     limit: int = typer.Option(
         20, "--limit", "-n", min=1, help="Max records to return (ignored with --group-by)."
     ),
-    group_by: Optional[str] = typer.Option(
+    group_by: str | None = typer.Option(
         None,
         "--group-by",
         help=(
@@ -1603,17 +1452,13 @@ def errors_list(
     """
     from hafiz.commands.errors import run_errors_list
 
-    run_errors_list(
-        since=since, limit=limit, group_by=group_by, output_json=json_output
-    )
+    run_errors_list(since=since, limit=limit, group_by=group_by, output_json=json_output)
 
 
 @errors_app.command("show")
 def errors_show(
     record_id: str = typer.Argument(..., help="Full or unique-prefix error id."),
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Show the full structured record (including traceback) for one error."""
     from hafiz.commands.errors import run_errors_show
@@ -1623,9 +1468,7 @@ def errors_show(
 
 @errors_app.command("clear")
 def errors_clear(
-    json_output: bool = typer.Option(
-        False, "--json", "-j", help="Output as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
     """Delete the error log. Returns the count of records discarded."""
     from hafiz.commands.errors import run_errors_clear

@@ -55,13 +55,8 @@ class ContextBundle:
                 if c.line_start and c.line_end:
                     location += f":{c.line_start}-{c.line_end}"
                 lang = f" ({c.language})" if c.language else ""
-                part_marker = (
-                    f" — part {c.part_index}" if c.part_index > 0 else ""
-                )
-                sections.append(
-                    f"\n### {location}{lang}{part_marker}"
-                    f"  — similarity {c.score:.2%}"
-                )
+                part_marker = f" — part {c.part_index}" if c.part_index > 0 else ""
+                sections.append(f"\n### {location}{lang}{part_marker}  — similarity {c.score:.2%}")
                 sections.append(f"```{c.language or ''}\n{c.content}\n```")
         else:
             sections.append("\n_No relevant content found._")
@@ -73,22 +68,17 @@ class ContextBundle:
                 badges = []
                 if ent.get("is_seed"):
                     badges.append("seed")
-                if (dist := ent.get("distance")) is not None and not ent.get(
-                    "is_seed"
-                ):
+                if (dist := ent.get("distance")) is not None and not ent.get("is_seed"):
                     badges.append(f"{dist} hop{'s' if dist != 1 else ''} away")
                 if (pr := ent.get("pagerank_score")) is not None:
                     badges.append(f"PR {pr:.4f}")
                 badge_str = f" _[{' · '.join(badges)}]_" if badges else ""
-                sections.append(
-                    f"\n**{ent['name']}** ({ent['kind']}){badge_str}"
-                )
+                sections.append(f"\n**{ent['name']}** ({ent['kind']}){badge_str}")
                 if ent.get("parent_name"):
                     sections.append(f"  parent: `{ent['parent_name']}`")
                 for conn in ent.get("connections", []):
                     sections.append(
-                        f"  - {conn['direction']} **{conn['unit']}** "
-                        f"via _{conn['relation']}_"
+                        f"  - {conn['direction']} **{conn['unit']}** via _{conn['relation']}_"
                     )
         else:
             sections.append("\n_No related units found._")
@@ -189,9 +179,7 @@ async def build_context(
         exclude_domains=exclude_domains,
     )
     entities = await _graph_from_chunks(chunks, project=project)
-    annotations = await search_annotations(
-        query, limit=limit_annotations, project=project
-    )
+    annotations = await search_annotations(query, limit=limit_annotations, project=project)
 
     return ContextBundle(
         query=query,
@@ -219,9 +207,7 @@ def _normalize(name: str) -> str:
     return name.lower().replace(" ", "").replace("-", "").replace("_", "")
 
 
-def _match_dirs_to_projects(
-    dir_names: set[str], indexed: set[str]
-) -> list[str]:
+def _match_dirs_to_projects(dir_names: set[str], indexed: set[str]) -> list[str]:
     """Match directory names to indexed project names. Exact then normalized."""
     matched: set[str] = set()
     matched |= dir_names & indexed
@@ -255,21 +241,13 @@ async def resolve_workspace_projects(cwd: Path | None = None) -> list[str]:
         return []
 
     parent = cwd.parent
-    sibling_names = {
-        d.name
-        for d in parent.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
-    }
+    sibling_names = {d.name for d in parent.iterdir() if d.is_dir() and not d.name.startswith(".")}
     matched = _match_dirs_to_projects(sibling_names, indexed)
 
     if matched:
         return matched
 
-    child_names = {
-        d.name
-        for d in cwd.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
-    }
+    child_names = {d.name for d in cwd.iterdir() if d.is_dir() and not d.name.startswith(".")}
     return _match_dirs_to_projects(child_names, indexed)
 
 
@@ -291,9 +269,7 @@ async def build_workspace_context(
         exclude_domains=exclude_domains,
     )
     entities = await _graph_from_chunks(chunks, project=projects)
-    annotations = await search_annotations(
-        query, limit=limit_annotations, project=projects
-    )
+    annotations = await search_annotations(query, limit=limit_annotations, project=projects)
 
     distribution: dict[str, int] = {}
     for c in chunks:
@@ -375,27 +351,20 @@ async def _graph_from_chunks(
     seed_ids = [
         nid
         for nid, attrs in G.nodes(data=True)
-        if attrs.get("source_file") in source_files
-        and _in_project(attrs, project)
+        if attrs.get("source_file") in source_files and _in_project(attrs, project)
     ]
     if not seed_ids:
         return []
 
     distances: dict[str, int] = {}
     for seed in seed_ids:
-        for nid, dist in ga.walk(
-            G, seed, depth=depth, direction="both"
-        ).items():
+        for nid, dist in ga.walk(G, seed, depth=depth, direction="both").items():
             prev = distances.get(nid)
             if prev is None or dist < prev:
                 distances[nid] = dist
 
     if isinstance(project, list):
-        distances = {
-            nid: d
-            for nid, d in distances.items()
-            if _in_project(G.nodes[nid], project)
-        }
+        distances = {nid: d for nid, d in distances.items() if _in_project(G.nodes[nid], project)}
 
     if G.number_of_edges() > 0:
         pr = nx.pagerank(G, weight="weight")

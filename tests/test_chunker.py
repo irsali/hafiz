@@ -24,7 +24,6 @@ from hafiz.core.chunker import (
     walk_files,
 )
 
-
 # ── compute_hash ────────────────────────────────────────────────────────
 
 

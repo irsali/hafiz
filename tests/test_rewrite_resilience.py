@@ -22,7 +22,6 @@ from hafiz.core.git_context import (
 )
 from hafiz.core.store import reconcile_orphaned_commits
 
-
 # ── git_operation_in_progress ──────────────────────────────────────────────
 
 
@@ -38,9 +37,7 @@ def test_git_operation_in_progress_detects_marker(tmp_path: Path, monkeypatch):
     """Create a fake .git dir with a marker file and verify detection."""
     import subprocess
 
-    subprocess.run(
-        ["git", "init", "-q", str(tmp_path)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(tmp_path), "config", "user.email", "t@t"],
         check=True,
@@ -176,12 +173,8 @@ async def test_reconcile_scoped_to_project():
     async with factory() as s:
         s.add_all(
             [
-                Commit(
-                    hash="a" * 40, project="p1", summary="fake a"
-                ),
-                Commit(
-                    hash="b" * 40, project="p2", summary="fake b"
-                ),
+                Commit(hash="a" * 40, project="p1", summary="fake a"),
+                Commit(hash="b" * 40, project="p2", summary="fake b"),
             ]
         )
         await s.commit()
@@ -202,9 +195,7 @@ def test_hooks_install_includes_post_rewrite(tmp_path: Path):
     """`hafiz hooks install` writes all three templates including post-rewrite."""
     import subprocess
 
-    subprocess.run(
-        ["git", "init", "-q", str(tmp_path)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
 
     from hafiz.commands.hooks import run_hooks_install
 

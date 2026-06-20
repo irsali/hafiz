@@ -22,17 +22,13 @@ from hafiz.core.session import resolve_session_tag
 console = Console()
 
 
-def _compute_valid_until(
-    expires_in: str | None, expires: str | None
-) -> datetime | None:
+def _compute_valid_until(expires_in: str | None, expires: str | None) -> datetime | None:
     """Resolve --expires-in / --expires into an absolute UTC datetime, or None.
 
     Mutually exclusive — providing both is a user error.
     """
     if expires_in and expires:
-        console.print(
-            "[red]Error:[/red] --expires-in and --expires are mutually exclusive."
-        )
+        console.print("[red]Error:[/red] --expires-in and --expires are mutually exclusive.")
         raise SystemExit(1)
     if expires_in:
         try:
@@ -103,9 +99,7 @@ def run_observe(
         try:
             _uuid.UUID(supersedes)
         except ValueError:
-            console.print(
-                f"[red]Error:[/red] --supersedes not a valid UUID: {supersedes!r}"
-            )
+            console.print(f"[red]Error:[/red] --supersedes not a valid UUID: {supersedes!r}")
             raise SystemExit(1)
 
     async def _store():
@@ -161,9 +155,7 @@ def run_observe(
         return
 
     tags_str = ", ".join(ann.tags) if ann.tags else "none"
-    session_display = ann.legacy_session_id or (
-        str(ann.session_id) if ann.session_id else None
-    )
+    session_display = ann.legacy_session_id or (str(ann.session_id) if ann.session_id else None)
     session_line = ""
     if session_display or ann.task:
         session_line = (

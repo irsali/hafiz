@@ -26,14 +26,13 @@ from __future__ import annotations
 import asyncio
 import pickle
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import networkx as nx
 from sqlalchemy import func, select
 
 from hafiz.core.database import Edge, File, Unit, UnitRevision, get_session_factory
-
 
 CACHE_DIR = Path.home() / ".cache" / "hafiz"
 # Bump when pickle payload shape changes. v3: post-structural-grounding
@@ -163,9 +162,7 @@ async def current_signature(project: str | None = None) -> GraphSignature:
         max_rev = (await session.execute(rev_max_stmt)).scalar()
         max_edge = (
             await session.execute(
-                select(func.max(Edge.observed_at)).where(
-                    Edge.superseded_at.is_(None)
-                )
+                select(func.max(Edge.observed_at)).where(Edge.superseded_at.is_(None))
             )
         ).scalar()
         edge_count = (
@@ -212,7 +209,7 @@ async def get_cached_graph(
     G = await load_graph(project)
     meta = GraphMeta(
         project=project,
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         signature=signature,
         version=CACHE_VERSION,
         node_count=G.number_of_nodes(),
@@ -313,9 +310,7 @@ def walk(
     if source not in G:
         raise ValueError(f"source node {source!r} not in graph")
     if direction not in ("out", "in", "both"):
-        raise ValueError(
-            f"direction must be 'out', 'in', or 'both' — got {direction!r}"
-        )
+        raise ValueError(f"direction must be 'out', 'in', or 'both' — got {direction!r}")
     if depth < 0:
         raise ValueError(f"depth must be >= 0 — got {depth}")
 
@@ -331,10 +326,7 @@ def walk(
             else:
                 neighbors = (
                     n
-                    for n in (
-                        [v for _, v in G.out_edges(node)]
-                        + [u for u, _ in G.in_edges(node)]
-                    )
+                    for n in ([v for _, v in G.out_edges(node)] + [u for u, _ in G.in_edges(node)])
                 )
             for n in neighbors:
                 if n not in distances:
@@ -462,9 +454,7 @@ def graph_stats(G: nx.MultiDiGraph, *, top_central: int = 5) -> GraphStats:
         components = list(nx.weakly_connected_components(G))
         wcc_count = len(components)
         largest = max((len(c) for c in components), default=0)
-        isolated = sum(
-            1 for n in G.nodes if G.in_degree(n) == 0 and G.out_degree(n) == 0
-        )
+        isolated = sum(1 for n in G.nodes if G.in_degree(n) == 0 and G.out_degree(n) == 0)
         density = nx.density(G)
     else:
         wcc_count = 0
@@ -472,9 +462,7 @@ def graph_stats(G: nx.MultiDiGraph, *, top_central: int = 5) -> GraphStats:
         isolated = 0
         density = 0.0
 
-    top_ranked = (
-        rank_nodes(G, metric="pagerank", top_n=top_central) if node_count else []
-    )
+    top_ranked = rank_nodes(G, metric="pagerank", top_n=top_central) if node_count else []
 
     return GraphStats(
         node_count=node_count,
@@ -483,11 +471,7 @@ def graph_stats(G: nx.MultiDiGraph, *, top_central: int = 5) -> GraphStats:
         weakly_connected_components=wcc_count,
         largest_component_size=largest,
         isolated_nodes=isolated,
-        kind_counts=dict(
-            sorted(kinds.items(), key=lambda kv: kv[1], reverse=True)
-        ),
-        relation_counts=dict(
-            sorted(relations.items(), key=lambda kv: kv[1], reverse=True)
-        ),
+        kind_counts=dict(sorted(kinds.items(), key=lambda kv: kv[1], reverse=True)),
+        relation_counts=dict(sorted(relations.items(), key=lambda kv: kv[1], reverse=True)),
         top_by_pagerank=top_ranked,
     )

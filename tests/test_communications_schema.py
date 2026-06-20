@@ -10,7 +10,7 @@ use.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -32,9 +32,11 @@ from hafiz.core.database import (
     AnnotationTarget,
     Communication,
     CommunicationMessage,
-    Session as SessionRow,
     close_engine,
     get_session_factory,
+)
+from hafiz.core.database import (
+    Session as SessionRow,
 )
 
 
@@ -61,9 +63,7 @@ def test_should_embed_skips_short_messages():
 
 
 def test_should_embed_marked_salient_overrides_length():
-    assert should_embed_message(
-        role="user", content="ok", marked_salient=True
-    ) is True
+    assert should_embed_message(role="user", content="ok", marked_salient=True) is True
 
 
 def test_should_embed_skips_pure_tool_result_echo():
@@ -94,7 +94,7 @@ def test_token_threshold_constant_is_documented():
 
 @pytest.mark.asyncio
 async def test_upsert_communication_is_idempotent():
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     ext = f"test-ext-{uuid.uuid4().hex[:8]}"
     comm1, created1 = await upsert_communication(
         agent="test-agent",
@@ -122,7 +122,7 @@ async def test_append_messages_writes_with_selective_embedding():
         agent="test-agent",
         external_id=f"embed-test-{uuid.uuid4().hex[:8]}",
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     messages = [
         MessageInput(seq=0, role="user", content="ok", ts=now),
         MessageInput(
@@ -154,7 +154,7 @@ async def test_append_messages_is_idempotent_per_seq():
         agent="test-agent",
         external_id=f"idem-test-{uuid.uuid4().hex[:8]}",
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = [
         MessageInput(seq=0, role="user", content="hello world from test", ts=now),
         MessageInput(seq=1, role="assistant", content="response back to user", ts=now),
@@ -178,12 +178,16 @@ async def test_reimport_with_parent_pointer_to_skipped_seq_resets_to_null():
         agent="test-agent",
         external_id=f"reimport-parent-{uuid.uuid4().hex[:8]}",
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     parent_id = uuid.uuid4()
     child_id = uuid.uuid4()
     batch1 = [
         MessageInput(
-            id=parent_id, seq=0, role="user", content="parent turn", ts=now,
+            id=parent_id,
+            seq=0,
+            role="user",
+            content="parent turn",
+            ts=now,
         ),
         MessageInput(
             id=child_id,
@@ -238,7 +242,7 @@ async def test_role_check_constraint_rejects_unknown_role():
             seq=0,
             role="not_a_real_role",
             content="x",
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
         )
         session.add(bad)
         with pytest.raises(Exception):  # IntegrityError from CHECK
@@ -276,9 +280,7 @@ async def test_annotation_targets_pivot_basic_round_trip():
         await session.commit()
 
         result = await session.execute(
-            select(AnnotationTarget).where(
-                AnnotationTarget.annotation_id == ann.id
-            )
+            select(AnnotationTarget).where(AnnotationTarget.annotation_id == ann.id)
         )
         rows = list(result.scalars().all())
         assert len(rows) == 1
@@ -387,8 +389,8 @@ async def test_annotation_session_id_uuid_without_session_row_is_rejected():
 
 @pytest.mark.asyncio
 async def test_tombstone_expired_communications():
-    past_started = datetime.now(timezone.utc) - timedelta(days=120)
-    expired_until = datetime.now(timezone.utc) - timedelta(days=1)
+    past_started = datetime.now(UTC) - timedelta(days=120)
+    expired_until = datetime.now(UTC) - timedelta(days=1)
     comm, _ = await upsert_communication(
         agent="test-agent",
         external_id=f"retention-test-{uuid.uuid4().hex[:8]}",
@@ -421,7 +423,7 @@ async def test_forget_communication_soft_then_hard():
                 seq=0,
                 role="user",
                 content="forget me please",
-                ts=datetime.now(timezone.utc),
+                ts=datetime.now(UTC),
             )
         ],
         embed=False,
@@ -440,7 +442,5 @@ async def test_forget_communication_soft_then_hard():
     assert hard["deleted_messages"] == 1
     factory = get_session_factory()
     async with factory() as s:
-        result = await s.execute(
-            select(Communication).where(Communication.id == comm.id)
-        )
+        result = await s.execute(select(Communication).where(Communication.id == comm.id))
         assert result.scalar_one_or_none() is None

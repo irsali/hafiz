@@ -9,7 +9,7 @@ safe fallback rather than raising.
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -143,7 +143,7 @@ def commit_metadata(sha: str, cwd: Path) -> dict | None:
     try:
         committed_at = datetime.fromisoformat(iso_dt)
         if committed_at.tzinfo is None:
-            committed_at = committed_at.replace(tzinfo=timezone.utc)
+            committed_at = committed_at.replace(tzinfo=UTC)
     except ValueError:
         committed_at = None
     return {

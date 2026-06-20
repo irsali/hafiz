@@ -149,5 +149,7 @@ def run_agent_list() -> None:
     console.print()
     console.print(table)
     console.print()
-    console.print("[dim]Install: hafiz agent install <name> [--local] [--path PATH] [--file FILE][/dim]")
+    console.print(
+        "[dim]Install: hafiz agent install <name> [--local] [--path PATH] [--file FILE][/dim]"
+    )
     console.print("[dim]Custom:  hafiz agent install --path <dir> [--file <name>][/dim]")

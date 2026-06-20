@@ -117,16 +117,12 @@ def run_embedding_retry(*, output_json: bool = False) -> None:
         )
         if existed:
             console.print("[dim]Prior sticky state was cleared.[/dim]")
-        console.print(
-            "[dim]Set embedding.device = 'auto' to re-enable sticky probing.[/dim]"
-        )
+        console.print("[dim]Set embedding.device = 'auto' to re-enable sticky probing.[/dim]")
         console.print()
         return
 
     try:
-        _model, state = embeddings.probe_device(
-            "auto", settings.embedding.model, persist=True
-        )
+        _model, state = embeddings.probe_device("auto", settings.embedding.model, persist=True)
     except Exception as exc:
         result = {"ok": False, "error": str(exc), "cleared_prior": existed}
         if output_json:
@@ -152,8 +148,7 @@ def run_embedding_retry(*, output_json: bool = False) -> None:
     console.print()
     if state.device == "gpu":
         console.print(
-            f"[green]GPU probe succeeded[/green] — using "
-            f"[cyan]{state.gpu_name or 'CUDA'}[/cyan]."
+            f"[green]GPU probe succeeded[/green] — using [cyan]{state.gpu_name or 'CUDA'}[/cyan]."
         )
     else:
         console.print(f"[yellow]Using CPU.[/yellow] {state.reason or ''}")
