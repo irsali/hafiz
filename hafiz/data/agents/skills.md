@@ -131,6 +131,7 @@ You MUST follow these rules in every session:
 | `hafiz note "<text>" --source agent:<name>` | Capture a raw thought — anything below decision-grade |
 | `hafiz journal --since 7d --json` | "What did I record recently?" — annotations grouped by day |
 | `hafiz distill --since 7d --json` | Promotable notes + transcript turns with a ready observe scaffold |
+| `hafiz reconcile --json` | Read-only sweep — clusters of near-duplicate live annotations to supersede/retire |
 | `hafiz import claude-code --project <name>` | Post-hoc importer for Claude Code session JSONL (idempotent) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
@@ -179,6 +180,17 @@ The reasoning loop:
    `hafiz query --observations "<topic>" --include-superseded`. Never use
    `hafiz forget --hard` on knowledge-layer annotations; `--hard` is for
    the source layer (transcripts) only.
+
+   **Hafiz helps you catch this.** `hafiz observe` runs near-duplicate
+   detection on write: if a similar *live* annotation already exists, the
+   `--json` response carries `near_duplicates: [{id, content, kind,
+   score}]` (and a hint in human output). When you see one, decide: does
+   the new info **replace** it (re-run with `--supersedes <that-id>`), or
+   is it genuinely distinct (write as-is)? Detection is surface-only by
+   default — it never blocks — and is skipped for `note` and when you
+   already passed `--supersedes`. To sweep for drift that predates a write
+   or slipped through bulk imports, run `hafiz reconcile` (read-only;
+   clusters near-duplicate live annotations so you can supersede/retire).
 
 Sessions (optional) group everything you record in one terminal:
 ```bash
@@ -443,6 +455,7 @@ workstation is a no-op, not a hazard.
 | `hafiz note "<text>"` | Low-bar capture — `kind="note"` | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
+| `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations for manual supersede/retire | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
 | `hafiz session start "<name>"` | Per-TTY session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` in this terminal | `--task`, `--project`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz session show` / `end` | Inspect / clear | `--json` |
 

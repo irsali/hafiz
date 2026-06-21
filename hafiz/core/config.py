@@ -92,6 +92,36 @@ class RerankSettings(BaseModel):
     candidate_multiplier: int = 3
 
 
+class DedupSettings(BaseModel):
+    """Near-duplicate detection for annotation writes — write hygiene.
+
+    The "supersede on contradiction" contract is a behavioral guarantee
+    agents can silently skip. Detection makes the conflict *visible* on
+    write: ``store_annotation`` runs one cosine query against live
+    annotations of the same kind/project and surfaces any that clear
+    ``threshold``. Hafiz detects *similarity*, never *contradiction* — the
+    semantic call (supersede? refine? unrelated?) stays with the agent/user.
+
+    Default is surface-only: the write always succeeds and the duplicates
+    ride back in the result. ``strict`` flips it to fail-closed — the write
+    is refused unless the caller passes ``--supersedes`` or
+    ``--allow-duplicate`` — for users who want a hard rail. Never applies to
+    ``note`` (the firehose capture path).
+    """
+
+    enabled: bool = True
+    # Cosine similarity at/above which an existing live annotation counts as a
+    # near-duplicate. 0.88 catches genuine restatements while leaving room for
+    # distinct-but-related facts (which routinely sit in the 0.80–0.87 band).
+    threshold: float = 0.88
+    # Fail-closed instead of surface-only. Off by default — a blocking gate
+    # that can't tell "contradicts" from "merely similar" trains callers to
+    # reflexively bypass it.
+    strict: bool = False
+    # Cap on how many duplicates to surface per write.
+    max_candidates: int = 5
+
+
 class IngestSettings(BaseModel):
     """Policy caps for the ingest pipeline — hard guards, not probed."""
 
@@ -150,6 +180,7 @@ class HafizSettings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     rerank: RerankSettings = Field(default_factory=RerankSettings)
+    dedup: DedupSettings = Field(default_factory=DedupSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)

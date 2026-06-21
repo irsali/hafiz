@@ -195,7 +195,8 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `observe "<text>"` | Embed and store a fact / decision / learning / pattern / warning / note | Embed | `--json` | rich panel |
-| `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane | Embed | `--json` | rich panel |
+| `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips dedup detection) | Embed | `--json` | rich panel |
+| `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations for manual resolution | Embed | `--json` | rich panels |
 | `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables |
 | `distill` | Surface recent notes as promotable candidates (scanner, not promoter) | — | `--json` | rich tables |
 
@@ -205,6 +206,10 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 - **Staleness hint**: `query --observations` surfaces age (e.g. `3mo ago`) and dims rows older than 90 days.
 - **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive and records the link. Nothing is deleted.
 - **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` records distillation source without replacing.
+- **Near-duplicate detection** (on `observe`, not `note`): before writing, Hafiz cosine-compares the new content against **live** annotations of the same kind+project and surfaces any at/above `[dedup] threshold` (default 0.88). Hafiz detects *similarity*, never *contradiction* — the supersede/refine/distinct call stays with the caller.
+  - **Surface-only** (default): the write always succeeds; matches ride back in `observe --json` as `near_duplicates: [{id, content, kind, score}]` and as a yellow hint in rich output. Skipped when `--supersedes` is set.
+  - **Strict** (`[dedup] strict = true`): a match aborts the write — exit `2`, `{"ok": false, "near_duplicates": [...]}` — unless `--supersedes <id>` or `--allow-duplicate` is given.
+  - **`reconcile`** is the after-the-fact backstop: `--project`, `--type`, `--threshold`, `--limit`, `--json`. JSON shape: `{action, clusters: [{kind, project, members: [{id, content, score}]}], total}`. Never mutates.
 - **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
 
 ### Captures (transcripts / multi-page dumps)

@@ -84,9 +84,17 @@ def run_observe(
     task: str | None = None,
     supersedes: str | None = None,
     derived_from: str | None = None,
+    allow_duplicate: bool = False,
+    detect_duplicates: bool = True,
     output_json: bool = False,
 ) -> None:
-    """Store an annotation and print confirmation."""
+    """Store an annotation and print confirmation.
+
+    Runs near-duplicate detection (unless ``detect_duplicates`` is False, as
+    for the ``note`` firehose). In surface-only mode any matches are reported
+    alongside the stored row; in strict mode a match aborts the write with a
+    non-zero exit unless ``--supersedes`` or ``--allow-duplicate`` was given.
+    """
     valid_until = _compute_valid_until(expires_in, expires)
     resolved_session_id, resolved_task = resolve_session_tag(
         session_override=session, task_override=task
@@ -104,10 +112,9 @@ def run_observe(
 
     async def _store():
         try:
-            from hafiz.core.annotations import store_annotation
+            from hafiz.core.annotations import store_annotation, store_annotation_checked
 
-            ann = await store_annotation(
-                text,
+            common = dict(
                 kind=kind,
                 source=source,
                 project=project,
@@ -119,12 +126,21 @@ def run_observe(
                 supersedes_id=supersedes,
                 derived_from=derived_ids,
             )
-            return ann
+            if detect_duplicates:
+                return await store_annotation_checked(
+                    text, allow_duplicate=allow_duplicate, **common
+                )
+            return await store_annotation(text, **common), []
         finally:
             await close_engine()
 
     try:
-        ann = asyncio.run(_store())
+        from hafiz.core.annotations import DuplicateAnnotationError
+
+        ann, near_dupes = asyncio.run(_store())
+    except DuplicateAnnotationError as e:
+        _report_strict_block(e.duplicates, output_json)
+        raise SystemExit(2)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
@@ -132,6 +148,10 @@ def run_observe(
     if output_json:
         data = {
             "action": "observe",
+            "near_duplicates": [
+                {"id": d.id, "content": d.content, "kind": d.kind, "score": d.score}
+                for d in near_dupes
+            ],
             "annotation": {
                 "id": str(ann.id),
                 "content": ann.content,
@@ -175,6 +195,55 @@ def run_observe(
     )
     console.print(Panel(info, border_style="cyan"))
 
+    if near_dupes:
+        _print_dupe_hint(near_dupes)
+
+
+def _print_dupe_hint(duplicates: list) -> None:
+    """Surface near-duplicate live annotations after a successful write."""
+    lines = [
+        "[bold yellow]⚠ Similar live annotation(s) already exist[/bold yellow]",
+        "[dim]If this replaces one of them, supersede it:[/dim]",
+        "",
+    ]
+    for d in duplicates:
+        preview = d.content[:80] + ("…" if len(d.content) > 80 else "")
+        lines.append(f"  [cyan]{d.id}[/cyan]  [dim]({d.score:.0%})[/dim]  {preview}")
+    lines += [
+        "",
+        f'[dim]→ hafiz observe "<text>" --supersedes {duplicates[0].id}[/dim]',
+    ]
+    console.print(Panel("\n".join(lines), border_style="yellow"))
+
+
+def _report_strict_block(duplicates: list, output_json: bool) -> None:
+    """Report a strict-mode write that was refused for near-duplication."""
+    if output_json:
+        data = {
+            "ok": False,
+            "error": "near-duplicate annotation exists (strict mode)",
+            "near_duplicates": [
+                {"id": d.id, "content": d.content, "kind": d.kind, "score": d.score}
+                for d in duplicates
+            ],
+            "hint": "pass --supersedes <id> to replace one, or --allow-duplicate to force.",
+        }
+        console.print_json(json.dumps(data))
+        return
+    lines = [
+        "[bold red]✗ Write refused — near-duplicate exists (strict mode)[/bold red]",
+        "",
+    ]
+    for d in duplicates:
+        preview = d.content[:80] + ("…" if len(d.content) > 80 else "")
+        lines.append(f"  [cyan]{d.id}[/cyan]  [dim]({d.score:.0%})[/dim]  {preview}")
+    lines += [
+        "",
+        f'[dim]→ supersede it:   hafiz observe "<text>" --supersedes {duplicates[0].id}[/dim]',
+        '[dim]→ or force write: hafiz observe "<text>" --allow-duplicate[/dim]',
+    ]
+    console.print(Panel("\n".join(lines), border_style="red"))
+
 
 def run_note(
     text: str,
@@ -191,7 +260,11 @@ def run_note(
     derived_from: str | None = None,
     output_json: bool = False,
 ) -> None:
-    """Low-bar capture — stores as ``kind="note"``."""
+    """Low-bar capture — stores as ``kind="note"``.
+
+    The note firehose skips near-duplicate detection by design: raw capture
+    should never be gated.
+    """
     run_observe(
         text,
         kind="note",
@@ -205,6 +278,7 @@ def run_note(
         task=task,
         supersedes=supersedes,
         derived_from=derived_from,
+        detect_duplicates=False,
         output_json=output_json,
     )
 

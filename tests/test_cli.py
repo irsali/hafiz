@@ -476,6 +476,141 @@ def test_distill_help():
     assert "--task" in result.output
 
 
+# ─── near-duplicate detection / reconcile ────────────────────────────
+
+
+def test_observe_help_has_allow_duplicate():
+    result = runner.invoke(app, ["observe", "--help"])
+    assert result.exit_code == 0
+    assert "--allow-duplicate" in result.output
+
+
+def test_reconcile_registered_and_help():
+    result = runner.invoke(app, ["reconcile", "--help"])
+    assert result.exit_code == 0
+    assert "--threshold" in result.output
+    assert "--project" in result.output
+
+
+def test_observe_surfaces_near_duplicates_and_reconcile_clusters_them():
+    """End-to-end: a near-duplicate observe surfaces the prior row in
+    ``near_duplicates``, ``reconcile`` clusters the pair, and a genuinely
+    distinct row of the same kind is neither surfaced nor clustered.
+
+    Synchronous on purpose — ``runner.invoke`` drives the CLI's own
+    ``asyncio.run``, which cannot nest inside a running loop.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    proj = "_dedup_test"
+    written_ids: list[str] = []
+
+    def _observe(text: str, extra: list[str] | None = None) -> dict:
+        args = ["observe", text, "--type", "decision", "--project", proj, "--json"]
+        if extra:
+            args += extra
+        res = runner.invoke(app, args)
+        assert res.exit_code == 0, res.output
+        return json.loads(res.output)
+
+    try:
+        first = _observe("DEDUPTEST alpha: refresh tokens go in httponly cookies for web")
+        written_ids.append(first["annotation"]["id"])
+        # First write has nothing to collide with.
+        assert first["near_duplicates"] == []
+
+        second = _observe("DEDUPTEST alpha: refresh tokens belong in httponly cookies for web")
+        written_ids.append(second["annotation"]["id"])
+        # Near-restatement → the first row is surfaced.
+        dup_ids = [d["id"] for d in second["near_duplicates"]]
+        assert first["annotation"]["id"] in dup_ids
+        assert all(d["score"] >= 0.88 for d in second["near_duplicates"])
+
+        # A distinct-but-related decision must NOT be flagged as a duplicate.
+        distinct = _observe("DEDUPTEST beta: session tokens go in localStorage for mobile")
+        written_ids.append(distinct["annotation"]["id"])
+        assert distinct["near_duplicates"] == []
+
+        # reconcile clusters exactly the two near-duplicates, not the distinct one.
+        res = runner.invoke(app, ["reconcile", "--project", proj, "--json"])
+        assert res.exit_code == 0, res.output
+        report = json.loads(res.output)
+        clustered = {m["id"] for c in report["clusters"] for m in c["members"]}
+        assert first["annotation"]["id"] in clustered
+        assert second["annotation"]["id"] in clustered
+        assert distinct["annotation"]["id"] not in clustered
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
+def test_observe_strict_mode_blocks_then_allow_duplicate_overrides(monkeypatch):
+    """Strict dedup refuses a near-duplicate write (exit 2) until
+    ``--allow-duplicate`` is passed."""
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    monkeypatch.setenv("HAFIZ_DEDUP__STRICT", "true")
+    proj = "_dedup_strict_test"
+    written_ids: list[str] = []
+    try:
+        base = runner.invoke(
+            app,
+            [
+                "observe",
+                "DEDUPTEST strict baseline row",
+                "--type",
+                "fact",
+                "--project",
+                proj,
+                "--json",
+            ],
+        )
+        assert base.exit_code == 0, base.output
+        written_ids.append(json.loads(base.output)["annotation"]["id"])
+
+        blocked = runner.invoke(
+            app,
+            [
+                "observe",
+                "DEDUPTEST strict baseline row",
+                "--type",
+                "fact",
+                "--project",
+                proj,
+                "--json",
+            ],
+        )
+        assert blocked.exit_code == 2, blocked.output
+        payload = json.loads(blocked.output)
+        assert payload["ok"] is False
+        assert payload["near_duplicates"]
+
+        forced = runner.invoke(
+            app,
+            [
+                "observe",
+                "DEDUPTEST strict baseline row",
+                "--type",
+                "fact",
+                "--project",
+                proj,
+                "--allow-duplicate",
+                "--json",
+            ],
+        )
+        assert forced.exit_code == 0, forced.output
+        written_ids.append(json.loads(forced.output)["annotation"]["id"])
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
 def test_distill_project_and_workspace_mutually_exclusive():
     result = runner.invoke(app, ["distill", "--project", "x", "--workspace"])
     assert result.exit_code == 1

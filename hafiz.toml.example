@@ -34,6 +34,26 @@ model = "Xenova/ms-marco-MiniLM-L-6-v2"  # ~80 MB ONNX cross-encoder
 # cross-encoder has real candidates to reorder.
 candidate_multiplier = 3
 
+[dedup]
+# Near-duplicate detection on `observe` (not `note`). Before writing, Hafiz
+# cosine-compares the new annotation against live rows of the same kind +
+# project and surfaces any at/above `threshold`. It detects *similarity*, not
+# *contradiction* — the supersede/refine/distinct call stays with the caller.
+# Env override: HAFIZ_DEDUP__ENABLED=false
+enabled = true
+# Cosine similarity at/above which a live row counts as a near-duplicate.
+# 0.88 catches genuine restatements while leaving distinct-but-related facts
+# (typically 0.80–0.87) alone.
+threshold = 0.88
+# Surface-only (false) = the write always succeeds and duplicates ride back.
+# Strict (true) = a match aborts the write unless --supersedes or
+# --allow-duplicate is given. Off by default — a gate that can't tell
+# "contradicts" from "merely similar" trains callers to reflexively bypass it.
+# Env override: HAFIZ_DEDUP__STRICT=true
+strict = false
+# Cap on how many duplicates to surface per write.
+max_candidates = 5
+
 [ingest]
 # Skip any file larger than this (bytes). Guards against minified
 # bundles, generated output, and accidentally-committed binaries that

@@ -118,6 +118,77 @@ class AnnotationResult:
     score: float
 
 
+@dataclass
+class NearDuplicate:
+    """An existing live annotation that closely resembles a pending write."""
+
+    id: str
+    content: str
+    kind: str
+    score: float
+
+
+class DuplicateAnnotationError(Exception):
+    """Raised in strict mode when a near-duplicate exists and the caller
+    neither superseded it nor opted out via ``allow_duplicate``.
+
+    Carries the offending ``duplicates`` so the caller can show the agent
+    exactly which ids to supersede.
+    """
+
+    def __init__(self, duplicates: list[NearDuplicate]):
+        self.duplicates = duplicates
+        ids = ", ".join(d.id for d in duplicates)
+        super().__init__(f"near-duplicate live annotation(s) exist: {ids}")
+
+
+async def find_near_duplicates(
+    embedding: list[float],
+    *,
+    kind: str,
+    project: str | None,
+    threshold: float,
+    limit: int = 5,
+    exclude_id: uuid.UUID | None = None,
+) -> list[NearDuplicate]:
+    """Return live annotations of the same ``kind``/``project`` whose cosine
+    similarity to ``embedding`` is at or above ``threshold``.
+
+    Scoped to same kind + same project deliberately: a ``decision`` rarely
+    duplicates a ``warning``, and cross-project collisions are noise. Only
+    *live* rows count — a superseded/expired row is already retired, so
+    re-stating its content is not a duplicate. ``exclude_id`` skips a row by
+    id (e.g. the freshly-inserted annotation itself).
+    """
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        similarity = (1 - Annotation.embedding.cosine_distance(embedding)).label("similarity")
+        stmt = (
+            select(Annotation, similarity)
+            .where(Annotation.embedding.isnot(None))
+            .where(Annotation.kind == kind)
+            .where(Annotation.valid_from <= now)
+            .where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
+            .order_by(Annotation.embedding.cosine_distance(embedding))
+            .limit(limit)
+        )
+        if project:
+            stmt = stmt.where(Annotation.project == project)
+        else:
+            stmt = stmt.where(Annotation.project.is_(None))
+        if exclude_id is not None:
+            stmt = stmt.where(Annotation.id != exclude_id)
+
+        rows = (await session.execute(stmt)).all()
+
+    return [
+        NearDuplicate(id=str(ann.id), content=ann.content, kind=ann.kind, score=round(float(s), 4))
+        for ann, s in rows
+        if float(s) >= threshold
+    ]
+
+
 async def store_annotation(
     content: str,
     *,
@@ -163,6 +234,11 @@ async def store_annotation(
 
     Returns:
         The stored Annotation ORM object.
+
+    Note:
+        Near-duplicate detection is *not* run here — bulk writers (importer,
+        extractor, daemon) must stay fast and unconditional. The ``observe``
+        command runs :func:`find_near_duplicates` itself before calling this.
     """
     embedding = await embed_query(content)
 
@@ -256,6 +332,177 @@ async def store_annotation(
         await write_derived_from_links(new_ann.id, list(derived_from))
 
     return new_ann
+
+
+async def store_annotation_checked(
+    content: str,
+    *,
+    kind: str = "fact",
+    project: str | None = None,
+    supersedes_id: str | None = None,
+    allow_duplicate: bool = False,
+    **kwargs,
+) -> tuple[Annotation, list[NearDuplicate]]:
+    """Detect near-duplicates, then store — the ``observe`` entry point.
+
+    Runs :func:`find_near_duplicates` against live annotations of the same
+    ``kind``/``project`` before writing. Detection is skipped when
+    ``supersedes_id`` is set (the conflict is already resolved) or when
+    ``dedup.enabled`` is False.
+
+    Returns ``(annotation, near_duplicates)``. In **surface-only** mode (the
+    default) the write always succeeds and the duplicates ride back for the
+    caller to display. In **strict** mode (``dedup.strict``), a non-empty match
+    with no ``supersedes_id`` and no ``allow_duplicate`` raises
+    :class:`DuplicateAnnotationError` and nothing is written.
+
+    Bulk writers (importer, extractor, daemon) should call
+    :func:`store_annotation` directly — they must stay fast and unconditional.
+    """
+    from hafiz.core.config import load_settings
+
+    dedup_cfg = load_settings().dedup
+    near_duplicates: list[NearDuplicate] = []
+
+    if dedup_cfg.enabled and not supersedes_id:
+        embedding = await embed_query(content)
+        near_duplicates = await find_near_duplicates(
+            embedding,
+            kind=kind,
+            project=project,
+            threshold=dedup_cfg.threshold,
+            limit=dedup_cfg.max_candidates,
+        )
+        if near_duplicates and dedup_cfg.strict and not allow_duplicate:
+            raise DuplicateAnnotationError(near_duplicates)
+
+    ann = await store_annotation(
+        content,
+        kind=kind,
+        project=project,
+        supersedes_id=supersedes_id,
+        **kwargs,
+    )
+    return ann, near_duplicates
+
+
+@dataclass
+class DuplicateCluster:
+    """A group of mutually near-duplicate live annotations."""
+
+    kind: str
+    project: str | None
+    members: list[NearDuplicate]
+
+
+async def reconcile_duplicates(
+    *,
+    project: str | None = None,
+    kind: str | None = None,
+    threshold: float | None = None,
+    limit: int = 500,
+) -> list[DuplicateCluster]:
+    """Find clusters of near-duplicate *live* annotations — a read-only sweep.
+
+    The after-the-fact backstop to write-time detection: surfaces drift that
+    slipped through (writes made before detection existed, or via bulk paths).
+    Resolution stays explicit and manual — this command never mutates; the
+    operator picks which row to ``observe --supersedes`` or ``forget``.
+
+    Clusters are built by single-linkage: each annotation is compared to the
+    others of its kind/project via cosine similarity; rows at/above
+    ``threshold`` are linked transitively into one cluster. ``threshold``
+    defaults to the configured ``dedup.threshold``.
+    """
+    from hafiz.core.config import load_settings
+
+    cfg = load_settings().dedup
+    thr = cfg.threshold if threshold is None else threshold
+
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(Annotation)
+            .where(Annotation.embedding.isnot(None))
+            .where(Annotation.valid_from <= now)
+            .where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
+            .order_by(Annotation.valid_from.desc())
+            .limit(limit)
+        )
+        if project:
+            stmt = stmt.where(Annotation.project == project)
+        if kind:
+            stmt = stmt.where(Annotation.kind == kind)
+        rows = list((await session.execute(stmt)).scalars().all())
+
+    # Group by (kind, project), then single-linkage cluster within each group
+    # using cosine similarity over the stored embeddings (no re-embedding).
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str | None], list[Annotation]] = defaultdict(list)
+    for ann in rows:
+        groups[(ann.kind, ann.project)].append(ann)
+
+    clusters: list[DuplicateCluster] = []
+    for (grp_kind, grp_project), anns in groups.items():
+        if len(anns) < 2:
+            continue
+        n = len(anns)
+        parent = list(range(n))
+
+        def find(x: int, _parent: list[int]) -> int:
+            while _parent[x] != x:
+                _parent[x] = _parent[_parent[x]]
+                x = _parent[x]
+            return x
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = _cosine(anns[i].embedding, anns[j].embedding)
+                if sim >= thr:
+                    ri, rj = find(i, parent), find(j, parent)
+                    if ri != rj:
+                        parent[ri] = rj
+
+        members_by_root: dict[int, list[int]] = defaultdict(list)
+        for idx in range(n):
+            members_by_root[find(idx, parent)].append(idx)
+
+        for idxs in members_by_root.values():
+            if len(idxs) < 2:
+                continue
+            # Score each member by its best similarity to any sibling, so the
+            # display can lead with the tightest match.
+            members: list[NearDuplicate] = []
+            for idx in idxs:
+                best = max(
+                    (_cosine(anns[idx].embedding, anns[k].embedding) for k in idxs if k != idx),
+                    default=0.0,
+                )
+                members.append(
+                    NearDuplicate(
+                        id=str(anns[idx].id),
+                        content=anns[idx].content,
+                        kind=anns[idx].kind,
+                        score=round(float(best), 4),
+                    )
+                )
+            members.sort(key=lambda m: m.score, reverse=True)
+            clusters.append(DuplicateCluster(kind=grp_kind, project=grp_project, members=members))
+
+    clusters.sort(key=lambda c: max(m.score for m in c.members), reverse=True)
+    return clusters
+
+
+def _cosine(a, b) -> float:
+    """Cosine similarity between two embedding vectors (lists/arrays)."""
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
 
 
 async def search_annotations(

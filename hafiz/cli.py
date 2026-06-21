@@ -812,9 +812,23 @@ def observe(
             "(lineage, stored in metadata)."
         ),
     ),
+    allow_duplicate: bool = typer.Option(
+        False,
+        "--allow-duplicate",
+        help=(
+            "Write even if a near-duplicate live annotation exists "
+            "(only relevant under strict dedup; surface-only mode never blocks)."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """Store a fact, decision, or learning as an observation."""
+    """Store a fact, decision, or learning as an observation.
+
+    On write, similar live annotations of the same kind/project are surfaced
+    so you can ``--supersedes`` one instead of accumulating a near-duplicate.
+    Detection is surface-only by default; set ``[dedup] strict = true`` to make
+    a match block the write (override per-write with ``--allow-duplicate``).
+    """
     from hafiz.commands.observe import run_observe
 
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
@@ -831,6 +845,38 @@ def observe(
         task=task,
         supersedes=supersedes,
         derived_from=derived_from,
+        allow_duplicate=allow_duplicate,
+        output_json=json_output,
+    )
+
+
+@app.command()
+def reconcile(
+    project: str | None = typer.Option(None, "--project", "-p", help="Limit to one project."),
+    kind: str | None = typer.Option(
+        None, "--type", "-t", help="Limit to one annotation kind (decision, fact, …)."
+    ),
+    threshold: float | None = typer.Option(
+        None,
+        "--threshold",
+        help="Cosine similarity to treat as a duplicate (default: [dedup] threshold).",
+    ),
+    limit: int = typer.Option(500, "--limit", help="Max live annotations to scan."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Find clusters of near-duplicate live annotations (read-only sweep).
+
+    The after-the-fact backstop to write-time detection: surfaces drift that
+    slipped through bulk writes or predates detection. Never mutates — resolve
+    each cluster with ``observe --supersedes`` or ``forget <id> --annotation``.
+    """
+    from hafiz.commands.reconcile import run_reconcile
+
+    run_reconcile(
+        project=project,
+        kind=kind,
+        threshold=threshold,
+        limit=limit,
         output_json=json_output,
     )
 
