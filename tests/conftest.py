@@ -42,15 +42,17 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-# Pin the terminal width for the whole test session. Typer renders ``--help``
-# via Rich, which auto-detects width from the tty — but ``CliRunner`` captures
-# output through a non-tty pipe, so Rich falls back to a default width that
-# varies by Rich version. A narrow fallback wraps the options table and splits
-# flag literals (``--json``, ``--observations``, …) across lines, so the
-# ``assert "--flag" in result.output`` help tests fail in CI while passing on a
-# wide local terminal. A fixed wide width makes help rendering deterministic
-# everywhere. ``setdefault`` respects an explicit local override.
-os.environ.setdefault("COLUMNS", "200")
+# Force a no-color terminal for the whole test session. Many tests assert on
+# raw flag substrings in ``--help`` output (``assert "--json" in result.output``).
+# Typer renders help via Rich; in a CI environment Rich detects the
+# ``GITHUB_ACTIONS`` / ``CI`` / ``FORCE_COLOR`` markers and *forces* color mode
+# even though ``CliRunner`` captures through a non-tty pipe. Forced color wraps
+# each flag literal in ANSI style codes (``\x1b[1m--json\x1b[0m``), so the plain
+# substring is no longer present and the assertions fail in CI while passing on
+# a local non-tty run. ``TERM=dumb`` makes Rich emit plain text; ``NO_COLOR``
+# alone is insufficient (Typer's rich_utils ignores it for tty detection).
+# ``setdefault`` respects an explicit local override.
+os.environ.setdefault("TERM", "dumb")
 
 collect_ignore = [
     # Uses the old chunker API (ChunkResult, chunk_file, LANGUAGE_MAP). The
