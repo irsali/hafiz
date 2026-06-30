@@ -89,14 +89,23 @@ def run_journal(
         try:
             projects: str | list[str] | None = project
             if workspace:
-                # hafiz.core.context is still on the old schema (Phase 3b-3).
-                # Workspace fan-out is disabled until it's rewired; fall back
-                # to the explicit --project filter.
-                console.print(
-                    "[yellow]--workspace fan-out is disabled until "
-                    "hafiz.core.context is rewired (Phase 3b-3). "
-                    "Falling back to --project filter.[/yellow]"
-                )
+                # Resolve sibling projects from the filesystem and fan the
+                # journal across them. build_journal's ``project`` already
+                # accepts a list, so we just feed it the resolved names.
+                from hafiz.core.context import resolve_workspace_projects
+
+                siblings = await resolve_workspace_projects()
+                if siblings:
+                    projects = siblings
+                else:
+                    # No indexed siblings → nothing to fan out to. Fall back to
+                    # the whole brain rather than filtering to an empty list
+                    # (which would match nothing).
+                    console.print(
+                        "[yellow]No workspace-sibling projects found in the index. "
+                        "Showing all projects.[/yellow]"
+                    )
+                    projects = None
 
             return await build_journal(
                 since=since_td,
