@@ -1023,6 +1023,17 @@ def journal(
     task: str | None = typer.Option(None, "--task", help="Filter by task label."),
     limit: int = typer.Option(500, "--limit", "-l", help="Maximum entries (default 500)."),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        "-f",
+        help="Output format: rich (default), json, or mermaid. --json shortcuts --format json.",
+    ),
+    mermaid_kind: str = typer.Option(
+        "supersession",
+        "--mermaid-kind",
+        help="With --format mermaid: 'supersession' (decision-evolution, default) or 'timeline'.",
+    ),
 ) -> None:
     """Time-bounded digest of observations — what you captured recently."""
     if project and workspace:
@@ -1042,6 +1053,8 @@ def journal(
         task=task,
         limit=limit,
         output_json=json_output,
+        output_format=output_format,
+        mermaid_kind=mermaid_kind,
     )
 
 

@@ -61,10 +61,25 @@ def run_journal(
     task: str | None = None,
     limit: int = 500,
     output_json: bool = False,
+    output_format: str = "rich",
+    mermaid_kind: str = "supersession",
 ) -> None:
     """Entry point for the ``hafiz journal`` command."""
     if since and day:
         console.print("[red]Error:[/red] --since and --day are mutually exclusive.")
+        raise SystemExit(1)
+    # ``--json`` is the long-standing boolean; ``--format`` is the newer
+    # enum. Honor --json as a shortcut for --format json; otherwise the
+    # explicit --format wins.
+    fmt = "json" if output_json else output_format
+    if fmt not in ("rich", "json", "mermaid"):
+        console.print(f"[red]Error:[/red] --format must be rich, json, or mermaid (got {fmt!r}).")
+        raise SystemExit(1)
+    if mermaid_kind not in ("supersession", "timeline"):
+        console.print(
+            f"[red]Error:[/red] --mermaid-kind must be supersession or timeline "
+            f"(got {mermaid_kind!r})."
+        )
         raise SystemExit(1)
 
     since_td = _parse_since(since) if day is None else None
@@ -98,10 +113,27 @@ def run_journal(
 
     bundle = asyncio.run(_run())
 
-    if output_json:
+    if fmt == "json":
         _print_json(bundle)
+    elif fmt == "mermaid":
+        _print_mermaid(bundle, mermaid_kind=mermaid_kind)
     else:
         _print_rich(bundle, since_arg=since, day_arg=day)
+
+
+def _print_mermaid(bundle: JournalBundle, *, mermaid_kind: str) -> None:
+    """Emit the journal as a Mermaid diagram.
+
+    Written with plain ``print`` rather than ``console.print``: Rich
+    soft-wraps long lines to the terminal width, which corrupts Mermaid
+    (a wrapped node label silently breaks the diagram). The output is meant
+    to be copy-pasted / piped verbatim, so it must not depend on tty width.
+    An empty window still emits a valid skeleton so a pipe never yields a
+    zero-byte file the user has to debug.
+    """
+    from hafiz.core.view import to_mermaid
+
+    print(to_mermaid(bundle.entries, kind=mermaid_kind))
 
 
 def _print_json(bundle: JournalBundle) -> None:
@@ -127,6 +159,7 @@ def _print_json(bundle: JournalBundle) -> None:
                 "commit_hash": e.commit_hash,
                 "branch": e.metadata.get("branch"),
                 "is_dirty": e.metadata.get("is_dirty"),
+                "supersedes_id": e.supersedes_id,
             }
             for e in bundle.entries
         ],

@@ -34,6 +34,12 @@ class JournalEntry:
     task: str | None
     commit_hash: str | None
     metadata: dict
+    # Supersession back-link — powers the decision-evolution view.
+    # ``supersedes_id`` points at the annotation this one replaced (may
+    # reference a row outside the journal window). There is no forward
+    # ``superseded_by`` column on the model; the reverse edge is derived by
+    # inverting ``supersedes_id`` across a result set (see core/view.py).
+    supersedes_id: str | None = None
 
 
 @dataclass
@@ -151,6 +157,7 @@ async def build_journal(
             task=a.task,
             commit_hash=a.commit_hash,
             metadata=a.metadata_ or {},
+            supersedes_id=str(a.supersedes_id) if a.supersedes_id else None,
         )
         for a in rows
     ]

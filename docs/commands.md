@@ -197,7 +197,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 | `observe "<text>"` | Embed and store a fact / decision / learning / pattern / warning / note | Embed | `--json` | rich panel |
 | `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips dedup detection) | Embed | `--json` | rich panel |
 | `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations for manual resolution | Embed | `--json` | rich panels |
-| `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables |
+| `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables · `--format mermaid` |
 | `distill` | Surface recent notes as promotable candidates (scanner, not promoter) | — | `--json` | rich tables |
 
 - **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`.
@@ -206,6 +206,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 - **Staleness hint**: `query --observations` surfaces age (e.g. `3mo ago`) and dims rows older than 90 days.
 - **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive and records the link. Nothing is deleted.
 - **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` records distillation source without replacing.
+- **Visualize the journal** (`journal --format <rich|json|mermaid>`, default `rich`; `--json`/`-j` is a shortcut for `--format json`): `--format mermaid` emits a copy-pasteable [Mermaid](https://mermaid.js.org) diagram of the window — renders inline in VS Code, GitHub, and Obsidian. `--mermaid-kind supersession` (default) draws the **decision-evolution graph** (`graph LR`: old decision → *superseded by* → new, with superseded nodes dimmed); `--mermaid-kind timeline` draws a month-grouped Mermaid `timeline`. Each entry's body is truncated to ~60 chars in the diagram — the full text stays in `--json` and the rich view. The `--json` entry shape now includes `supersedes_id` (the annotation this one replaced, or `null`). **Note:** a Mermaid diagram you paste elsewhere is a point-in-time snapshot that `hafiz forget` cannot reach — same caveat as `hafiz export`.
 - **Near-duplicate detection** (on `observe`, not `note`): before writing, Hafiz cosine-compares the new content against **live** annotations of the same kind+project and surfaces any at/above `[dedup] threshold` (default 0.88). Hafiz detects *similarity*, never *contradiction* — the supersede/refine/distinct call stays with the caller.
   - **Surface-only** (default): the write always succeeds; matches ride back in `observe --json` as `near_duplicates: [{id, content, kind, score}]` and as a yellow hint in rich output. Skipped when `--supersedes` is set.
   - **Strict** (`[dedup] strict = true`): a match aborts the write — exit `2`, `{"ok": false, "near_duplicates": [...]}` — unless `--supersedes <id>` or `--allow-duplicate` is given.
@@ -286,6 +287,8 @@ Defaults & flags:
 | Flag | Available on | Purpose |
 |------|-------------|---------|
 | `--json` / `-j` | Most commands | Machine-readable output for agents |
+| `--format` / `-f` | `journal` | Output format: `rich` (default), `json`, or `mermaid`. `--json` is a shortcut for `--format json` |
+| `--mermaid-kind` | `journal` | With `--format mermaid`: `supersession` (decision-evolution graph, default) or `timeline` |
 | `--project` / `-p` | Most commands | Filter or tag by project name |
 | `--workspace` / `-w` | `context`, `query`, `journal` | Scope to sibling projects in parent directory |
 | `--type` / `-t` | `query`, `observe`, `journal` | Unit kind or annotation kind depending on context |
