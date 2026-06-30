@@ -75,6 +75,7 @@ _DB_DEPENDENT = [
     "test_communications_schema.py",
     "test_config.py",
     "test_extract_v2.py",
+    "test_forget.py",
     "test_git_axis.py",
     "test_graph_analysis.py",
     "test_importer_claude_code.py",
@@ -83,6 +84,7 @@ _DB_DEPENDENT = [
     "test_recall_and_transcripts.py",
     "test_rewrite_resilience.py",
     "test_search.py",
+    "test_session_list_cli.py",
     "test_sessions_db.py",
     "test_structural_schema.py",
 ]
