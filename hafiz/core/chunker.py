@@ -187,7 +187,7 @@ def walk_files(
     ]
 
     all_patterns: list[str] = list(config_ignore) + _load_ignore_patterns(root)
-    spec = pathspec.PathSpec.from_lines("gitwildmatch", all_patterns)
+    spec = pathspec.PathSpec.from_lines("gitignore", all_patterns)
 
     for dirpath_str, dirnames, filenames in os.walk(root, topdown=True):
         dirpath = Path(dirpath_str)
@@ -199,7 +199,7 @@ def walk_files(
                 rel_str = str(rel_dir)
                 for p in local_patterns:
                     all_patterns.extend(_normalize_pattern(p, rel_str))
-                spec = pathspec.PathSpec.from_lines("gitwildmatch", all_patterns)
+                spec = pathspec.PathSpec.from_lines("gitignore", all_patterns)
 
         dirnames[:] = [
             d
