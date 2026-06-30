@@ -42,6 +42,16 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+# Pin the terminal width for the whole test session. Typer renders ``--help``
+# via Rich, which auto-detects width from the tty — but ``CliRunner`` captures
+# output through a non-tty pipe, so Rich falls back to a default width that
+# varies by Rich version. A narrow fallback wraps the options table and splits
+# flag literals (``--json``, ``--observations``, …) across lines, so the
+# ``assert "--flag" in result.output`` help tests fail in CI while passing on a
+# wide local terminal. A fixed wide width makes help rendering deterministic
+# everywhere. ``setdefault`` respects an explicit local override.
+os.environ.setdefault("COLUMNS", "200")
+
 collect_ignore = [
     # Uses the old chunker API (ChunkResult, chunk_file, LANGUAGE_MAP). The
     # new chunker is walk_files + prepare_embedding_parts; a fresh test
