@@ -241,6 +241,7 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 See [workitems/done/structural-grounding.md](../workitems/done/structural-grounding.md) for the full design + closure record.
 - [x] **Greenfield seven-table schema** — `files`, `units`, `unit_revisions`, `embeddings`, `edges`, `annotations`, `commits`. Identity/body/embedding split into three concerns; partial edits to long documents re-embed only the changed parts.
 - [x] **Parser Protocol + concrete parsers** — `python_ast`, `prose` (Markdown), `whole_file` fallback. Third-party parsers plug in via Python entry points (`hafiz.parsers` group); no config edits required.
+- [x] **JavaScript / TypeScript parser** — `tree_sitter_js` (tree-sitter), covering `.js .jsx .mjs .cjs .ts .tsx .mts .cts`. Same contract as `python_ast` (`code.module/class/function/method`; `imports`/`inherits`/`calls`). Optional `hafiz[js]` extra — self-registers only when installed; otherwise JS/TS falls through to `whole_file`. First tree-sitter parser; proves the additive path for Go/Rust/etc.
 - [x] **Diff-driven ingest** — parser-driven, hash-aligned, skips unchanged units. Re-ingests parse only files changed since `last_seen_commit`.
 - [x] **Edge resolver + graph rewire** — `hafiz graph show / deps / impact / path / rank / stats` reshaped onto the new edges table; NetworkX caching layer.
 - [x] **Git-axis as first class** — `commits` table populated on every ingest; rewrite resilience (rebase/amend/squash/force-push) via `post-rewrite` hook + reconcile-on-ingest. `commit_hash` advisory, never load-bearing.
@@ -265,7 +266,7 @@ Items actively on deck — a mix of leftovers from the original roadmap and newe
 
 Ideas, not committed — most are unblocked by the Structural Grounding work (Phase 6).
 
-- [ ] **Tree-sitter parsers** — Go, TypeScript, Rust, and other languages as drop-in `Parser` Protocol implementations. No schema churn.
+- [ ] **More tree-sitter parsers** — Go, Rust, and other languages as drop-in `Parser` Protocol implementations, following the `tree_sitter_js` pattern (JS/TS shipped in Phase 6). No schema churn.
 - [ ] **Domain parsers — the second-brain build-out** — mail (`mbox`, Gmail export), chat (Slack/Discord exports), clip (read-it-later, Instapaper), research (Zotero), meeting (transcripts), terminal (shell history), OCR'd screenshots. Each is a parser, not a migration.
 - [ ] **Code-history reconstruction** — `hafiz history <unit>` to show revisions across commits; `--at-commit <sha>` on queries. Schema already supports it after Phase 6; this is surface work.
 - [ ] **Personal-tier privacy** — encryption-at-rest, per-project access modes. Triggered by the first non-code domain landing.

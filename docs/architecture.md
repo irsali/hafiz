@@ -64,7 +64,7 @@ flowchart TB
     subgraph core["Core — async business logic, no Typer"]
         chunker["chunker.py<br>walk + ignore"]
         registry["parsers/__init__.py<br>extension registry"]
-        parsers_box["parsers/<br>python_ast • prose • whole_file<br>+ entry-point plugins"]
+        parsers_box["parsers/<br>python_ast • prose • whole_file<br>tree_sitter_js (opt: hafiz[js])<br>+ entry-point plugins"]
         embed["embeddings.py<br>fastembed nomic-embed-text-v1.5<br>768-dim ONNX, CPU/GPU sticky"]
         store["store.py<br>upsert files/units/revisions/edges<br>+ tombstone vanished"]
         search["search.py<br>vector ⨝ revisions ⨝ units ⨝ files"]
@@ -149,7 +149,7 @@ flowchart LR
     subgraph cores["hafiz/core/<br>(async business logic, no Typer)"]
         direction TB
         co_chk["chunker.py"]
-        co_prs["parsers/<br>python_ast • prose • whole_file"]
+        co_prs["parsers/<br>python_ast • prose • whole_file • tree_sitter_js"]
         co_emb["embeddings.py"]
         co_str["store.py"]
         co_srch["search.py"]

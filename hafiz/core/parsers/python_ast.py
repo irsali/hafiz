@@ -26,6 +26,8 @@ from hafiz.core.parsers import ParsedEdge, ParsedUnit, ParseResult
 
 class PythonAstParser:
     name = "python_ast"
+    # Structural parser — owns code.* edges, tagged 'ast' in the store.
+    source_tag = "ast"
     languages = [".py"]
 
     def parse(self, path: Path, content: str) -> ParseResult:

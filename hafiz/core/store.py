@@ -168,8 +168,18 @@ async def _upsert_unit(
 
 
 def _source_tag(parser: Parser) -> str:
-    """Map a Parser to its ``unit_revisions.source`` value. AST-flavored
-    parsers get ``'ast'``; everything else is generic ``'parser'``."""
+    """Map a Parser to its ``unit_revisions.source`` value.
+
+    A parser may declare its source tag explicitly via a ``source_tag``
+    attribute (``"ast"`` for structural parsers that own ``code.*`` edges).
+    That declaration wins — it's how a structural parser whose name doesn't
+    contain ``"ast"`` (e.g. ``tree_sitter_js``) gets to write edges. When
+    absent, fall back to the legacy name heuristic: ``"ast"`` for AST-named
+    parsers, generic ``"parser"`` otherwise (prose / whole-file emit no
+    edges, so the tag only gates structure)."""
+    declared = getattr(parser, "source_tag", None)
+    if declared:
+        return declared
     return "ast" if "ast" in parser.name else "parser"
 
 

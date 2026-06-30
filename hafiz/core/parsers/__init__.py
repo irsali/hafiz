@@ -92,6 +92,16 @@ class Parser(Protocol):
         languages: File extensions claimed (each with leading dot,
             lowercase, e.g. `[".py"]`), or the sentinel `["*"]` to
             register as the universal fallback.
+    Optional, not part of the structural Protocol check:
+        source_tag: The `unit_revisions.source` / `edges.source` value the
+            store should record for this parser's output. A structural
+            parser that emits `code.*` edges declares
+            `source_tag = "ast"` as a plain class attribute (the AST layer
+            owns structure). Parsers that emit no edges (prose, whole-file)
+            omit it. The store reads it via `getattr` and falls back to a
+            name heuristic when absent, so it stays an opt-in convention —
+            it is deliberately NOT listed below, to keep `isinstance(p,
+            Parser)` from requiring it.
     """
 
     name: str
@@ -174,6 +184,17 @@ def _build_registry() -> ParserRegistry:
 
     registry.register(PythonAstParser())
     registry.register(ProseParser())
+
+    # JS/TS is an optional capability: its tree-sitter deps live in the
+    # `hafiz[js]` extra. Register only when the grammars imported cleanly,
+    # so a base install never carries the dependency and .js/.ts files fall
+    # through to WholeFileParser instead.
+    from hafiz.core.parsers.tree_sitter_js import AVAILABLE as _JS_AVAILABLE
+    from hafiz.core.parsers.tree_sitter_js import TreeSitterJsParser
+
+    if _JS_AVAILABLE:
+        registry.register(TreeSitterJsParser())
+
     registry.register(WholeFileParser())
 
     # Entry-point discovered parsers

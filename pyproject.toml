@@ -47,6 +47,14 @@ gpu = [
     "fastembed-gpu>=0.8 ; sys_platform != 'darwin'",
     "onnxruntime-gpu>=1.20 ; sys_platform != 'darwin'",
 ]
+js = [
+    # JavaScript / TypeScript AST parser. Optional so the base install stays
+    # lean — the tree_sitter_js parser self-registers only when these import.
+    # Prebuilt wheels (no compiler needed) on CPython for Linux/macOS/Windows.
+    "tree-sitter>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -55,6 +63,11 @@ dev = [
     # ruff minor can add rules that would fail the gate out of band. Bump
     # deliberately, re-running `ruff check . && ruff format .` against it.
     "ruff>=0.15,<0.16",
+    # JS/TS parser deps so the test suite + CI exercise tree_sitter_js
+    # instead of skipping it. Mirrors the `js` extra.
+    "tree-sitter>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
 ]
 
 [tool.ruff]

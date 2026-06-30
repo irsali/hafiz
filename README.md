@@ -35,6 +35,10 @@ pipx install git+https://github.com/irsali/hafiz.git
 # With GPU acceleration (requires CUDA drivers)
 pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
 
+# With JavaScript / TypeScript AST parsing (tree-sitter)
+pipx install "hafiz[js] @ git+https://github.com/irsali/hafiz.git"
+# Extras combine: hafiz[gpu,js]
+
 # Upgrade to latest from GitHub
 pipx upgrade hafiz
 
@@ -324,6 +328,8 @@ Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` wi
 | `hafiz extract import` | Import extraction results from JSON (file or stdin) | `--file/-f`, `--project/-p` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file` |
+
+**Language support.** Hafiz ships AST parsers for **Python** (stdlib) and **Markdown/prose**; everything else is indexed whole-file. **JavaScript & TypeScript** (`.js .jsx .mjs .cjs .ts .tsx .mts .cts`) get full AST parsing — functions, classes, methods, imports, calls — when you install the optional `hafiz[js]` extra (tree-sitter). Without it, JS/TS files still index as whole-file units; no error. Run `hafiz parsers list` to see what's active. More languages (Go, Rust, …) plug in the same way — see [docs/roadmap.md](docs/roadmap.md).
 
 ### System
 

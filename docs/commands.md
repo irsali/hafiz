@@ -38,7 +38,7 @@
 | `agent install` | Splice `skills.md` into an agent's config file; warns on version drift | — | same | same |
 | `agent uninstall` | Remove the spliced `skills.md` block | — | same | same |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
-| `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage | — | `--json` | rich table |
+| `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage. `tree_sitter_js` (JS/TS) appears only when the optional `hafiz[js]` extra is installed. | — | `--json` | rich table |
 | `embedding status` | Show current embedding device + provenance (config / sticky cache / probe) | — | `--json` | rich table |
 | `embedding retry` | Clear sticky device cache and re-probe | Embed | `--json` | rich output |
 
