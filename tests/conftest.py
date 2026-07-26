@@ -74,6 +74,7 @@ _DB_DEPENDENT = [
     "test_cli.py",
     "test_communications_schema.py",
     "test_config.py",
+    "test_exact_duplicates.py",
     "test_extract_v2.py",
     "test_forget.py",
     "test_git_axis.py",

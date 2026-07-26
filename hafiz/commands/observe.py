@@ -114,9 +114,10 @@ def run_observe(
 
     async def _store():
         try:
-            from hafiz.core.annotations import store_annotation, store_annotation_checked
+            from hafiz.core.annotations import store_annotation_checked
 
-            common = dict(
+            return await store_annotation_checked(
+                text,
                 kind=kind,
                 source=source,
                 project=project,
@@ -127,19 +128,27 @@ def run_observe(
                 task=resolved_task,
                 supersedes_id=supersedes,
                 derived_from=derived_ids,
+                allow_duplicate=allow_duplicate,
+                # The note firehose skips *near*-duplicate detection by design
+                # (raw capture is never gated) but still collapses byte-identical
+                # writes, silently, into the row it already has.
+                detect_near=detect_duplicates,
+                dedupe_silently=not detect_duplicates,
             )
-            if detect_duplicates:
-                return await store_annotation_checked(
-                    text, allow_duplicate=allow_duplicate, **common
-                )
-            return await store_annotation(text, **common), []
         finally:
             await close_engine()
 
     try:
-        from hafiz.core.annotations import DuplicateAnnotationError
+        from hafiz.core.annotations import (
+            DuplicateAnnotationError,
+            ExactDuplicateAnnotationError,
+        )
 
-        ann, near_dupes = asyncio.run(_store())
+        result = asyncio.run(_store())
+        ann, near_dupes, deduped = result.annotation, result.near_duplicates, result.deduped
+    except ExactDuplicateAnnotationError as e:
+        _report_exact_duplicate(e, output_json)
+        raise SystemExit(2)
     except DuplicateAnnotationError as e:
         _report_strict_block(e.duplicates, output_json)
         raise SystemExit(2)
@@ -156,6 +165,9 @@ def run_observe(
     if output_json:
         data = {
             "action": "observe",
+            # True when an identical live row already existed and nothing new
+            # was written — the annotation below is that pre-existing row.
+            "deduped": deduped,
             "near_duplicates": [
                 {"id": d.id, "content": d.content, "kind": d.kind, "score": d.score}
                 for d in near_dupes
@@ -190,8 +202,13 @@ def run_observe(
             f"  [bold]Session:[/bold]    {session_display or '—'}\n"
             f"  [bold]Task:[/bold]       {ann.task or '—'}\n"
         )
+    headline = (
+        "[bold yellow]Already recorded[/bold yellow] [dim](identical row — nothing written)[/dim]"
+        if deduped
+        else "[bold green]Annotation stored[/bold green]"
+    )
     info = (
-        f"[bold green]Annotation stored[/bold green]\n\n"
+        f"{headline}\n\n"
         f"  [bold]ID:[/bold]         {ann.id}\n"
         f"  [bold]Kind:[/bold]       {ann.kind}\n"
         f"  [bold]Source:[/bold]     {ann.source or '—'}\n"
@@ -222,6 +239,33 @@ def _print_dupe_hint(duplicates: list) -> None:
         f'[dim]→ hafiz observe "<text>" --supersedes {duplicates[0].id}[/dim]',
     ]
     console.print(Panel("\n".join(lines), border_style="yellow"))
+
+
+def _report_exact_duplicate(err, output_json: bool) -> None:
+    """Report a write refused for being byte-identical to a live row."""
+    if output_json:
+        data = {
+            "ok": False,
+            "error": str(err),
+            "existing_id": err.existing_id,
+            "hint": (
+                "The text is identical to a live annotation. Supersede it if the "
+                "belief changed, edit the text if it's a refinement, or pass "
+                "--allow-duplicate to force."
+            ),
+        }
+        console.print_json(json.dumps(data))
+        return
+    console.print(
+        Panel(
+            "[bold red]✗ Write refused — identical annotation already live[/bold red]\n\n"
+            f"  [cyan]{err.existing_id}[/cyan]\n\n"
+            f'[dim]→ belief changed:  hafiz observe "<new text>" '
+            f"--supersedes {err.existing_id}[/dim]\n"
+            '[dim]→ force the write: hafiz observe "<text>" --allow-duplicate[/dim]',
+            border_style="red",
+        )
+    )
 
 
 def _report_strict_block(duplicates: list, output_json: bool) -> None:

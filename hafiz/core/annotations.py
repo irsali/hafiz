@@ -161,6 +161,30 @@ class DuplicateAnnotationError(Exception):
         super().__init__(f"near-duplicate live annotation(s) exist: {ids}")
 
 
+class ExactDuplicateAnnotationError(Exception):
+    """Raised when the write is byte-for-byte an existing live annotation.
+
+    Distinct from :class:`DuplicateAnnotationError`, and deliberately *not*
+    subject to the ``strict`` setting. Surface-don't-block is the right design
+    for *near*-duplicates, where only the author can judge whether the new row
+    refines, contradicts, or merely resembles the old one. An **exact** match on
+    the same kind + source + project admits no such judgement: it is never a
+    legitimate new annotation. Left unenforced it accumulated silently — a real
+    store reached 34 near-duplicate clusters over 80 live annotations, several
+    of them character-for-character identical.
+
+    Carries ``existing_id`` so the caller can cite the row it already has.
+    """
+
+    def __init__(self, existing_id: str, kind: str):
+        self.existing_id = existing_id
+        self.kind = kind
+        super().__init__(
+            f"identical live {kind} already exists: {existing_id} "
+            "(supersede it, edit the text, or pass --allow-duplicate)"
+        )
+
+
 async def find_near_duplicates(
     embedding: list[float],
     *,
@@ -206,6 +230,43 @@ async def find_near_duplicates(
         for ann, s in rows
         if float(s) >= threshold
     ]
+
+
+async def find_exact_duplicate(
+    content: str,
+    *,
+    kind: str,
+    source: str | None,
+    project: str | None,
+) -> Annotation | None:
+    """Return the live annotation identical to this write, if one exists.
+
+    Exact string equality on ``content``, scoped to the same kind + source +
+    project. Deliberately cheaper than :func:`find_near_duplicates` — no
+    embedding, no vector scan — so it can run on every write including the
+    ``note`` firehose.
+
+    Only *live* rows count: re-stating something that was superseded or expired
+    is a legitimate new assertion, not a duplicate.
+    """
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(Annotation)
+            .where(Annotation.content == content)
+            .where(Annotation.kind == kind)
+            .where(Annotation.valid_from <= now)
+            .where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
+            .order_by(Annotation.valid_from)
+            .limit(1)
+        )
+        # NULL-safe comparison: `is_distinct_from` matches NULL == NULL, which a
+        # plain `==` would not, so an untagged rewrite of an untagged row still
+        # counts as a duplicate.
+        stmt = stmt.where(Annotation.source.is_not_distinct_from(source))
+        stmt = stmt.where(Annotation.project.is_not_distinct_from(project))
+        return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def store_annotation(
@@ -363,27 +424,58 @@ async def store_annotation(
     return new_ann
 
 
+@dataclass
+class StoreResult:
+    """Outcome of a checked annotation write.
+
+    ``deduped`` is True when nothing was written because an identical live row
+    already existed and the caller's lane treats that as success (the ``note``
+    firehose). ``annotation`` is then the pre-existing row.
+    """
+
+    annotation: Annotation
+    near_duplicates: list[NearDuplicate]
+    deduped: bool = False
+
+
 async def store_annotation_checked(
     content: str,
     *,
     kind: str = "fact",
+    source: str | None = None,
     project: str | None = None,
     supersedes_id: str | None = None,
     allow_duplicate: bool = False,
+    detect_near: bool = True,
+    dedupe_silently: bool = False,
     **kwargs,
-) -> tuple[Annotation, list[NearDuplicate]]:
-    """Detect near-duplicates, then store — the ``observe`` entry point.
+) -> StoreResult:
+    """Check for duplicates, then store — the ``observe`` / ``note`` entry point.
 
-    Runs :func:`find_near_duplicates` against live annotations of the same
-    ``kind``/``project`` before writing. Detection is skipped when
-    ``supersedes_id`` is set (the conflict is already resolved) or when
-    ``dedup.enabled`` is False.
+    Two independent checks, because exact and approximate duplication are
+    different problems:
 
-    Returns ``(annotation, near_duplicates)``. In **surface-only** mode (the
-    default) the write always succeeds and the duplicates ride back for the
-    caller to display. In **strict** mode (``dedup.strict``), a non-empty match
-    with no ``supersedes_id`` and no ``allow_duplicate`` raises
-    :class:`DuplicateAnnotationError` and nothing is written.
+    **Exact** (``content`` + ``kind`` + ``source`` + ``project`` all identical to
+    a live row) always runs — it is a cheap string comparison, needs no
+    embedding, and is never a legitimate write. It ignores ``dedup.strict``,
+    which governs only the approximate case. What happens next depends on the
+    lane:
+
+    * ``dedupe_silently=False`` (``observe``): raise
+      :class:`ExactDuplicateAnnotationError`. The caller *may* have meant
+      ``--supersedes``, and a non-zero exit is what makes them look.
+    * ``dedupe_silently=True`` (``note``): return the existing row with
+      ``deduped=True`` and no error. "Raw capture is never gated" protects the
+      caller from having to stop and deliberate; it does not entitle the store
+      to keep identical rows. The write is idempotent rather than refused, so
+      no caller has to change.
+
+    **Near** (cosine similarity at/above ``dedup.threshold``) runs only when
+    ``detect_near`` and ``dedup.enabled`` are set and no ``supersedes_id`` was
+    given. Behaviour is unchanged: surface-only by default, blocking under
+    ``dedup.strict``.
+
+    ``allow_duplicate`` forces the write past both checks.
 
     Bulk writers (importer, extractor, daemon) should call
     :func:`store_annotation` directly — they must stay fast and unconditional.
@@ -393,7 +485,14 @@ async def store_annotation_checked(
     dedup_cfg = load_settings().dedup
     near_duplicates: list[NearDuplicate] = []
 
-    if dedup_cfg.enabled and not supersedes_id:
+    if dedup_cfg.enabled and not supersedes_id and not allow_duplicate:
+        exact = await find_exact_duplicate(content, kind=kind, source=source, project=project)
+        if exact is not None:
+            if dedupe_silently:
+                return StoreResult(annotation=exact, near_duplicates=[], deduped=True)
+            raise ExactDuplicateAnnotationError(str(exact.id), kind)
+
+    if detect_near and dedup_cfg.enabled and not supersedes_id:
         embedding = await embed_query(content)
         near_duplicates = await find_near_duplicates(
             embedding,
@@ -408,11 +507,12 @@ async def store_annotation_checked(
     ann = await store_annotation(
         content,
         kind=kind,
+        source=source,
         project=project,
         supersedes_id=supersedes_id,
         **kwargs,
     )
-    return ann, near_duplicates
+    return StoreResult(annotation=ann, near_duplicates=near_duplicates)
 
 
 @dataclass

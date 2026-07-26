@@ -548,8 +548,14 @@ def test_observe_surfaces_near_duplicates_and_reconcile_clusters_them():
 
 
 def test_observe_strict_mode_blocks_then_allow_duplicate_overrides(monkeypatch):
-    """Strict dedup refuses a near-duplicate write (exit 2) until
-    ``--allow-duplicate`` is passed."""
+    """Strict dedup refuses a *near*-duplicate write (exit 2) until
+    ``--allow-duplicate`` is passed.
+
+    The second row is deliberately similar-but-not-identical: byte-identical
+    text hits the exact-duplicate check first (which is unconditional and not
+    governed by ``strict``), so reusing the same string would exercise that
+    path instead of this one.
+    """
     import asyncio
 
     if not asyncio.run(_db_available()):
@@ -557,34 +563,20 @@ def test_observe_strict_mode_blocks_then_allow_duplicate_overrides(monkeypatch):
 
     monkeypatch.setenv("HAFIZ_DEDUP__STRICT", "true")
     proj = "_dedup_strict_test"
+    baseline = "DEDUPTEST strict baseline row about consent receipt retention"
+    similar = "DEDUPTEST strict baseline row concerning consent receipt retention"
     written_ids: list[str] = []
     try:
         base = runner.invoke(
             app,
-            [
-                "observe",
-                "DEDUPTEST strict baseline row",
-                "--type",
-                "fact",
-                "--project",
-                proj,
-                "--json",
-            ],
+            ["observe", baseline, "--type", "fact", "--project", proj, "--json"],
         )
         assert base.exit_code == 0, base.output
         written_ids.append(json.loads(base.output)["annotation"]["id"])
 
         blocked = runner.invoke(
             app,
-            [
-                "observe",
-                "DEDUPTEST strict baseline row",
-                "--type",
-                "fact",
-                "--project",
-                proj,
-                "--json",
-            ],
+            ["observe", similar, "--type", "fact", "--project", proj, "--json"],
         )
         assert blocked.exit_code == 2, blocked.output
         payload = json.loads(blocked.output)
@@ -595,7 +587,7 @@ def test_observe_strict_mode_blocks_then_allow_duplicate_overrides(monkeypatch):
             app,
             [
                 "observe",
-                "DEDUPTEST strict baseline row",
+                similar,
                 "--type",
                 "fact",
                 "--project",
@@ -606,6 +598,67 @@ def test_observe_strict_mode_blocks_then_allow_duplicate_overrides(monkeypatch):
         )
         assert forced.exit_code == 0, forced.output
         written_ids.append(json.loads(forced.output)["annotation"]["id"])
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
+def test_observe_refuses_byte_identical_row_regardless_of_strict(monkeypatch):
+    """An exact repeat is refused with ``existing_id``, even in surface-only mode.
+
+    Surface-don't-block is right for *near* duplicates — only the author can
+    judge whether a similar row refines or contradicts the old one. A
+    byte-identical row admits no such judgement.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    monkeypatch.setenv("HAFIZ_DEDUP__STRICT", "false")
+    proj = "_dedup_exact_test"
+    text = "DEDUPTEST byte-identical row"
+    written_ids: list[str] = []
+    try:
+        first = runner.invoke(app, ["observe", text, "--type", "fact", "--project", proj, "--json"])
+        assert first.exit_code == 0, first.output
+        existing = json.loads(first.output)["annotation"]["id"]
+        written_ids.append(existing)
+
+        repeat = runner.invoke(
+            app, ["observe", text, "--type", "fact", "--project", proj, "--json"]
+        )
+        assert repeat.exit_code == 2, repeat.output
+        payload = json.loads(repeat.output)
+        assert payload["ok"] is False
+        assert payload["existing_id"] == existing
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
+def test_note_dedupes_byte_identical_writes_as_success(monkeypatch):
+    """The note firehose stays open: an exact repeat returns the existing row
+    with ``deduped: true`` and exit 0, rather than being refused."""
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    proj = "_dedup_note_test"
+    text = "DEDUPTEST identical note"
+    written_ids: list[str] = []
+    try:
+        first = runner.invoke(app, ["note", text, "--project", proj, "--json"])
+        assert first.exit_code == 0, first.output
+        first_id = json.loads(first.output)["annotation"]["id"]
+        written_ids.append(first_id)
+
+        again = runner.invoke(app, ["note", text, "--project", proj, "--json"])
+        assert again.exit_code == 0, again.output
+        payload = json.loads(again.output)
+        assert payload["deduped"] is True
+        assert payload["annotation"]["id"] == first_id
     finally:
         for ann_id in written_ids:
             runner.invoke(app, ["forget", ann_id, "--annotation"])
