@@ -294,3 +294,51 @@ def test_large_drift_is_styled_as_an_error_not_a_warning():
     """31-64 commits behind was the observed real case; it should read as red."""
     assert _staleness_note({"commits_behind": 64, "is_ancestor": True})[1] == "red"
     assert _staleness_note({"commits_behind": 2, "is_ancestor": True})[1] == "yellow"
+
+
+# ── The untagged bucket is a shadow index, not a stale repo ─────────────
+#
+# A project-less ingest can't update a project's rows (`files` is unique on
+# (project, path)), so it writes a parallel untagged copy. 1,956 such rows
+# accumulated unnoticed because nothing counted them — and asking "how far
+# behind HEAD is it?" is the wrong question: its files span every repo the
+# broken hook ever walked, so the derived root came out as "/".
+
+
+async def test_untagged_files_are_excluded_from_per_repo_staleness(db):
+    from hafiz.commands.maintenance import _index_staleness
+
+    out = await _index_staleness({None: "a" * 40, "freshness-test-j": "b" * 40})
+    assert "(none)" not in out
+    assert None not in out
+    assert "freshness-test-j" in out
+
+
+def test_status_counts_untagged_files():
+    """The field that would have surfaced the shadow index without an audit.
+
+    Synchronous: ``status`` drives its own ``asyncio.run``.
+    """
+    import asyncio
+    import json
+
+    from typer.testing import CliRunner
+
+    from hafiz.cli import app
+
+    def _run(coro):
+        async def _wrapped():
+            try:
+                return await coro
+            finally:
+                await close_engine()
+
+        return asyncio.run(_wrapped())
+
+    if not _run(_db_available()):
+        pytest.skip("Postgres not reachable")
+
+    result = CliRunner().invoke(app, ["status", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert isinstance(payload["untagged"]["files"], int)

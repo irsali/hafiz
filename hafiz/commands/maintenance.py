@@ -100,7 +100,13 @@ async def _index_staleness(last_commit_per_project: dict[str | None, str]) -> di
     roots = await indexed_root_per_project()
     out: dict[str, dict] = {}
     for project, indexed_sha in last_commit_per_project.items():
-        key = project or "(none)"
+        if project is None:
+            # The untagged bucket isn't a repo — its files span every repo a
+            # project-less hook ever walked, so a common-prefix "root" comes out
+            # as "/" and a HEAD comparison is meaningless. Reported separately,
+            # as a shadow index to clean up rather than an index to refresh.
+            continue
+        key = project
         root = roots.get(project)
         entry: dict = {
             "repo_path": root,
@@ -242,6 +248,12 @@ def run_status(*, output_json: bool = False) -> None:
                 },
                 "staleness": staleness,
                 "retention": {"overdue": overdue},
+                # A project-less ingest can't update a project's rows — `files`
+                # is unique on (project, path) — so it writes a parallel
+                # untagged copy that search then returns alongside the real one.
+                # 1,956 such rows accumulated unnoticed on a real deployment
+                # because nothing counted them.
+                "untagged": {"files": dict(project_rows).get(None, 0)},
             }
             return stats
         finally:
@@ -303,6 +315,15 @@ def run_status(*, output_json: bool = False) -> None:
             proj_table.add_row(proj, str(count))
         console.print(proj_table)
 
+    untagged = stats["untagged"]["files"]
+    if untagged:
+        console.print(
+            f"  [red]{untagged} file(s) indexed with no project[/red] — a duplicate\n"
+            f"  shadow index that search returns alongside the real rows.\n"
+            f"  [dim]Cause: an ingest with no --project. Fix the source with:\n"
+            f"  hafiz hooks install <repo> --project <name>[/dim]"
+        )
+
     if stats["by_kind"]:
         console.print()
         kind_table = Table(title="Units by Kind", border_style="cyan")
@@ -320,6 +341,8 @@ def run_status(*, output_json: bool = False) -> None:
         commit_table.add_column("Status", justify="right")
         stale_count = 0
         for proj, sha in stats["last_commit_per_project"].items():
+            if proj == "(none)":
+                continue  # not a repo; covered by the untagged warning above
             entry = stats["staleness"].get(proj, {})
             label, style = _staleness_note(entry)
             if entry.get("commits_behind") or entry.get("is_ancestor") is False:
@@ -951,6 +974,38 @@ def run_doctor(
                 )
             except Exception as e:
                 _check("Retention enforced", False, detail=str(e)[:120])
+
+            # 7c. Untagged file rows. `files` is unique on (project, path), so a
+            # project-less ingest can't update a project's rows — it writes a
+            # parallel copy that search then returns alongside the real one, and
+            # that copy is never diff-scoped or tombstoned. Nothing counted them,
+            # so 1,956 accumulated on a real deployment.
+            try:
+                async with session_factory() as session:
+                    untagged = (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(File)
+                            .where(File.project.is_(None))
+                            .where(File.valid_until.is_(None))
+                        )
+                    ).scalar() or 0
+                _check(
+                    "Every file has a project",
+                    untagged == 0,
+                    detail=(
+                        "no untagged files"
+                        if untagged == 0
+                        else f"{untagged} file(s) with project=NULL — a duplicate shadow index"
+                    ),
+                    fix=(
+                        "Re-run: hafiz hooks install <repo> --project <name>, then re-ingest"
+                        if untagged
+                        else ""
+                    ),
+                )
+            except Exception as e:
+                _check("Every file has a project", False, detail=str(e)[:120])
 
         finally:
             await close_engine()

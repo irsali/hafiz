@@ -20,9 +20,17 @@ import pytest
 from hafiz.commands.ingest import _do_ingest
 from hafiz.core.config import reset_settings
 
+#: Refused instantly, so the guard assertions below never reach a real store.
+#: Without this these tests ingested ``tmp_path`` into whatever DB was
+#: configured — i.e. the developer's own index, untagged (``project=None``),
+#: with no cleanup. Measured on this machine: 13 surviving ``/tmp/pytest-of-*``
+#: file rows in a production store, from the audit's own 1,956 untagged rows.
+DEAD_DB = "postgresql+asyncpg://nobody:nobody@127.0.0.1:1/hafiz_test_no_db"
+
 
 @pytest.fixture(autouse=True)
-def _reset():
+def _reset(monkeypatch):
+    monkeypatch.setenv("HAFIZ_DATABASE__URL", DEAD_DB)
     reset_settings()
     yield
     reset_settings()

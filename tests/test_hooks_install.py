@@ -143,6 +143,137 @@ def test_reinstall_is_idempotent(repo):
     assert _hook(repo, "post-commit") == first
 
 
+def test_reinstall_over_a_foreign_hook_does_not_stack_blocks(repo):
+    """The appended block is replaced in place, not appended a second time."""
+    target = repo / ".git" / "hooks"
+    target.mkdir(exist_ok=True)
+    (target / "post-commit").write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+
+    hooks.run_hooks_install(str(repo), project="proj")
+    first = _hook(repo, "post-commit")
+    hooks.run_hooks_install(str(repo), project="proj")
+    assert _hook(repo, "post-commit") == first
+    assert first.count("HAFIZ_PROJECT=") == 1
+
+
+# ── Correcting an already-installed hook ────────────────────────────────
+#
+# The measured failure: `hooks install` short-circuited on "already installed",
+# discarded --project, printed a summary naming the *new* project, and exited 0.
+# So no repo that received a broken hook could ever be corrected through the
+# CLI — which is why four repos sat 30-64 commits stale with hooks that fired
+# on every commit.
+
+
+def test_reinstall_with_a_different_project_corrects_the_hook(repo):
+    hooks.run_hooks_install(str(repo), project="FIRST")
+    hooks.run_hooks_install(str(repo), project="SECOND")
+    for name in HOOK_NAMES:
+        body = _hook(repo, name)
+        assert "HAFIZ_PROJECT=SECOND" in body
+        assert "FIRST" not in body
+
+
+def test_reinstall_repoints_the_repo_path_too(repo, tmp_path):
+    """A moved or re-cloned repo must be able to re-pin its own path."""
+    hooks.run_hooks_install(str(repo), project="proj")
+    (repo / ".git" / "hooks" / "post-commit").write_text(
+        _hook(repo, "post-commit").replace(str(repo), "/gone/elsewhere"),
+        encoding="utf-8",
+    )
+    hooks.run_hooks_install(str(repo), project="proj")
+    body = _hook(repo, "post-commit")
+    assert f"HAFIZ_REPO={repo}" in body
+    assert "/gone/elsewhere" not in body
+
+
+def test_the_legacy_untagged_hook_is_upgraded(repo):
+    """The exact artifact found in the wild: header is ours, body has no project."""
+    target = repo / ".git" / "hooks"
+    target.mkdir(exist_ok=True)
+    (target / "post-commit").write_text(
+        "#!/usr/bin/env bash\n"
+        "# Hafiz post-commit hook — re-indexes changed files after each commit.\n"
+        "# Installed by: hafiz hooks install\n\n"
+        "set -e\n\n"
+        "# No project specified\n\n"
+        "nohup hafiz ingest --git-hook > /dev/null 2>&1 &\n",
+        encoding="utf-8",
+    )
+    hooks.run_hooks_install(str(repo), project="KnowledgeHub")
+    body = _hook(repo, "post-commit")
+    assert "HAFIZ_PROJECT=KnowledgeHub" in body
+    assert "# No project specified" not in body
+    assert "hafiz ingest --git-hook > /dev/null" not in body
+
+
+def test_an_overwritten_hook_is_recoverable(repo):
+    """Rewriting somebody's file is only acceptable if it's reversible."""
+    hooks.run_hooks_install(str(repo), project="FIRST")
+    original = _hook(repo, "post-commit")
+    hooks.run_hooks_install(str(repo), project="SECOND")
+    backup = repo / ".git" / "hooks" / f"post-commit{hooks.BACKUP_SUFFIX}"
+    assert backup.read_text(encoding="utf-8") == original
+
+
+def test_an_unchanged_reinstall_writes_no_backup(repo):
+    hooks.run_hooks_install(str(repo), project="proj")
+    hooks.run_hooks_install(str(repo), project="proj")
+    assert not (repo / ".git" / "hooks" / f"post-commit{hooks.BACKUP_SUFFIX}").exists()
+
+
+def test_the_update_reports_which_project_it_moved_from(repo, capsys):
+    """The old summary line claimed the new project while the file kept the old
+    one. If the file changes, the operator has to be able to see it."""
+    hooks.run_hooks_install(str(repo), project="FIRST")
+    capsys.readouterr()
+    hooks.run_hooks_install(str(repo), project="SECOND")
+    out = capsys.readouterr().out
+    assert "Updated post-commit" in out
+    assert "FIRST" in out and "SECOND" in out
+
+
+def test_a_hand_written_hafiz_hook_is_not_touched(repo):
+    """Appending here would ingest twice per commit; rewriting would silently
+    discard whatever the author was working around."""
+    target = repo / ".git" / "hooks"
+    target.mkdir(exist_ok=True)
+    handmade = "#!/bin/sh\n# my own thing\nhafiz ingest /somewhere --project mine\n"
+    (target / "post-commit").write_text(handmade, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        hooks.run_hooks_install(str(repo), project="proj")
+    assert exc.value.code == 2
+    assert _hook(repo, "post-commit") == handmade
+    # A refusal must not half-install: the other two hooks stay absent.
+    assert not (target / "post-merge").exists()
+
+
+def test_force_appends_to_a_hand_written_hafiz_hook(repo):
+    target = repo / ".git" / "hooks"
+    target.mkdir(exist_ok=True)
+    (target / "post-commit").write_text(
+        "#!/bin/sh\nhafiz ingest /somewhere --project mine\n", encoding="utf-8"
+    )
+    hooks.run_hooks_install(str(repo), project="proj", force=True)
+    body = _hook(repo, "post-commit")
+    assert "--project mine" in body
+    assert "HAFIZ_PROJECT=proj" in body
+
+
+def test_hook_project_is_recovered_across_generations(repo):
+    """`_hook_project` only feeds the human message, but it must not report the
+    literal `$HAFIZ_PROJECT` variable as the project name."""
+    assert hooks._hook_project('HAFIZ_PROJECT=KnowledgeHub\n--project "$HAFIZ_PROJECT"') == (
+        "KnowledgeHub"
+    )
+    assert hooks._hook_project("HAFIZ_PROJECT='Admin Portal'") == "Admin Portal"
+    assert hooks._hook_project('nohup hafiz ingest "$REPO" --project "Account API"') == (
+        "Account API"
+    )
+    assert hooks._hook_project("nohup hafiz ingest --git-hook") is None
+
+
 # ── Refusing a scope mismatch ───────────────────────────────────────────
 
 
