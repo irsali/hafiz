@@ -81,6 +81,54 @@ def _embedding_device_summary() -> dict:
     }
 
 
+async def _index_staleness(last_commit_per_project: dict[str | None, str]) -> dict:
+    """For each project, how far its indexed commit trails the repo's HEAD.
+
+    Fills the gap that let four repos drift 31-64 commits behind while hooks
+    were installed and firing: nothing ever compared the index to the repo.
+    A stale code index is worse than no index — search returns code that no
+    longer exists — so the absence of a staleness signal was the real defect.
+
+    The repo path isn't stored anywhere, so it's recovered from the common
+    prefix of each project's file paths. Every field degrades to ``None``
+    rather than raising: an operator reaches for ``status`` when something is
+    already wrong, and it must still print.
+    """
+    from hafiz.core.git_context import commits_behind_head, is_git_repo
+    from hafiz.core.store import indexed_root_per_project
+
+    roots = await indexed_root_per_project()
+    out: dict[str, dict] = {}
+    for project, indexed_sha in last_commit_per_project.items():
+        key = project or "(none)"
+        root = roots.get(project)
+        entry: dict = {
+            "repo_path": root,
+            "indexed_commit": indexed_sha,
+            "head_commit": None,
+            "commits_behind": None,
+            "is_ancestor": None,
+        }
+        if root and is_git_repo(Path(root)):
+            entry.update(commits_behind_head(indexed_sha, Path(root)))
+        out[key] = entry
+    return out
+
+
+def _staleness_note(entry: dict) -> tuple[str, str]:
+    """(label, rich style) summarising one project's index freshness."""
+    behind = entry.get("commits_behind")
+    if entry.get("is_ancestor") is False:
+        # Indexed commit isn't in HEAD's history — rebased away or force-pushed
+        # over. A commit count here would be meaningless, not merely imprecise.
+        return "diverged", "red"
+    if behind is None:
+        return "unknown", "dim"
+    if behind == 0:
+        return "current", "green"
+    return f"{behind} behind", "red" if behind >= 10 else "yellow"
+
+
 def run_status(*, output_json: bool = False) -> None:
     """Show database statistics and index health."""
 
@@ -160,18 +208,14 @@ def run_status(*, output_json: bool = False) -> None:
                     )
                 ).all()
 
-                # ── Most-recent commit per project ──
-                last_commit_rows = (
-                    await session.execute(
-                        select(
-                            File.project,
-                            func.max(File.last_seen_commit),
-                        )
-                        .where(File.valid_until.is_(None))
-                        .where(File.last_seen_commit.is_not(None))
-                        .group_by(File.project)
-                    )
-                ).all()
+            # ── Most-recent commit per project, and how stale it is ──
+            # Ordered by commits.committed_at, NOT max(hash): hashes are hex,
+            # so a lexicographic max picks a commit at random and silently
+            # masked genuinely stale indexes across six repos for months.
+            from hafiz.core.store import last_indexed_commit_per_project
+
+            last_commit_per_project = await last_indexed_commit_per_project()
+            staleness = await _index_staleness(last_commit_per_project)
 
             stats = {
                 "files": files_count,
@@ -186,7 +230,10 @@ def run_status(*, output_json: bool = False) -> None:
                 "commits": commits_count,
                 "by_project": {p or "(none)": c for p, c in project_rows},
                 "by_kind": {k or "(none)": c for k, c in kind_rows},
-                "last_commit_per_project": {p or "(none)": c for p, c in last_commit_rows},
+                "last_commit_per_project": {
+                    p or "(none)": c for p, c in last_commit_per_project.items()
+                },
+                "staleness": staleness,
             }
             return stats
         finally:
@@ -248,12 +295,28 @@ def run_status(*, output_json: bool = False) -> None:
 
     if stats["last_commit_per_project"]:
         console.print()
-        commit_table = Table(title="Last indexed commit per project", border_style="cyan")
+        commit_table = Table(title="Index freshness per project", border_style="cyan")
         commit_table.add_column("Project")
-        commit_table.add_column("Commit", style="dim")
+        commit_table.add_column("Indexed at", style="dim")
+        commit_table.add_column("Status", justify="right")
+        stale_count = 0
         for proj, sha in stats["last_commit_per_project"].items():
-            commit_table.add_row(proj, sha[:12] if sha else "—")
+            entry = stats["staleness"].get(proj, {})
+            label, style = _staleness_note(entry)
+            if entry.get("commits_behind") or entry.get("is_ancestor") is False:
+                stale_count += 1
+            commit_table.add_row(
+                proj,
+                sha[:12] if sha else "—",
+                f"[{style}]{label}[/{style}]",
+            )
         console.print(commit_table)
+        if stale_count:
+            console.print(
+                f"  [yellow]{stale_count} project(s) behind HEAD — "
+                f"search may return code that no longer exists.[/yellow]\n"
+                f"  [dim]Re-index with: hafiz ingest <path> --project <name>[/dim]"
+            )
 
 
 def run_config_show(*, output_json: bool = False) -> None:

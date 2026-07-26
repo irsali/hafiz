@@ -23,13 +23,14 @@ This module only knows "here's a parse result, persist it idempotently".
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hafiz.core.chunker import (
@@ -562,6 +563,91 @@ async def latest_indexed_commit(project: str | None) -> str | None:
 
     counter = Counter(rows)
     return counter.most_common(1)[0][0]
+
+
+async def last_indexed_commit_per_project() -> dict[str | None, str]:
+    """Map each project to the commit it was most recently indexed at.
+
+    "Most recently" means **latest ``commits.committed_at``**, not
+    ``max(hash)``. Hashes are hex, so a lexicographic max picks a commit
+    essentially at random: on a real index this reported Admin Portal at
+    ``b37cced2`` (2026-04-17) when the true latest was ``13367ea0``
+    (2026-07-17), purely because ``b3`` > ``13`` as a string. 5 of 15 projects
+    disagreed the same way.
+
+    That matters more than a cosmetic sort order, because this is the field an
+    operator or agent reads to answer "is my index fresh?". It both hid real
+    staleness and invented staleness that wasn't there.
+
+    ``committed_at`` can be NULL for a hash that predates the ``commits``
+    table, so the join is an outer one and dated commits sort ahead of undated
+    ones. Ties break on the most recent ``files.created_at`` for that hash —
+    i.e. ingest order — which is deterministic where the hash ordering was not.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = (
+            select(
+                File.project,
+                File.last_seen_commit,
+                Commit.committed_at,
+                func.max(File.created_at).label("last_ingested"),
+            )
+            .outerjoin(Commit, Commit.hash == File.last_seen_commit)
+            .where(File.valid_until.is_(None))
+            .where(File.last_seen_commit.is_not(None))
+            .group_by(File.project, File.last_seen_commit, Commit.committed_at)
+            .order_by(
+                Commit.committed_at.desc().nullslast(),
+                func.max(File.created_at).desc(),
+            )
+        )
+        rows = (await session.execute(stmt)).all()
+
+    # Rows arrive newest-first, so the first sighting of a project wins.
+    latest: dict[str | None, str] = {}
+    for project, sha, _committed_at, _last_ingested in rows:
+        latest.setdefault(project, sha)
+    return latest
+
+
+async def indexed_root_per_project() -> dict[str | None, str]:
+    """Map each project to the deepest directory containing all its files.
+
+    Derived rather than stored: nothing records "where does project X live on
+    disk", but every file path does, so the common prefix recovers it. Used to
+    locate a repo for the staleness probe and to catch a `hooks install` that
+    would point a repo at some other project's index.
+
+    Projects whose files span unrelated trees (e.g. an untagged catch-all
+    bucket) yield a shallow prefix; callers must treat the result as a hint and
+    verify it is a git repo.
+    """
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        rows = (
+            await session.execute(select(File.project, File.path).where(File.valid_until.is_(None)))
+        ).all()
+
+    by_project: dict[str | None, list[str]] = {}
+    for project, path in rows:
+        by_project.setdefault(project, []).append(path)
+
+    roots: dict[str | None, str] = {}
+    for project, paths in by_project.items():
+        try:
+            common = os.path.commonpath(paths)
+        except ValueError:
+            # Mixed absolute/relative or empty — no meaningful common root.
+            continue
+        # commonpath of a single file is that file. Detect it by comparing
+        # against the inputs rather than probing the filesystem: the path may
+        # legitimately no longer exist (repo moved, project deleted), and
+        # `is_dir()` would then wrongly strip a real directory to its parent.
+        if common in set(paths):
+            common = str(Path(common).parent)
+        roots[project] = common
+    return roots
 
 
 async def reconcile_orphaned_commits(

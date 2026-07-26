@@ -96,6 +96,51 @@ def is_commit_reachable(sha: str, cwd: Path) -> bool:
     return bool(reachable)
 
 
+def commits_behind_head(indexed_sha: str, cwd: Path) -> dict:
+    """Describe how far ``indexed_sha`` trails the repo's current HEAD.
+
+    Answers the one question an operator or agent actually asks of a code
+    index: *is this fresh?* A stale index is worse than no index — search
+    returns code that no longer exists, with nothing to signal it — and in a
+    measured deployment four repos sat 31-64 commits behind with hooks
+    installed and firing.
+
+    Returns ``{head_commit, commits_behind, is_ancestor}``; every value is
+    ``None`` when it can't be determined (repo moved, shallow clone, sha
+    garbage-collected). Never raises: reporting "unknown" degrades a status
+    table, whereas raising would break the command an operator reaches for
+    when things are already wrong.
+    """
+    unknown = {"head_commit": None, "commits_behind": None, "is_ancestor": None}
+    if not indexed_sha or not is_git_repo(cwd):
+        return unknown
+
+    head = _git(["rev-parse", "HEAD"], cwd)
+    if not head:
+        return unknown
+    if head == indexed_sha:
+        return {"head_commit": head, "commits_behind": 0, "is_ancestor": True}
+
+    # An unreachable indexed sha (rebased away, force-pushed over) is a
+    # different condition from "N commits behind" and must not be reported as
+    # a count — `rev-list A..B` on a missing A silently yields nothing.
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", indexed_sha, "HEAD"],
+        cwd=str(cwd),
+        capture_output=True,
+        timeout=5,
+    )
+    if ancestor.returncode != 0:
+        return {"head_commit": head, "commits_behind": None, "is_ancestor": False}
+
+    count = _git(["rev-list", "--count", f"{indexed_sha}..HEAD"], cwd)
+    return {
+        "head_commit": head,
+        "commits_behind": int(count) if count.isdigit() else None,
+        "is_ancestor": True,
+    }
+
+
 def current_git_context(cwd: Path | None = None) -> dict:
     """Return a dict describing the current git HEAD, or {} if not in a repo.
 

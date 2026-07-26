@@ -340,15 +340,25 @@ async def _do_ingest(
                 console.print(f"    [dim]... and {len(failures) - 5} more[/dim]")
 
 
-def run_git_hook_ingest_cmd(*, project: str | None = None) -> None:
-    """Git-hook-based ingest: only files changed in the latest commit.
+def run_git_hook_ingest_cmd(path: str | None = None, *, project: str | None = None) -> None:
+    """Git-hook-based ingest of ``path`` (default: cwd).
 
-    Phase 5 of the structural-grounding work rewires this for diff-based
-    delta ingest. Until then, fall back to a full ingest of the cwd so
-    the hook keeps working.
+    ``run_ingest`` is already diff-driven when a project is given: it resolves
+    the project's last indexed commit and restricts the walk to files changed
+    since. Passing ``--project`` from the hook is therefore what makes the hook
+    cheap *and* correct — without it the walk is full and the rows land under
+    ``project=NULL``, building a duplicate untagged index (see
+    ``hafiz/commands/hooks.py``).
+
+    ``path`` is passed explicitly by generated hooks because a hook's cwd is
+    not guaranteed to be the work tree (worktrees, `git -C`, bare-adjacent
+    setups).
     """
-    console.print(
-        "[yellow]git-hook ingest currently runs a full ingest. "
-        "Phase 5 introduces proper diff-based delta ingest.[/yellow]"
-    )
-    run_ingest(".", project=project)
+    if project is None:
+        console.print(
+            "[yellow]No --project given: this ingest will be tagged "
+            "project=NULL, which builds a duplicate untagged index and skips "
+            "diff-driven scoping. Reinstall the hook with "
+            "`hafiz hooks install <repo>` to fix.[/yellow]"
+        )
+    run_ingest(path or ".", project=project)

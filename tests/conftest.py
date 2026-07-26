@@ -79,6 +79,7 @@ _DB_DEPENDENT = [
     "test_git_axis.py",
     "test_graph_analysis.py",
     "test_importer_claude_code.py",
+    "test_index_freshness.py",
     "test_ingest_flow.py",
     "test_polymorphic_lineage.py",
     "test_recall_and_transcripts.py",

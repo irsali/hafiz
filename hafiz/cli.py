@@ -103,7 +103,13 @@ def ingest(
         None, "--project", "-p", help="Tag chunks with a project name."
     ),
     git_hook: bool = typer.Option(
-        False, "--git-hook", help="Index only files changed in the latest commit."
+        False,
+        "--git-hook",
+        help=(
+            "Diff-driven re-index for git hooks: restricts the walk to files "
+            "changed since the project's last indexed commit. Pass PATH and "
+            "--project — generated hooks always do."
+        ),
     ),
     prune: bool = typer.Option(False, "--prune", help="Remove stale chunks before indexing."),
     json_output: bool = typer.Option(
@@ -120,7 +126,7 @@ def ingest(
     if git_hook:
         from hafiz.commands.ingest import run_git_hook_ingest_cmd
 
-        run_git_hook_ingest_cmd(project=project)
+        run_git_hook_ingest_cmd(path, project=project)
     else:
         if path is None:
             typer.echo("Error: Missing argument 'PATH'. Use --git-hook or provide a path.")
@@ -1340,13 +1346,29 @@ app.add_typer(hooks_app)
 def hooks_install(
     repo_path: str = typer.Argument(".", help="Path to the git repository."),
     project: str | None = typer.Option(
-        None, "--project", "-p", help="Project name to pass to the hook."
+        None,
+        "--project",
+        "-p",
+        help="Project name to pass to the hook. Defaults to the repo directory name.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Install even though the project is already indexed under a "
+            "different root (i.e. the project really did move)."
+        ),
     ),
 ) -> None:
-    """Install Hafiz git hooks (post-commit + post-merge) into a repository."""
+    """Install Hafiz git hooks (post-commit, post-merge, post-rewrite).
+
+    The generated hooks pin both the repo path and the project name, so a
+    commit re-indexes this repo under the right project instead of writing a
+    duplicate untagged copy of it.
+    """
     from hafiz.commands.hooks import run_hooks_install
 
-    run_hooks_install(repo_path, project=project)
+    run_hooks_install(repo_path, project=project, force=force)
 
 
 # ─── EMBEDDING ──────────────────────────────────────────────────────
