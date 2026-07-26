@@ -18,7 +18,20 @@ See the full setup guide below. Doing a cross-machine or cross-agent test? See [
 
 - **Python 3.12+** -- `python3 --version`
 - **Docker** -- for PostgreSQL + pgvector (or a native PostgreSQL install)
-- **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify). CUDA-only: the `[gpu]` extra is a no-op on macOS (it resolves to nothing), so Apple Silicon runs CPU embeddings — `pipx install "hafiz[gpu]"` is safe but installs the plain CPU path there.
+- **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify). Install the `[cuda]` extra (`[gpu]` is a kept alias). CUDA-only: the extra is a no-op on macOS (it resolves to nothing), so Apple Silicon runs CPU embeddings — `pipx install "hafiz[cuda]"` is safe but installs the plain CPU path there.
+
+  > **Verify it actually took.** `onnxruntime`, `onnxruntime-gpu` and
+  > `onnxruntime-openvino` all install the *same* `onnxruntime` import package,
+  > so only one can be active — whichever is installed last silently overwrites
+  > the others. An installed extra is not proof the GPU is in use. Run
+  > `hafiz doctor` and look for the `Accelerator: cuda` check; if it reports
+  > `shadowed`, the fix is to uninstall the CPU wheel
+  > (`pipx runpip hafiz uninstall -y onnxruntime`), **not** to reinstall the
+  > extra. Never combine two accelerator extras.
+
+- **Intel NPU / iGPU** (optional, experimental) -- `pipx install "hafiz[openvino]"`.
+  Speedup for hafiz's embedding model is **unmeasured**; offered because the
+  hardware is otherwise idle. Benchmark before adopting.
 
 ## Install
 
@@ -32,12 +45,12 @@ pipx ensurepath          # Add ~/.local/bin to PATH (restart shell after)
 # Install Hafiz
 pipx install git+https://github.com/irsali/hafiz.git
 
-# With GPU acceleration (requires CUDA drivers)
-pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"
+# With GPU acceleration (requires CUDA drivers). `gpu` is an alias for `cuda`.
+pipx install "hafiz[cuda] @ git+https://github.com/irsali/hafiz.git"
 
 # With JavaScript / TypeScript AST parsing (tree-sitter)
 pipx install "hafiz[js] @ git+https://github.com/irsali/hafiz.git"
-# Extras combine: hafiz[gpu,js]
+# Extras combine: hafiz[cuda,js]
 
 # Upgrade to latest from GitHub
 pipx upgrade hafiz

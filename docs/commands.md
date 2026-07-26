@@ -19,7 +19,7 @@
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `init` | Create the seven tables + pgvector extension | — | same | same |
-| `status` | Count files / units / unit_revisions / embeddings / edges / annotations / commits, broken down by project and kind, plus last-indexed commit per project | — | `--json` | rich output |
+| `status` | Count files / units / unit_revisions / embeddings / edges / annotations / commits, broken down by project and kind, plus **index freshness per project** and the **retention-overdue count** | — | `--json` | rich output |
 | `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
 | `doctor` | Install health + host capabilities (RAM, CPU, GPU, onnxruntime) + tunable registry. Stable `--json` shape with `checks` / `host` / `tuning` keys. | — | `--json` | rich tables |
 | `doctor --probe` | Same as `doctor`, plus runs per-tunable probers to recommend values for this host. Slow (loads the embedding model, runs several forward passes). | Embed | `--json` | rich tables |
@@ -34,7 +34,7 @@
 | `errors list --group-by exception_type` | Pattern view: returns a distinct shape — `{since, grouped_by, total, with_suggestions, most_recent, groups}` — where each group carries `{exception_type, count, with_suggestions, most_recent_id, most_recent_timestamp, sample_command, sample_message}`. `--limit` is ignored in this mode (counts must reflect the full matching window). | — | `--json` | rich table |
 | `errors show <id>` | Full structured record: traceback, cwd, git branch, host fingerprint. Accepts unique-prefix ids. | — | `--json` | rich panel |
 | `errors clear` | Wipe the log; returns count discarded. | — | `--json` | rich output |
-| `hooks install` | Write post-commit + post-merge + post-rewrite git hooks into a repo | — | same | same |
+| `hooks install [--project X] [--force]` | Write post-commit + post-merge + post-rewrite git hooks into a repo. `--project` defaults to the repo directory name; the repo path and project are both pinned into the generated hook. Refuses (exit 2) if the project is already indexed under an unrelated root — `--force` overrides. | — | same | same |
 | `agent install` | Splice `skills.md` into an agent's config file; warns on version drift | — | same | same |
 | `agent uninstall` | Remove the spliced `skills.md` block | — | same | same |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
@@ -68,6 +68,52 @@
 }
 ```
 Adding fields is safe; renaming requires a note here.
+
+**`hafiz status --json` — index freshness + retention.** Two keys answer the
+questions an operator or agent actually asks of `status`:
+
+```json
+{
+  "last_commit_per_project": {"Admin Portal": "13367ea0..."},
+  "staleness": {
+    "Admin Portal": {
+      "repo_path": "/repos/Admin Portal",
+      "indexed_commit": "13367ea0...",
+      "head_commit": "13367ea0...",
+      "commits_behind": 0,
+      "is_ancestor": true
+    }
+  },
+  "retention": {"overdue": 0}
+}
+```
+
+- `last_commit_per_project` is ordered by **`commits.committed_at`**, not
+  `max(hash)`. Hashes are hex, so a lexicographic max picks an essentially
+  random commit — it reported one repo three months stale while it was current.
+  Hashes predating the `commits` table have no date and rank below dated ones.
+- `commits_behind` is `null` and `is_ancestor` is `false` when the indexed
+  commit isn't in HEAD's history (rebased away, force-pushed over). A count
+  there would be meaningless: `rev-list A..HEAD` on a missing A yields nothing,
+  which reads as "up to date". All fields are `null` when the repo can't be
+  located — `status` must still print when something is already wrong.
+- `retention.overdue` counts communications past `retention_until` that haven't
+  been tombstoned. The sweep runs on `import`; this is how you see the backlog
+  when imports have stopped. Clear it with `hafiz forget --all-expired`.
+
+**Accelerator checks (`doctor`).** `onnxruntime`, `onnxruntime-gpu` and
+`onnxruntime-openvino` all install the same `onnxruntime` import package, so only
+one can be active — whichever lands last overwrites the others' files while
+their metadata survives. An installed extra is therefore **not** proof the
+accelerator is in use. `doctor` reports one check per accelerator with hardware
+present, distinguishing:
+
+| State | Meaning | Fix |
+|---|---|---|
+| `active` | provider available | — |
+| `shadowed` | accelerator wheel installed, provider absent — the CPU wheel (a `fastembed` dependency) overwrote it | `pipx runpip hafiz uninstall -y onnxruntime`. **Do not** reinstall the extra; it is already installed and would be shadowed again. |
+| `missing` | hardware present, no accelerator wheel | install `hafiz[cuda]` or `hafiz[openvino]` |
+| `no-hardware` | not reported at all | — |
 
 **Tunable resolution order:** `env (HAFIZ_*__*)` → `hafiz.toml` → sticky tuning cache → built-in default. The sticky layer is written by `doctor --apply` / `config apply` and keyed to a host fingerprint that invalidates itself when the RAM class, GPU presence, OS/arch, or onnxruntime provider set materially changes. Clear it with `config clear-sticky`.
 
@@ -152,9 +198,77 @@ Rejected at import time: `kind` starting with `code.*`; relations in `{calls, im
 |---------|---------|:-----:|-----------|-------------|
 | `query "<text>"` | Vector similarity search over the `embeddings` table (joined back to units + files for context) | Embed | `--json` | rich output |
 | `query "<text>" --observations` | Vector search over annotations (wisdom layer), **cross-encoder reranked** by default for precision. `--no-rerank` for pure vector order. Renamed from `--recall` (collided with the top-level `recall` command); `--recall` is a hidden deprecation-warned alias for one release. | Embed + Rerank | `--json` | rich output |
-| `context "<task>"` | Synthesize units + graph + annotations for a task | Embed | `--json` | rich panel |
+| `context "<task>"` | Synthesize units + graph + annotations for a task. `--limit` caps each section. | Embed | `--json` | rich panel |
+
+**An empty query is an error, not a result set.** A blank query embeds to a
+near-zero vector, against which *empty* documents (blank `.scss` files,
+whitespace-only headings) score a perfect `1.0`. `query` and `context` therefore
+exit **2** with `{"ok": false, "error": ...}` on a blank or whitespace-only
+query rather than returning confidently-scored noise. Same guard on the write
+side: `observe` / `note` refuse blank content, because such a row would then
+score near-perfectly against every future query — a permanent noise magnet.
 
 **Reranking** (on `query --observations`): vector similarity compresses relevant rows and near-random noise into a narrow band; a cross-encoder re-scores the top `limit × rerank.candidate_multiplier` candidates against the query and reorders them, then returns the top `limit`. On by default (`rerank.enabled` config); `--no-rerank` skips it. The reranker model (`Xenova/ms-marco-MiniLM-L-6-v2`, ~80 MB) ships with fastembed — no extra dependency — and loads lazily, cached alongside the embedding model. Reranking is strictly a reordering: if the model is unavailable it falls back to vector order. Warm via the daemon it adds ~300-400ms; the gain is sharp signal/noise separation. Disable on constrained hosts with `hafiz config set rerank.enabled false`.
+
+#### Two scores, and which one to filter on
+
+`query --observations --json` returns **both**:
+
+| Field | Meaning | Range |
+|---|---|---|
+| `score` | cosine similarity from the vector stage | 0–1 |
+| `rerank_score` | cross-encoder relevance, or `null` if reranking didn't run | 0–1 |
+
+`rerank_score` is `null` under `--no-rerank`, with a single-row result set, or
+when the model fails — which is how you tell reranked output from vector output.
+The payload also carries a top-level `reranked` boolean.
+
+**Filter on the score the results are *ranked* by** — that is what `--min-score`
+does. Under reranking, `score` is **not monotonic** down the result list, so a
+floor on it fights the ordering. Real series from a deployed index:
+
+```
+vector : 0.645 0.573 0.580 0.510 0.551 0.559 0.624   <- NOT monotonic
+rerank : 0.881 0.473 0.067 0.013 0.010 0.008 0.005   <- monotonic
+```
+
+`--min-score 0.60` against `score` would drop rank 4 (0.510) and keep rank 7
+(0.624): neither the top results nor coherently ordered.
+
+The cross-encoder emits **unbounded logits** (measured: `+3.32` relevant,
+`-11.35` irrelevant). Those are sigmoid-normalized to 0–1 before being surfaced,
+so `--min-score` has one meaning on one scale whether or not reranking ran.
+Normalization is monotonic, so ordering is preserved.
+
+**Calibration.** Reranked scores separate sharply, so useful floors are *low*,
+not near-1. On the query above (50 candidates): `0.4` → 2 rows, `0.05` → 3 rows,
+`0.01` → 5 rows, unset → 50. Start around `0.05` for recall injection and raise
+if it's still noisy. Under `--no-rerank` the floor applies to cosine similarity,
+where the useful band is roughly `0.5`–`0.65`.
+
+#### Output formats
+
+`--format` on `query` and `context`. `--json` remains as an alias for
+`--format json` with its exact existing shape, since installed agent configs and
+hooks parse it; new fields are additive.
+
+| Format | For | Notes |
+|---|---|---|
+| `rich` | terminals | default |
+| `json` | existing integrations | today's full shape, field-for-field |
+| `compact` | context-window injection | content + kind + source + age only |
+| `md` | prompt injection | raw markdown, not Rich-rendered |
+
+`compact` drops uuids, timestamps, null fields, float scores, and (on `context`)
+the graph section's edge lists, collapsing units to `name (kind)`. Pass
+`--with-ids` to re-add ids — **do this whenever the consumer might write back**,
+because an agent that can read a decision but not cite it cannot
+`observe --supersedes` it, and the corpus silently accumulates contradictions.
+
+Measured on a real session-start injection (`query --observations --source
+user:anjum --limit 50`): 70,272 B of `json` → **2,498 B** of `compact
+--min-score 0.05` (~17.5k → ~625 tokens), retaining all three genuinely
+relevant rows.
 
 **Scoping flags** (on `context`, `query`):
 
@@ -195,7 +309,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `observe "<text>"` | Embed and store a fact / decision / learning / pattern / warning / note | Embed | `--json` | rich panel |
-| `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips dedup detection) | Embed | `--json` | rich panel |
+| `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips *near*-duplicate detection; still collapses byte-identical writes) | Embed | `--json` | rich panel |
 | `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations for manual resolution | Embed | `--json` | rich panels |
 | `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables · `--format mermaid` |
 | `distill` | Surface recent notes as promotable candidates (scanner, not promoter) | — | `--json` | rich tables |
@@ -207,7 +321,12 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 - **Supersession** (on `observe` / `note`): `--supersedes <uuid>` atomically marks the target row inactive and records the link. Nothing is deleted.
 - **Lineage** (on `observe` / `note`): `--derived-from <uuid>[,<uuid>...]` records distillation source without replacing.
 - **Visualize the journal** (`journal --format <rich|json|mermaid>`, default `rich`; `--json`/`-j` is a shortcut for `--format json`): `--format mermaid` emits a copy-pasteable [Mermaid](https://mermaid.js.org) diagram of the window — renders inline in VS Code, GitHub, and Obsidian. `--mermaid-kind supersession` (default) draws the **decision-evolution graph** (`graph LR`: old decision → *superseded by* → new, with superseded nodes dimmed); `--mermaid-kind timeline` draws a month-grouped Mermaid `timeline`. Each entry's body is truncated to ~60 chars in the diagram — the full text stays in `--json` and the rich view. The `--json` entry shape now includes `supersedes_id` (the annotation this one replaced, or `null`). **Note:** a Mermaid diagram you paste elsewhere is a point-in-time snapshot that `hafiz forget` cannot reach — same caveat as `hafiz export`.
-- **Near-duplicate detection** (on `observe`, not `note`): before writing, Hafiz cosine-compares the new content against **live** annotations of the same kind+project and surfaces any at/above `[dedup] threshold` (default 0.88). Hafiz detects *similarity*, never *contradiction* — the supersede/refine/distinct call stays with the caller.
+- **Blank content is refused** on both `observe` and `note` (exit 1, `{"ok": false, "error": ...}`). An empty annotation embeds to a near-zero vector and then scores near-perfectly against *every* later query — a permanent noise magnet in recall.
+- **Exact-duplicate handling** (both lanes, and **not** governed by `[dedup] strict`): a write whose `content` + `kind` + `source` + `project` are all identical to a **live** row is never a legitimate new annotation, so it is never simply appended. Comparison is a plain string equality — no embedding — and is NULL-safe on `source`/`project`, so an untagged rewrite of an untagged row still counts. Superseded/expired rows don't count: re-stating a retired belief is a new assertion. `--supersedes` and `--allow-duplicate` both bypass the check.
+  - **`observe` refuses**: exit `2`, `{"ok": false, "error": ..., "existing_id": "<uuid>", "hint": ...}`. The caller may have meant `--supersedes`, and a non-zero exit is what makes them look.
+  - **`note` succeeds idempotently**: exit `0`, `{"action": "observe", "deduped": true, "annotation": {...existing row...}}`, nothing written. "Raw capture is never gated" protects the caller from friction; it does not entitle the store to keep identical rows. No caller has to change.
+  - `deduped` is present on every `observe`/`note` `--json` response (`false` on a normal write).
+- **Near-duplicate detection** (on `observe`, not `note`): before writing, Hafiz cosine-compares the new content against **live** annotations of the same kind+project and surfaces any at/above `[dedup] threshold` (default 0.88). Hafiz detects *similarity*, never *contradiction* — the supersede/refine/distinct call stays with the caller. Unlike the exact check, this one *is* governed by `strict`, because only the author can judge whether a similar row refines, contradicts, or merely resembles the old one.
   - **Surface-only** (default): the write always succeeds; matches ride back in `observe --json` as `near_duplicates: [{id, content, kind, score}]` and as a yellow hint in rich output. Skipped when `--supersedes` is set.
   - **Strict** (`[dedup] strict = true`): a match aborts the write — exit `2`, `{"ok": false, "near_duplicates": [...]}` — unless `--supersedes <id>` or `--allow-duplicate` is given.
   - **`reconcile`** is the after-the-fact backstop: `--project`, `--type`, `--threshold`, `--limit`, `--json`. JSON shape: `{action, clusters: [{kind, project, members: [{id, content, score}]}], total}`. Never mutates.
@@ -223,17 +342,52 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 
 ### Sessions
 
-Per-TTY named threads of work that auto-tag subsequent `observe` / `note` writes with a `session_id` and optional `task`.
+Named threads of work that auto-tag subsequent `observe` / `note` writes with a `session_id` and optional `task`.
 
-The on-disk JSON at `~/.cache/hafiz/session-<tty>.json` is now a **cursor** — the canonical record lives in the `sessions` table. The cursor carries both `session_uuid` (FK target) and `session_id` (slug) so display continuity is preserved.
+The on-disk JSON at `~/.cache/hafiz/session-<key>.json` is a **cursor** — the canonical record lives in the `sessions` table. The cursor carries both `session_uuid` (FK target) and `session_id` (slug) so display continuity is preserved.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `session start "<name>"` | Start a named session: creates a `sessions` row and writes the per-TTY cursor | — | `--json` | rich panel |
+| `session start "<name>"` | Start a named session: creates a `sessions` row and writes the cursor | — | `--json` | rich panel |
 | `session show` | Show the active session | — | `--json` | rich panel |
 | `session end` | Clear the cursor and stamp `ended_at` on the DB row | — | `--json` | rich line |
 
-`session start` flags: `--task <name>`, `--project <name>`, `--include-domain <a,b>`, `--exclude-domain <a,b>`. The two domain flags persist into the per-TTY cursor JSON (not the DB row) and are inherited by `query` / `context` calls in this terminal.
+`session start` flags: `--task <name>`, `--project <name>`, `--include-domain <a,b>`, `--exclude-domain <a,b>`, `--session-key <id>`. The two domain flags persist into the cursor JSON (not the DB row) and are inherited by `query` / `context` calls against the same cursor.
+
+#### Cursor identity — using sessions without a terminal
+
+The cursor was originally keyed by TTY name alone, which made sessions
+unreachable from the places they matter most: an agent-harness hook or a CI step
+has no controlling terminal, and `session start` hard-failed there. Resolution
+order is now:
+
+1. an explicit `--session-key <id>`
+2. `$HAFIZ_SESSION_KEY`
+3. the TTY name — unchanged default for humans
+4. nothing: no session, and writes simply don't auto-tag
+
+Separately, **`$HAFIZ_SESSION`** names a session slug or uuid outright and skips
+the cursor file entirely, for callers that already hold the id. Write precedence:
+`--session` flag → `$HAFIZ_SESSION` → cursor.
+
+`--session-key` is accepted on `session start|show|end` and on `observe` / `note`
+/ `capture`, so a caller that can't export env vars still has a path. Keys come
+from a harness and are not trusted: anything outside `[A-Za-z0-9._-]` collapses
+to `-`, leading dots are stripped, and the result is capped at 64 characters, so
+no key can escape `~/.cache/hafiz`.
+
+Typical hook usage — each hafiz call is its own process, so the key is what ties
+them together:
+
+```bash
+export HAFIZ_SESSION_KEY="$AGENT_SESSION_ID"
+hafiz session start "$TASK_NAME" --task refactor --project myproj --json
+# ... later, in a different process:
+hafiz observe "chose X over Y because ..." --type decision --json
+```
+
+With neither a key nor a TTY, `session start` exits 1 with
+`{"ok": false, "error": ...}` naming both escape hatches.
 
 **Auto-tagging** on `observe` / `note`: session inherited when no flag is given; explicit `--session` / `--task` always win. ``--session <slug>`` resolves the slug to a uuid via the `sessions` table; both `annotations.session_id` (uuid FK) and `annotations.legacy_session_id` (text slug) are populated, so journal/distill display stays human-readable.
 
@@ -258,6 +412,20 @@ Defaults:
 - `forget` flags: `--hard`, `--all-expired`, `--dry-run`.
 - Retention: 90 days from `started_at` unless explicitly overridden at insert time.
 - Selective embedding: skip messages under ~30 tokens; skip pure tool-result echoes; embed when `marked_salient=true` regardless of length.
+
+**Retention enforcement.** `import` runs the expiry sweep automatically and
+reports it (`retention_sweep: {matched, tombstoned, dry_run}` in `--json`; a row
+in the rich table when non-zero). `--dry-run` propagates to the sweep. It is
+deliberately *not* wired into `ingest`: that's the code/doc subsystem, it fires
+per-commit from a git hook, and its output goes to `/dev/null`, so a sweep there
+would be unattributable and unobservable.
+
+An import-bound trigger is not sufficient on its own — it stops firing exactly
+when it's needed, since retention keeps ticking after imports stop. **Visibility
+is the enforcement mechanism**: the overdue count is a first-class field on
+`status --json` (`retention.overdue`) and a `doctor` check. Sweep manually with
+`hafiz forget --all-expired`. Sweeps are soft tombstones (`valid_until = now`);
+rows survive for audit, and `--hard` remains explicit and per-target.
 
 ### Sovereignty (export)
 

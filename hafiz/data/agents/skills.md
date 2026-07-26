@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 9 -->
-# Hafiz — Workspace Intelligence (v9)
+<!-- SKILLS_VERSION: 10 -->
+# Hafiz — Workspace Intelligence (v10)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -106,20 +106,63 @@ You MUST follow these rules in every session:
    "remembers" shape your behavior without the user re-asking:
 
    ```bash
-   hafiz query --observations --source user:<name> --limit 50 --json
+   hafiz query "<what you're about to work on>" --observations \
+     --source user:<name> --limit 12 --min-score 0.05 \
+     --format compact --with-ids
    ```
+
+   Always pass `--min-score` and `--format compact` on anything you inject
+   into your own context. Without them the same query returns ~17k tokens
+   of which ~1/3 is uuids and timestamps you'll never read; with them it's
+   ~600 tokens of the rows that actually matched. See **Retrieval hygiene**
+   below.
 
    Carve-out: truly harness-specific preferences (slash commands, hook
    configs, IDE settings) may stay in whatever agent-local store exists —
    they won't port across agents anyway.
+
+7. **Never inject an unbounded, unfiltered result set.** See
+   **Retrieval hygiene** — this is the difference between hafiz being
+   consulted per-task and being ignored as too expensive.
+
+## Retrieval hygiene (read before wiring hafiz into a hook)
+
+Three flags, on both `query` and `context`:
+
+| Flag | Why |
+|---|---|
+| `--min-score 0.05` | 0–1 relevance floor on the score results are *ranked* by |
+| `--format compact` | content + kind + source + age; drops uuids, timestamps, nulls, scores |
+| `--with-ids` | re-adds ids — **required** if you might `--supersedes` later |
+
+`--limit` also exists on `context` (caps each section).
+
+**Which score the floor uses.** Annotation recall is cross-encoder reranked by
+default, and `--min-score` filters the reranked score, not the raw cosine
+`score`. That matters: under reranking `score` is *not* monotonic down the
+result list, so a floor on it would drop a higher-ranked row and keep a
+lower-ranked one. Reranked scores separate sharply, so **useful floors are low**
+— `0.05` is a good default; `0.4` is aggressive. Under `--no-rerank` the floor
+applies to cosine similarity, where the useful band is ~`0.5`–`0.65`.
+
+`--json` output carries both `score` (cosine) and `rerank_score` (0–1, or `null`
+when reranking didn't run), plus a top-level `reranked` boolean — that's how you
+tell reranked output from vector output.
+
+**A blank query is an error, not an empty result.** `query` / `context` exit `2`
+with `{"ok": false, "error": ...}` on blank input. If you build a query by
+interpolating a variable, check the exit code — an unset variable is a bug in
+your hook, and hafiz will no longer paper over it with confidently-scored noise.
 
 ## Core Commands
 
 | Command | When to use |
 |---------|-------------|
 | `hafiz context "<task>"` | **First thing** — bundle of relevant units, graph neighborhood, and annotations |
+| `hafiz context "<task>" --limit 5 --min-score 0.05 --format compact --with-ids` | The form to use when injecting into your own context — capped, filtered, token-lean |
 | `hafiz context "<task>" --include-transcripts` | Same as above, plus matching turns from imported transcripts (opt-in source layer) |
 | `hafiz query "<text>" --json` | Semantic search over indexed content (knowledge layer) |
+| `hafiz query "<text>" --min-score 0.05 --format compact` | Same, with a relevance floor and the token-lean shape. `--format rich\|json\|compact\|md`; `--json` is an alias for `--format json` |
 | `hafiz query "<text>" --include-transcripts --json` | Add matching transcript turns to results, tagged ``layer="source"`` |
 | `hafiz query "<text>" --include-domain code --json` | Restrict to a data domain (``code``, ``doc``, ``chat``, …). Inverse: ``--exclude-domain``. Comma-separated for multiple. |
 | `hafiz query "<topic>" --observations --type decision --json` | Search the wisdom layer (annotations: decisions, facts, learnings, patterns, warnings). *(Was `--recall`; the flag was renamed to end the collision with the command below. `--recall` still works as a hidden alias for one release, with a deprecation warning.)* |
@@ -192,17 +235,42 @@ The reasoning loop:
    or slipped through bulk imports, run `hafiz reconcile` (read-only;
    clusters near-duplicate live annotations so you can supersede/retire).
 
-Sessions (optional) group everything you record in one terminal:
+   **Byte-identical writes are handled separately and unconditionally.** If
+   `content` + `kind` + `source` + `project` all match a live row, `observe`
+   **refuses** — exit `2`, with `existing_id` in the `--json` response. That
+   is a prompt to decide: did the belief change (`--supersedes <existing_id>`),
+   is this a refinement (edit the text), or do you genuinely want a second
+   identical row (`--allow-duplicate`)? `note` instead **succeeds idempotently**:
+   exit `0`, `deduped: true`, the existing row returned, nothing written — the
+   raw-capture lane is never gated, it just stops storing the same byte twice.
+   Blank content is refused on both.
+
+Sessions (optional) group everything you record in one thread of work:
 ```bash
 hafiz session start "jwt-migration" --task auth --project my-project
 # subsequent observe / note auto-tag with session_id + task
 hafiz journal --session <id>     # pull one thread of work
 ```
 
-Sessions are now **DB-backed**: the per-TTY JSON is a cursor, the
-record lives in the ``sessions`` table. Every annotation written
-inside a session links to it via FK; ``hafiz observe --session <slug>``
+Sessions are **DB-backed**: the on-disk JSON is a cursor, the record
+lives in the ``sessions`` table. Every annotation written inside a
+session links to it via FK; ``hafiz observe --session <slug>``
 resolves the slug to the uuid and populates both columns.
+
+**From a hook or CI step there is no terminal**, so the cursor must be keyed
+explicitly — otherwise `session start` fails and nothing you write gets tagged:
+
+```bash
+export HAFIZ_SESSION_KEY="$AGENT_SESSION_ID"   # or pass --session-key per call
+hafiz session start "jwt-migration" --task auth --project my-project --json
+# ...later, in a separate process, same key -> same session:
+hafiz observe "chose httponly cookies over localStorage because ..." \
+  --type decision --source agent:<your-name> --json
+```
+
+Key resolution: `--session-key` → `$HAFIZ_SESSION_KEY` → TTY name → none.
+`$HAFIZ_SESSION` is a separate, cursor-free override naming a slug/uuid
+directly, for when you already hold the id.
 
 ## Source layer — agent transcripts (opt-in)
 
@@ -229,8 +297,14 @@ hafiz observe "<distilled decision>" --type decision \
   --derived-from <message-id>,<message-id>
 ```
 
-Retention is bounded (default 90 days from started_at). The user's
-explicit redaction commands:
+Retention is bounded (default 90 days from started_at). `hafiz import`
+sweeps expired rows automatically and reports what it tombstoned, but
+that trigger stops firing once imports stop — so the backlog is surfaced
+as `retention.overdue` in `hafiz status --json` and as a `doctor` check.
+**If you see a non-zero overdue count, tell the user** — it's a stated
+retention guarantee that isn't currently being met, not a cosmetic nit.
+
+The user's explicit redaction commands:
 
 ```bash
 hafiz forget <comm-id-or-session-slug>          # soft tombstone
@@ -338,7 +412,7 @@ Each record carries: `timestamp`, `command`, `argv`, `exception_type`,
 `suggested_action` string and structured `context` (e.g.,
 `{"missing_module": "scipy", "is_declared_dep": true}`).
 
-Recognizer set as of v9: `ModuleNotFoundError` (declared-dep aware),
+Recognizer set as of v10: `ModuleNotFoundError` (declared-dep aware),
 sqlalchemy `OperationalError` (DB connectivity → points at
 `hafiz status --diagnose`), pgvector missing (`'extension "vector"
 does not exist'` on `ProgrammingError`), pydantic `ValidationError`
@@ -427,11 +501,15 @@ workstation is a no-op, not a hazard.
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
-| `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--limit`, `--json` |
-| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Renamed from `--recall`; that alias still works one release. | `--type`, `--project`, `--workspace`, `--limit`, `--json` |
+| `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
+| `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
+| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Cross-encoder reranked by default. Renamed from `--recall`; that alias still works one release. | `--type`, `--limit`, `--min-score`, `--format`, `--with-ids`, `--no-rerank`, `--project`, `--workspace`, `--json` |
 
-- **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the TTY.
+- **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the cursor.
+- **`--min-score FLOAT`** (0–1): relevance floor on the score results are *ranked* by — the reranked score under `--observations`, cosine similarity otherwise. Applied after reranking, before the limit. Reranked scores separate sharply, so useful floors are low (`0.05` default-ish, `0.4` aggressive); cosine floors sit around `0.5`–`0.65`.
+- **`--format rich|json|compact|md`**: `--json` is an alias for `--format json` and keeps its exact shape. `compact` emits content + kind + source + age; add `--with-ids` when you might `--supersedes` later. `md` emits raw markdown for prompt injection.
+- **Two scores in `--json`**: `score` (cosine) and `rerank_score` (0–1, `null` when reranking didn't run), plus a top-level `reranked` boolean. Under reranking `score` is non-monotonic down the list — don't sort or filter on it.
+- **Blank query → exit 2** with `{"ok": false, "error": ...}` on both commands. Check the exit code if you interpolate a variable into the query.
 
 ### Knowledge Graph
 
@@ -448,16 +526,16 @@ workstation is a no-op, not a hazard.
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz observe "<text>"` | Store a fact / decision / learning / pattern / warning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--supersedes`, `--derived-from`, `--json` |
+| `hafiz observe "<text>"` | Store a fact / decision / learning / pattern / warning. Refuses blank content, and refuses a byte-identical live row (exit 2, `existing_id` returned) unless `--allow-duplicate`. | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--expires-in`, `--expires`, `--session`, `--task`, `--session-key`, `--supersedes`, `--derived-from`, `--allow-duplicate`, `--json` |
 | `hafiz observe ... --supersedes <id>` | Replace a now-wrong annotation: insert the new row, mark the old one inactive (kept for audit) | `--supersedes`, plus all `observe` flags |
 | `hafiz forget <id> --annotation` | Retire a wrong annotation with no replacement (soft tombstone; drops from recall, kept for audit) | `--annotation`, `--json` |
 | `hafiz query --observations "<topic>" --include-superseded` | Read prior beliefs — superseded/expired annotations, dimmed | `--include-superseded`, plus all `query --observations` flags |
-| `hafiz note "<text>"` | Low-bar capture — `kind="note"` | same as `observe` minus `--type` |
+| `hafiz note "<text>"` | Low-bar capture — `kind="note"`. Never gated: a byte-identical repeat returns the existing row with `deduped: true` and exit 0. | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations for manual supersede/retire | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
-| `hafiz session start "<name>"` | Per-TTY session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` in this terminal | `--task`, `--project`, `--include-domain`, `--exclude-domain`, `--json` |
-| `hafiz session show` / `end` | Inspect / clear | `--json` |
+| `hafiz session start "<name>"` | Named session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` on the same cursor. Keyed by TTY, or by `--session-key` / `$HAFIZ_SESSION_KEY` when there is no terminal (hooks, CI). | `--task`, `--project`, `--session-key`, `--include-domain`, `--exclude-domain`, `--json` |
+| `hafiz session show` / `end` | Inspect / clear | `--session-key`, `--json` |
 
 - **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`
 - **Source format**: `agent:claude-code`, `agent:cursor`, `agent:copilot`, `user:<name>`
@@ -479,9 +557,9 @@ workstation is a no-op, not a hazard.
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz ingest <path>` | Parse + embed + store. Diff-driven on re-runs. | `--project`, `--git-hook`, `--json` |
-| `hafiz status` | Counts across all tables; last-indexed commit per project | `--json`, `--diagnose` |
+| `hafiz status` | Counts across all tables; per-project index freshness (`staleness.commits_behind`) and `retention.overdue` | `--json`, `--diagnose` |
 | `hafiz init` | Create schema + pgvector extension | — |
-| `hafiz hooks install <repo>` | Write post-commit / post-merge / post-rewrite hooks | `--project` |
+| `hafiz hooks install <repo>` | Write post-commit / post-merge / post-rewrite hooks. `--project` defaults to the repo directory name and is always pinned into the hook — an untagged hook builds a duplicate untagged index. Refuses if the project is indexed elsewhere. | `--project`, `--force` |
 | `hafiz agent install` | Splice this skills.md into an agent config | — |
 
 ### Source layer (transcripts)
