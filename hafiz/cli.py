@@ -212,13 +212,46 @@ def serve_stop(
 @app.command()
 def prune(
     project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="List stale files without deleting."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report without changing anything."),
+    untagged: bool = typer.Option(
+        False,
+        "--untagged",
+        help=(
+            "Tombstone file rows that carry no project — the duplicate shadow "
+            "index an ingest without --project leaves behind. Nothing else can "
+            "reach these rows."
+        ),
+    ),
+    include_unindexed: bool = typer.Option(
+        False,
+        "--include-unindexed",
+        help=(
+            "With --untagged, also drop untagged paths that no project covers. "
+            "Those are the only copy, so this loses index coverage."
+        ),
+    ),
+    under: str | None = typer.Option(
+        None,
+        "--under",
+        help="With --untagged, limit the sweep to one directory subtree.",
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
 ) -> None:
-    """No-op — stale-file cleanup is automatic on ingest. Kept for compatibility."""
+    """Clean up index rows nothing else can reach.
+
+    Ordinary stale-file cleanup is automatic on ingest, so a bare `prune` only
+    reports. `--untagged` removes the shadow index a project-less ingest built.
+    """
     from hafiz.commands.prune import run_prune
 
-    run_prune(project=project, dry_run=dry_run, output_json=json_output)
+    run_prune(
+        project=project,
+        dry_run=dry_run,
+        output_json=json_output,
+        untagged=untagged,
+        include_unindexed=include_unindexed,
+        under=under,
+    )
 
 
 # ─── QUERY ──────────────────────────────────────────────────────────────

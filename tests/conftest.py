@@ -83,6 +83,7 @@ _DB_DEPENDENT = [
     "test_index_freshness.py",
     "test_ingest_flow.py",
     "test_polymorphic_lineage.py",
+    "test_prune_untagged.py",
     "test_recall_and_transcripts.py",
     "test_retention_visibility.py",
     "test_rewrite_resilience.py",
@@ -92,8 +93,39 @@ _DB_DEPENDENT = [
     "test_structural_schema.py",
 ]
 
+DEAD_DB_URL = "postgresql+asyncpg://nobody:nobody@127.0.0.1:1/hafiz_no_db"
+
+
+def _force_dead_db() -> None:
+    """In NO_DB mode, point every settings read at a DB that refuses instantly.
+
+    Without this, NO_DB mode was the *least* isolated leg, not the most: it
+    skips ``_setup_test_db_once`` entirely, so nothing redirects the URL and any
+    module not listed in ``_DB_DEPENDENT`` resolves the production ``hafiz.toml``
+    and writes to the real store. Setting ``HAFIZ_DATABASE__URL`` is not
+    sufficient — toml values arrive as pydantic-settings *init args*, which beat
+    env vars — so ``load_settings`` is patched the same way the test-DB path
+    patches it. Measured: ``test_ingest_guards`` silently ingested its
+    ``tmp_path`` into a production index on this leg.
+    """
+    os.environ["HAFIZ_DATABASE__URL"] = DEAD_DB_URL
+
+    from hafiz.core import config as _config
+
+    _real_load_settings = _config.load_settings
+
+    def _patched():
+        s = _real_load_settings()
+        s.database.url = DEAD_DB_URL
+        return s
+
+    _config.load_settings = _patched  # type: ignore[assignment]
+    _config.reset_settings()
+
+
 if os.environ.get("HAFIZ_TEST_NO_DB") == "1":
     collect_ignore += _DB_DEPENDENT
+    _force_dead_db()
 
 
 # ---------------------------------------------------------------------------

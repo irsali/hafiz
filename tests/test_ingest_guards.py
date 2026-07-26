@@ -20,17 +20,26 @@ import pytest
 from hafiz.commands.ingest import _do_ingest
 from hafiz.core.config import reset_settings
 
-#: Refused instantly, so the guard assertions below never reach a real store.
-#: Without this these tests ingested ``tmp_path`` into whatever DB was
-#: configured — i.e. the developer's own index, untagged (``project=None``),
-#: with no cleanup. Measured on this machine: 13 surviving ``/tmp/pytest-of-*``
-#: file rows in a production store, from the audit's own 1,956 untagged rows.
-DEAD_DB = "postgresql+asyncpg://nobody:nobody@127.0.0.1:1/hafiz_test_no_db"
-
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
-    monkeypatch.setenv("HAFIZ_DATABASE__URL", DEAD_DB)
+    """Guarantee no store is reachable, whichever leg this runs on.
+
+    These tests ingest ``tmp_path``, and until this fixture existed they wrote
+    it into whatever DB was configured — untagged (``project=None``), never
+    cleaned up. On the ``HAFIZ_TEST_NO_DB`` leg that was the *production* index:
+    conftest skips its test-DB redirect there, so the production ``hafiz.toml``
+    won. Measured: 17 surviving ``/tmp/pytest-of-*`` file rows in a real store.
+
+    Setting ``HAFIZ_DATABASE__URL`` is not enough — toml values reach
+    pydantic-settings as init args and beat env vars — so the session factory
+    itself is made to fail. The guards under test run before any DB work, so
+    every assertion here still holds.
+    """
+    monkeypatch.setattr(
+        "hafiz.core.database.get_session_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("this module must not reach a database")),
+    )
     reset_settings()
     yield
     reset_settings()

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hafiz.core.chunker import (
@@ -691,6 +691,82 @@ async def reconcile_orphaned_commits(
             await session.commit()
 
     return reconciled
+
+
+async def tombstone_untagged_files(
+    *,
+    include_unindexed: bool = False,
+    dry_run: bool = False,
+    path_prefix: str | None = None,
+) -> dict:
+    """Tombstone live ``files`` rows that carry no project.
+
+    An ingest with no ``--project`` can't update a project's rows — ``files`` is
+    unique on ``(project, path)`` — so it writes a parallel untagged copy that
+    search returns alongside the real one. Nothing can clean that up: ingest
+    skips :func:`tombstone_vanished_files` when ``project is None``, and the
+    paths still exist on disk anyway, so no walk would ever call them vanished.
+    Measured on a real deployment: 1,958 immortal untagged rows.
+
+    Untagged paths that are *also* indexed under a project are provably
+    redundant and go by default. Paths indexed nowhere else are the only copy,
+    so dropping them loses coverage — they're reported and skipped unless
+    ``include_unindexed`` is set. Tombstoning is soft: rows stay for audit and
+    drop out of search, which filters on ``File.valid_until IS NULL``.
+
+    ``path_prefix`` narrows the sweep to one subtree, so an operator can fix and
+    verify one repo at a time instead of committing to the whole store at once.
+    """
+    now = datetime.now(UTC)
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(File).where(File.project.is_(None), File.valid_until.is_(None))
+        if path_prefix:
+            stmt = stmt.where(File.path.startswith(path_prefix))
+        untagged = (await session.execute(stmt)).scalars().all()
+        tagged_paths = set(
+            (
+                await session.execute(
+                    select(File.path).where(File.project.is_not(None), File.valid_until.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        duplicated = [f for f in untagged if f.path in tagged_paths]
+        unindexed = [f for f in untagged if f.path not in tagged_paths]
+        targets = duplicated + unindexed if include_unindexed else duplicated
+
+        result = {
+            "untagged": len(untagged),
+            "duplicated": len(duplicated),
+            "unindexed": len(unindexed),
+            "files_tombstoned": 0,
+            "units_tombstoned": 0,
+            "dry_run": dry_run,
+        }
+        if dry_run or not targets:
+            return result
+
+        ids = [f.id for f in targets]
+        units = 0
+        for start in range(0, len(ids), 500):  # keep the IN () list sane
+            batch = ids[start : start + 500]
+            units += (
+                await session.execute(
+                    update(Unit)
+                    .where(Unit.file_id.in_(batch), Unit.valid_until.is_(None))
+                    .values(valid_until=now)
+                )
+            ).rowcount or 0
+        for f in targets:
+            f.valid_until = now
+        await session.commit()
+
+        result["files_tombstoned"] = len(targets)
+        result["units_tombstoned"] = units
+        return result
 
 
 async def tombstone_vanished_files(
