@@ -11,6 +11,11 @@ over-fetches K candidates, the cross-encoder re-scores them, and we return the
 top N. If the reranker is unavailable or errors, callers fall back to the
 vector order — reranking can only improve precision, never break recall.
 
+The cross-encoder score is **surfaced, not discarded** (:func:`rerank_scored`).
+It is the only score that separates signal from noise, so it is what a
+relevance floor must filter on; hiding it made reranked output indistinguishable
+from vector output and invited callers to re-sort on the wrong number.
+
 The model ships with fastembed (``TextCrossEncoder``) — no extra dependency —
 and loads lazily on first use, cached to the same persistent dir as the
 embedding model with the same self-heal-on-corruption behavior.
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 
 from hafiz.core.config import load_settings
@@ -85,6 +91,61 @@ async def warm_reranker() -> None:
     await asyncio.to_thread(get_reranker)
 
 
+def normalize_score(logit: float) -> float:
+    """Map a raw cross-encoder logit onto a 0–1 relevance probability.
+
+    The model emits **unbounded logits** (measured on
+    ``ms-marco-MiniLM-L-6-v2``: a relevant doc scored ``+3.32``, two
+    irrelevant ones ``-11.35`` / ``-11.31``). Vector similarity is already
+    0–1, so surfacing raw logits would give ``--min-score`` two different
+    scales depending on whether reranking ran — a footgun. A logistic
+    squash puts both on one scale (``+3.32 → 0.965``, ``-11.35 → 0.00001``)
+    and *preserves order*, since sigmoid is monotonic.
+    """
+    # math.exp overflows for very negative logits; clamp to the range where
+    # the result is indistinguishable from the asymptote anyway.
+    if logit < -60:
+        return 0.0
+    if logit > 60:
+        return 1.0
+    return 1.0 / (1.0 + math.exp(-logit))
+
+
+async def rerank_scored[T](
+    query: str,
+    items: list[T],
+    *,
+    text_of,
+    top_n: int | None = None,
+) -> list[tuple[T, float | None]]:
+    """Reorder ``items`` by cross-encoder relevance, returning the scores.
+
+    Each element is ``(item, score)`` where ``score`` is the 0–1 normalized
+    cross-encoder relevance (see :func:`normalize_score`). ``score`` is
+    ``None`` when reranking did not run — because the query was blank, the
+    item list was empty, or the model failed — which is how callers tell
+    "reranked" from "vector order" apart rather than having to guess.
+    """
+    if not items or not query.strip():
+        return [(it, None) for it in (items[:top_n] if top_n else items)]
+    # Truncate to the relevance-bearing head — cross-encoder cost scales with
+    # doc length, and the opening carries the signal (see _RERANK_DOC_CHARS).
+    docs = [(text_of(it) or "")[:_RERANK_DOC_CHARS] for it in items]
+    try:
+        model = get_reranker()
+        async with _infer_lock:
+            scores = await asyncio.to_thread(lambda: list(model.rerank(query, docs)))
+    except Exception as exc:  # noqa: BLE001 — degrade to vector order, never raise
+        logger.warning("rerank failed (%s); falling back to vector order", exc)
+        return [(it, None) for it in (items[:top_n] if top_n else items)]
+    ranked = sorted(
+        ((it, normalize_score(float(s))) for s, it in zip(scores, items, strict=False)),
+        key=lambda p: p[1],
+        reverse=True,
+    )
+    return ranked[:top_n] if top_n else ranked
+
+
 async def rerank[T](
     query: str,
     items: list[T],
@@ -98,18 +159,8 @@ async def rerank[T](
     items sorted most-relevant first, truncated to ``top_n`` if given. On any
     reranker failure (model load, inference), returns ``items`` unchanged (the
     vector order) — reranking is strictly additive.
+
+    Score-free convenience wrapper over :func:`rerank_scored`; callers that
+    need to filter or display relevance should use that instead.
     """
-    if not items or not query.strip():
-        return items[:top_n] if top_n else items
-    # Truncate to the relevance-bearing head — cross-encoder cost scales with
-    # doc length, and the opening carries the signal (see _RERANK_DOC_CHARS).
-    docs = [(text_of(it) or "")[:_RERANK_DOC_CHARS] for it in items]
-    try:
-        model = get_reranker()
-        async with _infer_lock:
-            scores = await asyncio.to_thread(lambda: list(model.rerank(query, docs)))
-    except Exception as exc:  # noqa: BLE001 — degrade to vector order, never raise
-        logger.warning("rerank failed (%s); falling back to vector order", exc)
-        return items[:top_n] if top_n else items
-    ranked = [it for _, it in sorted(zip(scores, items), key=lambda p: p[0], reverse=True)]
-    return ranked[:top_n] if top_n else ranked
+    return [it for it, _ in await rerank_scored(query, items, text_of=text_of, top_n=top_n)]

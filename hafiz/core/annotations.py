@@ -102,7 +102,20 @@ async def write_derived_from_links(annotation_id: uuid.UUID, derived_from: list[
 
 @dataclass
 class AnnotationResult:
-    """A single annotation search result with similarity score."""
+    """A single annotation search result with its relevance scores.
+
+    Two scores, deliberately both surfaced:
+
+    * ``score`` — cosine similarity from the vector stage, 0–1. Kept as-is
+      for back-compat; live agent hooks read this field.
+    * ``rerank_score`` — the cross-encoder's 0–1 relevance, or ``None`` when
+      reranking did not run. This is the score the results are *ordered* by
+      when it is present, and the one a relevance floor must filter on.
+
+    ``score`` alone cannot tell you which stage ranked the row: under
+    reranking it is non-monotonic down the result list, so filtering on it
+    fights the ordering.
+    """
 
     id: str
     content: str
@@ -116,6 +129,12 @@ class AnnotationResult:
     unit_id: str | None
     metadata: dict
     score: float
+    rerank_score: float | None = None
+
+    @property
+    def ranking_score(self) -> float:
+        """The score this row was actually ordered by — rerank if it ran."""
+        return self.score if self.rerank_score is None else self.rerank_score
 
 
 @dataclass
@@ -235,11 +254,21 @@ async def store_annotation(
     Returns:
         The stored Annotation ORM object.
 
+    Raises:
+        EmptyQueryError: if ``content`` is blank. Blank content is the write-side
+            of the empty-query defect: it embeds to a near-zero vector, so the
+            row then scores near-perfectly against *every* future query and acts
+            as a permanent noise magnet in recall. Refusing the write is the
+            only fix that doesn't require sweeping the table later.
+
     Note:
         Near-duplicate detection is *not* run here — bulk writers (importer,
         extractor, daemon) must stay fast and unconditional. The ``observe``
         command runs :func:`find_near_duplicates` itself before calling this.
     """
+    from hafiz.core.search import require_query
+
+    content = require_query(content, what="annotation content", hint="nothing to store")
     embedding = await embed_query(content)
 
     merged_metadata = dict(metadata or {})
@@ -514,6 +543,7 @@ async def search_annotations(
     source: str | None = None,
     active_only: bool = True,
     rerank: bool | None = None,
+    min_score: float | None = None,
 ) -> list[AnnotationResult]:
     """Search annotations by vector similarity, optionally cross-encoder reranked.
 
@@ -522,10 +552,21 @@ async def search_annotations(
     cross-encoder reorders them by joint (query, content) relevance before
     truncating to ``limit``. Reranking is strictly a reordering: on any failure
     it falls back to the vector order. ``rerank=False`` forces pure vector.
+
+    ``min_score`` is a 0–1 relevance floor applied to
+    :attr:`AnnotationResult.ranking_score` — the cross-encoder score when
+    reranking ran, the cosine similarity otherwise. It is applied **after**
+    reranking and **before** the ``limit`` truncation, so the caller gets up
+    to ``limit`` rows that all clear the floor.
+
+    Raises:
+        EmptyQueryError: if ``query`` is blank.
     """
     from hafiz.core.config import load_settings
-    from hafiz.core.reranker import rerank as _rerank_items
+    from hafiz.core.reranker import rerank_scored
+    from hafiz.core.search import require_query
 
+    query = require_query(query)
     rerank_cfg = load_settings().rerank
     do_rerank = rerank_cfg.enabled if rerank is None else rerank
     # Over-fetch candidates for the reranker to reorder; it can only improve on
@@ -582,7 +623,17 @@ async def search_annotations(
     ]
 
     if do_rerank and len(candidates) > 1:
-        return await _rerank_items(query, candidates, text_of=lambda r: r.content, top_n=limit)
+        # Rerank the whole candidate pool without truncating: the floor has to
+        # be applied to the reranked order, and truncating first would discard
+        # rows that clear it in favour of rows that don't.
+        for result, rerank_score in await rerank_scored(
+            query, candidates, text_of=lambda r: r.content
+        ):
+            result.rerank_score = rerank_score
+        candidates.sort(key=lambda r: r.ranking_score, reverse=True)
+
+    if min_score is not None:
+        candidates = [r for r in candidates if r.ranking_score >= min_score]
     return candidates[:limit]
 
 

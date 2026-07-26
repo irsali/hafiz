@@ -10,6 +10,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from hafiz.core.database import close_engine
+from hafiz.core.formats import OutputFormat
 
 console = Console()
 
@@ -24,7 +25,9 @@ def run_context(
     include_transcripts: bool = False,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
-    output_json: bool = False,
+    min_score: float | None = None,
+    output_format: OutputFormat = OutputFormat.RICH,
+    with_ids: bool = False,
 ) -> None:
     """Build and display a context bundle for a task description.
 
@@ -56,6 +59,7 @@ def run_context(
                     limit_annotations=limit_annotations * 2,
                     include_domains=include_domains,
                     exclude_domains=exclude_domains,
+                    min_score=min_score,
                 )
             else:
                 from hafiz.core.context import build_context
@@ -67,19 +71,23 @@ def run_context(
                     limit_annotations=limit_annotations,
                     include_domains=include_domains,
                     exclude_domains=exclude_domains,
+                    min_score=min_score,
                 )
             transcripts = []
             if include_transcripts:
                 from hafiz.core.communications import search_messages
 
-                transcripts = await search_messages(query, limit=limit_chunks)
+                rows = await search_messages(query, limit=limit_chunks)
+                transcripts = [
+                    (r, score) for r, score in rows if min_score is None or score >= min_score
+                ]
             return bundle, transcripts
         finally:
             await close_engine()
 
     bundle, transcripts = asyncio.run(_build())
 
-    if output_json:
+    if output_format is OutputFormat.JSON:
         payload = bundle.to_dict()
         payload["transcripts"] = [
             {
@@ -96,6 +104,27 @@ def run_context(
         ]
         payload["include_transcripts"] = include_transcripts
         console.print_json(json.dumps(payload, default=str))
+        return
+
+    if output_format is OutputFormat.COMPACT:
+        payload = bundle.to_compact(with_ids=with_ids)
+        if include_transcripts:
+            payload["transcripts"] = [
+                {"content": msg.content, "role": msg.role, "seq": msg.seq}
+                | ({"id": msg.id} if with_ids else {})
+                for msg, _ in transcripts
+            ]
+        console.print_json(json.dumps(payload, default=str))
+        return
+
+    if output_format is OutputFormat.MD:
+        # Raw markdown, not Rich-rendered: this format exists to be pasted
+        # into a prompt, so ANSI boxes and reflowed text would be damage.
+        print(bundle.to_markdown())
+        if transcripts:
+            print("\n## Transcripts\n")
+            for msg, _ in transcripts:
+                print(f"### {msg.role} · seq {msg.seq}\n\n{msg.content}\n")
         return
 
     title = f"Context (workspace): {query[:50]}" if workspace else f"Context: {query[:60]}"

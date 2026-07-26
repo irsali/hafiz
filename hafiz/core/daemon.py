@@ -131,6 +131,7 @@ class _Server:
                 limit_annotations=req.get("limit_annotations", 5),
                 include_domains=req.get("include_domains"),
                 exclude_domains=req.get("exclude_domains"),
+                min_score=req.get("min_score"),
             )
         return {"ok": True, "bundle": bundle.to_dict()}
 
@@ -145,6 +146,7 @@ class _Server:
                 kind=req.get("kind"),
                 source=req.get("source"),
                 rerank=req.get("rerank"),  # None → honor config default
+                min_score=req.get("min_score"),
             )
         return {"ok": True, "results": [_annotation_to_dict(r) for r in results]}
 
@@ -260,6 +262,7 @@ def _annotation_to_dict(ann) -> dict:
         "tags",
         "confidence",
         "score",
+        "rerank_score",
         "age_days",
         "stale",
         "valid_from",

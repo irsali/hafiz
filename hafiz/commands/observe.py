@@ -16,7 +16,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from hafiz.core.database import close_engine
-from hafiz.core.durations import parse_duration
+from hafiz.core.durations import age_label, parse_duration
+from hafiz.core.formats import OutputFormat, annotation_compact, annotation_md
 from hafiz.core.session import resolve_session_tag
 
 console = Console()
@@ -142,7 +143,13 @@ def run_observe(
         _report_strict_block(e.duplicates, output_json)
         raise SystemExit(2)
     except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        # Blank content, a missing --supersedes target, etc. Agents parse
+        # stdout, so honor the project's machine-readable failure shape rather
+        # than emitting a Rich panel they can't read.
+        if output_json:
+            console.print_json(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
 
     if output_json:
@@ -283,24 +290,13 @@ def run_note(
     )
 
 
-STALE_DAYS = 90
-
-
 def _age(valid_from: datetime) -> tuple[str, int, bool]:
-    """(human label, age in days, stale flag) for a ``valid_from``."""
-    now = datetime.now(UTC)
-    days = (now - valid_from.astimezone(UTC)).days
-    if days < 0:
-        return "future", days, False
-    if days == 0:
-        return "today", 0, False
-    if days == 1:
-        return "1d ago", 1, False
-    if days < 30:
-        return f"{days}d ago", days, days > STALE_DAYS
-    if days < 365:
-        return f"{round(days / 30)}mo ago", days, days > STALE_DAYS
-    return f"{round(days / 365)}y ago", days, True
+    """(human label, age in days, stale flag) for a ``valid_from``.
+
+    Thin alias over :func:`hafiz.core.durations.age_label`, kept because the
+    compact/markdown formatters in core need the same rendering.
+    """
+    return age_label(valid_from)
 
 
 def run_recall(
@@ -313,7 +309,9 @@ def run_recall(
     source: str | None = None,
     include_superseded: bool = False,
     rerank: bool = True,
-    output_json: bool = False,
+    min_score: float | None = None,
+    output_format: OutputFormat = OutputFormat.RICH,
+    with_ids: bool = False,
 ) -> None:
     """Search annotations by semantic similarity and display results."""
 
@@ -339,6 +337,7 @@ def run_recall(
                 source=source,
                 active_only=not include_superseded,
                 rerank=rerank,
+                min_score=min_score,
             )
             return results
         finally:
@@ -351,7 +350,7 @@ def run_recall(
             return False
         return r.valid_until < datetime.now(UTC)
 
-    if output_json:
+    if output_format is OutputFormat.JSON:
         data = {
             "query": query,
             "results": [
@@ -370,12 +369,37 @@ def run_recall(
                     "stale": _age(r.valid_from)[2],
                     "inactive": _is_inactive(r),
                     "score": r.score,
+                    # Additive: which stage ranked this row, and how strongly.
+                    # None means reranking did not run (--no-rerank, blank
+                    # candidate pool, or model failure), so `score` is the
+                    # ranking score. Without this, reranked and vector output
+                    # are indistinguishable.
+                    "rerank_score": r.rerank_score,
                 }
                 for r in results
             ],
             "total": len(results),
+            "reranked": any(r.rerank_score is not None for r in results),
         }
         console.print_json(json.dumps(data))
+        return
+
+    if output_format is OutputFormat.COMPACT:
+        data = {
+            "query": query,
+            "results": [annotation_compact(r, with_ids=with_ids) for r in results],
+            "total": len(results),
+        }
+        console.print_json(json.dumps(data))
+        return
+
+    if output_format is OutputFormat.MD:
+        if not results:
+            print(f"_No annotations matched “{query}”._")
+            return
+        print(f"## Recall: {query}\n")
+        for r in results:
+            print(annotation_md(r, with_ids=with_ids))
         return
 
     if not results:
@@ -383,6 +407,7 @@ def run_recall(
         return
 
     console.print()
+    reranked = any(r.rerank_score is not None for r in results)
     table = Table(
         title=f'Recall: "{query}" ({len(results)} results)',
         border_style="cyan",
@@ -392,14 +417,18 @@ def run_recall(
     table.add_column("Source", style="dim", width=16)
     table.add_column("Age", style="dim", width=8)
     table.add_column("Confidence", justify="right", width=10)
-    table.add_column("Score", justify="right", width=8)
+    # Name the score in the header — a "Score" column that silently switches
+    # between cosine similarity and cross-encoder relevance is how the two got
+    # conflated in the first place.
+    table.add_column("Relevance" if reranked else "Similarity", justify="right", width=10)
 
     for r in results:
-        score_color = "green" if r.score > 0.7 else "yellow" if r.score > 0.5 else "red"
+        shown = r.ranking_score
+        score_color = "green" if shown > 0.7 else "yellow" if shown > 0.5 else "red"
         content_preview = r.content[:120]
         if len(r.content) > 120:
             content_preview += "..."
-        age_label, _, stale = _age(r.valid_from)
+        age, _, stale = _age(r.valid_from)
         inactive = _is_inactive(r)
         row_style = "dim" if stale or inactive else None
         kind_label = f"{r.kind} (superseded)" if inactive else r.kind
@@ -407,9 +436,9 @@ def run_recall(
             kind_label,
             content_preview,
             r.source or "—",
-            age_label,
+            age,
             f"{r.confidence:.0%}",
-            f"[{score_color}]{r.score:.2%}[/{score_color}]",
+            f"[{score_color}]{shown:.2%}[/{score_color}]",
             style=row_style,
         )
 

@@ -55,6 +55,38 @@ def _validate_domain_filters(include: list[str], exclude: list[str]) -> None:
         raise ValueError(f"--include-domain and --exclude-domain overlap: {sorted(overlap)}")
 
 
+class EmptyQueryError(ValueError):
+    """Raised when a retrieval call gets a blank query.
+
+    An empty query embeds to a near-zero vector, against which empty
+    documents (blank ``.scss`` files, whitespace-only headings) score a
+    perfect 1.0. That turns a caller's broken variable interpolation into
+    confidently-ranked garbage instead of an error — a silent-failure
+    amplifier. Guarded in core, not just the CLI, so the daemon and any
+    library caller hit it too.
+
+    Blank *annotation content* is the write-side of the same defect and raises
+    the same error: such a row would score near-perfectly against every future
+    query, becoming a permanent noise magnet in recall.
+    """
+
+    def __init__(self, what: str = "query", *, hint: str = "nothing to search for"):
+        super().__init__(
+            f"empty {what} — {hint}. "
+            "Check that the caller's variable interpolation produced a value."
+        )
+
+
+def require_query(
+    text: str | None, *, what: str = "query", hint: str = "nothing to search for"
+) -> str:
+    """Return ``text`` stripped, or raise :class:`EmptyQueryError` if blank."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise EmptyQueryError(what, hint=hint)
+    return cleaned
+
+
 @dataclass
 class SearchResult:
     """A single search result. Fields are populated from the joined
@@ -102,16 +134,24 @@ async def vector_search(
             these domain prefixes. Mutually exclusive with the same
             domain appearing in ``include_domains``.
         similarity_threshold: Drop results below this cosine similarity.
+            Applied in SQL, *before* the ``limit`` is taken, so the caller
+            gets the top ``limit`` results that clear the floor rather than
+            the survivors of the top ``limit`` overall.
 
     Returns:
         List of SearchResult ordered by similarity (best first).
+
+    Raises:
+        EmptyQueryError: if ``query`` is blank.
     """
+    query = require_query(query)
     inc = _normalize_domains(include_domains)
     exc = _normalize_domains(exclude_domains)
     _validate_domain_filters(inc, exc)
     query_embedding = await embed_query(query)
 
-    similarity = (1 - Embedding.embedding.cosine_distance(query_embedding)).label("similarity")
+    similarity_expr = 1 - Embedding.embedding.cosine_distance(query_embedding)
+    similarity = similarity_expr.label("similarity")
 
     stmt = (
         select(Embedding, UnitRevision, Unit, File, similarity)
@@ -125,6 +165,8 @@ async def vector_search(
         .order_by(Embedding.embedding.cosine_distance(query_embedding))
         .limit(limit)
     )
+    if similarity_threshold > 0:
+        stmt = stmt.where(similarity_expr >= similarity_threshold)
 
     if isinstance(project, list):
         stmt = stmt.where(File.project.in_(project))

@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from hafiz.core.database import close_engine
+from hafiz.core.formats import OutputFormat, chunk_compact, chunk_md
 from hafiz.core.search import vector_search
 
 console = Console()
@@ -23,7 +24,9 @@ def _run_query(
     project: str | None,
     workspace: bool = False,
     kind: str | None,
-    output_json: bool,
+    output_format: OutputFormat = OutputFormat.RICH,
+    with_ids: bool = False,
+    min_score: float | None = None,
     include_transcripts: bool = False,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
@@ -55,6 +58,7 @@ def _run_query(
                 kind=kind,
                 include_domains=include_domains,
                 exclude_domains=exclude_domains,
+                similarity_threshold=min_score or 0.0,
             )
             transcript_hits = []
             if include_transcripts:
@@ -65,14 +69,43 @@ def _run_query(
                 # when they actually want them. Limit is shared so a
                 # transcript-heavy query doesn't blow past the cap.
                 rows = await search_messages(text, limit=limit)
-                transcript_hits = [(r, score) for r, score in rows]
+                transcript_hits = [
+                    (r, score) for r, score in rows if min_score is None or score >= min_score
+                ]
             return results, transcript_hits
         finally:
             await close_engine()
 
     results, transcript_hits = asyncio.run(_search())
 
-    if output_json:
+    if output_format is OutputFormat.COMPACT:
+        data = {
+            "query": text,
+            "results": [chunk_compact(r, with_ids=with_ids) for r in results],
+            "total": len(results) + len(transcript_hits),
+        }
+        if include_transcripts:
+            data["transcripts"] = [
+                {"content": msg.content, "role": msg.role, "seq": msg.seq}
+                | ({"id": msg.id} if with_ids else {})
+                for msg, _ in transcript_hits
+            ]
+        console.print_json(json.dumps(data))
+        return
+
+    if output_format is OutputFormat.MD:
+        if not results and not transcript_hits:
+            print(f"_No results matched “{text}”._")
+            return
+        print(f"## Results: {text}\n")
+        for r in results:
+            print(chunk_md(r, with_ids=with_ids))
+            print()
+        for msg, _ in transcript_hits:
+            print(f"### transcript · {msg.role} · seq {msg.seq}\n\n{msg.content}\n")
+        return
+
+    if output_format is OutputFormat.JSON:
         data = {
             "query": text,
             "results": [

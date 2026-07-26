@@ -5,9 +5,13 @@ Entry point for the `hafiz` command. Built with Typer + Rich.
 
 from __future__ import annotations
 
+import json
+from typing import NoReturn
+
 import typer
 
 from hafiz import __version__
+from hafiz.core.formats import OutputFormat, error_payload, resolve_format
 
 
 def _parse_domain_csv(value: str | None) -> list[str] | None:
@@ -21,6 +25,21 @@ def _parse_domain_csv(value: str | None) -> list[str] | None:
         return None
     items = [v.strip() for v in value.split(",") if v.strip()]
     return items or None
+
+
+def _fail(message: str, *, fmt: OutputFormat, code: int = 2) -> NoReturn:
+    """Report a usage/input error and exit non-zero.
+
+    Machine formats get the project's ``{"ok": false, "error": ...}`` shape on
+    stdout; humans get plain text. Both get a non-zero exit — a caller that
+    only checks the exit code and one that only parses stdout must each be able
+    to detect the failure.
+    """
+    if fmt.is_machine:
+        typer.echo(json.dumps(error_payload(message)))
+    else:
+        typer.echo(f"Error: {message}")
+    raise typer.Exit(code)
 
 
 app = typer.Typer(
@@ -219,6 +238,32 @@ def query(
         ),
     ),
     limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of results."),
+    min_score: float | None = typer.Option(
+        None,
+        "--min-score",
+        min=0.0,
+        max=1.0,
+        help=(
+            "Drop results below this 0–1 relevance floor. Applied to the score "
+            "the results are ranked by: cross-encoder relevance under "
+            "--observations (default), cosine similarity otherwise."
+        ),
+    ),
+    output_format: OutputFormat | None = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help=(
+            "Output shape. 'rich' (default) for terminals; 'json' for today's "
+            "full shape; 'compact' for a token-lean machine shape; 'md' for raw "
+            "markdown. --json is an alias for --format json."
+        ),
+    ),
+    with_ids: bool = typer.Option(
+        False,
+        "--with-ids",
+        help="Include row ids in compact/markdown output (needed to --supersedes later).",
+    ),
     observations: bool = typer.Option(
         False,
         "--observations",
@@ -283,9 +328,10 @@ def query(
     --include-transcripts to additionally search the source layer
     (imported agent transcripts).
     """
+    fmt = resolve_format(output_format, json_flag=json_output)
+
     if project and workspace:
-        typer.echo("Error: --project and --workspace are mutually exclusive.")
-        raise typer.Exit(1)
+        _fail("--project and --workspace are mutually exclusive.", fmt=fmt, code=1)
 
     if recall_alias:
         # `--recall` collided with the top-level `hafiz recall` (source layer).
@@ -298,17 +344,22 @@ def query(
     if observations or recall_alias:
         from hafiz.commands.observe import run_recall
 
-        run_recall(
-            text,
-            limit=limit,
-            project=project,
-            workspace=workspace,
-            kind=type,
-            source=source,
-            include_superseded=include_superseded,
-            rerank=not no_rerank,
-            output_json=json_output,
-        )
+        try:
+            run_recall(
+                text,
+                limit=limit,
+                project=project,
+                workspace=workspace,
+                kind=type,
+                source=source,
+                include_superseded=include_superseded,
+                rerank=not no_rerank,
+                min_score=min_score,
+                output_format=fmt,
+                with_ids=with_ids,
+            )
+        except ValueError as e:
+            _fail(str(e), fmt=fmt, code=2)
     else:
         from hafiz.commands.query import _run_query
         from hafiz.core.session import resolve_domain_defaults
@@ -319,8 +370,7 @@ def query(
                 exclude_override=_parse_domain_csv(exclude_domain),
             )
         except ValueError as e:
-            typer.echo(f"Error: {e}")
-            raise typer.Exit(2) from e
+            _fail(str(e), fmt=fmt, code=2)
 
         try:
             _run_query(
@@ -332,11 +382,12 @@ def query(
                 include_transcripts=include_transcripts,
                 include_domains=inc,
                 exclude_domains=exc,
-                output_json=json_output,
+                min_score=min_score,
+                output_format=fmt,
+                with_ids=with_ids,
             )
         except ValueError as e:
-            typer.echo(f"Error: {e}")
-            raise typer.Exit(2) from e
+            _fail(str(e), fmt=fmt, code=2)
 
 
 # ─── RECALL ─────────────────────────────────────────────────────────
@@ -1142,12 +1193,45 @@ def context(
             "Drop chunks in these data domains (comma-separated). Overrides any session default."
         ),
     ),
+    limit: int = typer.Option(
+        5,
+        "--limit",
+        "-l",
+        min=1,
+        help="Max chunks and max annotations to include (applies to each section).",
+    ),
+    min_score: float | None = typer.Option(
+        None,
+        "--min-score",
+        min=0.0,
+        max=1.0,
+        help=(
+            "Drop results below this 0–1 relevance floor — cosine similarity for "
+            "chunks, cross-encoder relevance for annotations. Narrows the whole "
+            "bundle, since the graph section is seeded from the surviving chunks."
+        ),
+    ),
+    output_format: OutputFormat | None = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help=(
+            "Output shape: 'rich' (default), 'json' (today's full shape), "
+            "'compact' (token-lean), 'md' (raw markdown). --json aliases 'json'."
+        ),
+    ),
+    with_ids: bool = typer.Option(
+        False,
+        "--with-ids",
+        help="Include row ids in compact output (needed to --supersedes later).",
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Synthesize relevant code, graph, and observations for a task."""
+    fmt = resolve_format(output_format, json_flag=json_output)
+
     if project and workspace:
-        typer.echo("Error: --project and --workspace are mutually exclusive.")
-        raise typer.Exit(1)
+        _fail("--project and --workspace are mutually exclusive.", fmt=fmt, code=1)
 
     from hafiz.commands.context import run_context
     from hafiz.core.session import resolve_domain_defaults
@@ -1158,22 +1242,24 @@ def context(
             exclude_override=_parse_domain_csv(exclude_domain),
         )
     except ValueError as e:
-        typer.echo(f"Error: {e}")
-        raise typer.Exit(2) from e
+        _fail(str(e), fmt=fmt, code=2)
 
     try:
         run_context(
             query,
             project=project,
             workspace=workspace,
+            limit_chunks=limit,
+            limit_annotations=limit,
             include_transcripts=include_transcripts,
             include_domains=inc,
             exclude_domains=exc,
-            output_json=json_output,
+            min_score=min_score,
+            output_format=fmt,
+            with_ids=with_ids,
         )
     except ValueError as e:
-        typer.echo(f"Error: {e}")
-        raise typer.Exit(2) from e
+        _fail(str(e), fmt=fmt, code=2)
 
 
 # ─── REVIEW ──────────────────────────────────────────────────────────

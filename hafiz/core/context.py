@@ -30,7 +30,15 @@ from hafiz.core import graph_analysis as ga
 from hafiz.core.annotations import AnnotationResult, search_annotations
 from hafiz.core.config import get_settings
 from hafiz.core.database import File, get_session_factory
-from hafiz.core.search import SearchResult, vector_search
+from hafiz.core.durations import age_label
+from hafiz.core.search import SearchResult, require_query, vector_search
+
+
+def _score_label(a: AnnotationResult) -> str:
+    """Name the score being shown, so reranked output isn't mistaken for vector."""
+    if a.rerank_score is None:
+        return f"similarity {a.score:.2%}"
+    return f"relevance {a.rerank_score:.0%}"
 
 
 @dataclass
@@ -101,7 +109,7 @@ class ContextBundle:
                 sections.append(
                     f"\n- **[{a.kind}]** {a.content}  "
                     f"— confidence {a.confidence:.0%}, "
-                    f"similarity {a.score:.2%}{source}"
+                    f"{_score_label(a)}{source}"
                 )
         else:
             sections.append("\n_No matching annotations._")
@@ -141,6 +149,7 @@ class ContextBundle:
                     "confidence": a.confidence,
                     "unit_id": a.unit_id,
                     "score": a.score,
+                    "rerank_score": a.rerank_score,
                 }
                 for a in self.annotations
             ],
@@ -148,6 +157,43 @@ class ContextBundle:
         if self.project_distribution is not None:
             result["project_distribution"] = self.project_distribution
         return result
+
+    def to_compact(self, *, with_ids: bool = False) -> dict:
+        """Serialize for token-efficient injection into a context window.
+
+        Same rows as :meth:`to_dict`, stripped to the fields a consuming model
+        actually reads: content plus just enough provenance to judge and cite
+        it. Drops uuids, timestamps, null fields, float scores, and the graph
+        neighbourhood's edge lists (entities collapse to ``name (kind)``).
+
+        ``with_ids`` re-adds the annotation id. Without it an agent can read a
+        decision but not ``--supersedes`` it, so pass it whenever the consumer
+        might write back.
+        """
+        return {
+            "query": self.query,
+            "chunks": [
+                {
+                    "content": c.content,
+                    "kind": c.kind,
+                    "unit_name": c.unit_name,
+                    "source_file": c.source_file,
+                    **({"id": c.id} if with_ids else {}),
+                }
+                for c in self.chunks
+            ],
+            "units": [f"{e.get('name')} ({e.get('kind')})" for e in self.entities if e.get("name")],
+            "annotations": [
+                {
+                    "content": a.content,
+                    "kind": a.kind,
+                    "source": a.source,
+                    "age": age_label(a.valid_from)[0],
+                    **({"id": a.id} if with_ids else {}),
+                }
+                for a in self.annotations
+            ],
+        }
 
 
 async def build_context(
@@ -158,6 +204,7 @@ async def build_context(
     limit_annotations: int = 5,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
+    min_score: float | None = None,
 ) -> ContextBundle:
     """Build a context bundle by combining embeddings, graph, and annotations.
 
@@ -170,16 +217,28 @@ async def build_context(
     graph expansion and annotation search are not domain-filtered (graph
     walks already follow only edges from the seeded files, and
     annotations are kind-agnostic in this layer).
+
+    ``min_score`` is a 0–1 relevance floor applied to both stages — cosine
+    similarity for chunks, the reranked score for annotations. Because the
+    graph neighbourhood is seeded from the surviving chunks, raising the floor
+    narrows the whole bundle, not just its first section.
+
+    Raises:
+        EmptyQueryError: if ``query`` is blank.
     """
+    query = require_query(query)
     chunks = await vector_search(
         query,
         limit=limit_chunks,
         project=project,
         include_domains=include_domains,
         exclude_domains=exclude_domains,
+        similarity_threshold=min_score or 0.0,
     )
     entities = await _graph_from_chunks(chunks, project=project)
-    annotations = await search_annotations(query, limit=limit_annotations, project=project)
+    annotations = await search_annotations(
+        query, limit=limit_annotations, project=project, min_score=min_score
+    )
 
     return ContextBundle(
         query=query,
@@ -259,17 +318,26 @@ async def build_workspace_context(
     limit_annotations: int = 10,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
+    min_score: float | None = None,
 ) -> ContextBundle:
-    """Build context scoped to workspace-sibling projects."""
+    """Build context scoped to workspace-sibling projects.
+
+    Raises:
+        EmptyQueryError: if ``query`` is blank.
+    """
+    query = require_query(query)
     chunks = await vector_search(
         query,
         limit=limit_chunks,
         project=projects,
         include_domains=include_domains,
         exclude_domains=exclude_domains,
+        similarity_threshold=min_score or 0.0,
     )
     entities = await _graph_from_chunks(chunks, project=projects)
-    annotations = await search_annotations(query, limit=limit_annotations, project=projects)
+    annotations = await search_annotations(
+        query, limit=limit_annotations, project=projects, min_score=min_score
+    )
 
     distribution: dict[str, int] = {}
     for c in chunks:
