@@ -40,12 +40,34 @@ Issues = "https://github.com/irsali/hafiz/issues"
 hafiz = "hafiz.cli:main"
 
 [project.optional-dependencies]
-gpu = [
-    # CUDA-only wheels; no macOS build. The markers let `pip install hafiz[gpu]`
+# NOTE on all accelerator extras: onnxruntime, onnxruntime-gpu and
+# onnxruntime-openvino all install the SAME `onnxruntime` import package, so
+# only one can be active in a venv — whichever is installed last overwrites the
+# others' files while leaving their metadata behind. Installing an accelerator
+# extra is therefore not proof the accelerator is in use. `hafiz doctor` detects
+# that shadowing and prints the real remedy (uninstall the CPU wheel), because
+# reinstalling the extra appears to succeed and changes nothing. Never combine
+# two of these extras.
+cuda = [
+    # CUDA-only wheels; no macOS build. The markers let `pip install hafiz[cuda]`
     # succeed on a Mac (the extra resolves to nothing) instead of erroring — Apple
     # Silicon runs CPU embeddings, which the `auto` device path falls back to.
     "fastembed-gpu>=0.8 ; sys_platform != 'darwin'",
     "onnxruntime-gpu>=1.20 ; sys_platform != 'darwin'",
+]
+gpu = [
+    # Historical alias for `cuda`, kept so existing install instructions and
+    # scripts keep working. Same contents deliberately: an extra that only
+    # depends on `hafiz[cuda]` would resolve fine but reads worse in `pip`
+    # output and in lockfiles.
+    "fastembed-gpu>=0.8 ; sys_platform != 'darwin'",
+    "onnxruntime-gpu>=1.20 ; sys_platform != 'darwin'",
+]
+openvino = [
+    # Intel iGPU / NPU via OpenVINO. Linux + Windows only. Speedup for this
+    # embedding model is UNMEASURED — offered because the hardware is otherwise
+    # idle, not because it is known to help. Benchmark before adopting.
+    "onnxruntime-openvino>=1.20 ; sys_platform != 'darwin'",
 ]
 js = [
     # JavaScript / TypeScript AST parser. Optional so the base install stays

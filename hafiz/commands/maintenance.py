@@ -217,6 +217,13 @@ def run_status(*, output_json: bool = False) -> None:
             last_commit_per_project = await last_indexed_commit_per_project()
             staleness = await _index_staleness(last_commit_per_project)
 
+            # Bounded retention is an outward-facing commitment; the sweep only
+            # runs on `import`, which stops firing exactly when it's needed. The
+            # count is what makes an unenforced policy visible.
+            from hafiz.core.communications import count_overdue_communications
+
+            overdue = await count_overdue_communications()
+
             stats = {
                 "files": files_count,
                 "units": units_count,
@@ -234,6 +241,7 @@ def run_status(*, output_json: bool = False) -> None:
                     p or "(none)": c for p, c in last_commit_per_project.items()
                 },
                 "staleness": staleness,
+                "retention": {"overdue": overdue},
             }
             return stats
         finally:
@@ -266,6 +274,11 @@ def run_status(*, output_json: bool = False) -> None:
     table.add_row("Edges (current)", str(stats["edges"]))
     table.add_row("Annotations", str(stats["annotations"]))
     table.add_row("Commits (indexed)", str(stats["commits"]))
+    overdue = stats["retention"]["overdue"]
+    table.add_row(
+        "Retention overdue",
+        f"[red]{overdue}[/red]" if overdue else "0",
+    )
     dev = stats["embedding_device"]
     table.add_row(
         "Embedding device",
@@ -274,6 +287,12 @@ def run_status(*, output_json: bool = False) -> None:
 
     console.print()
     console.print(table)
+
+    if overdue:
+        console.print(
+            f"  [yellow]{overdue} communication(s) past their retention window.[/yellow]\n"
+            f"  [dim]Sweep them with: hafiz forget --all-expired[/dim]"
+        )
 
     if stats["by_project"]:
         console.print()
@@ -910,6 +929,29 @@ def run_doctor(
                     fix="Run: hafiz init",
                 )
 
+            # 7b. Retention enforcement. Bounded retention is an outward-facing
+            # commitment, and the sweep only runs on `import` — which stops
+            # firing exactly when it's most needed (358 rows sat overdue for
+            # four weeks in a real deployment, four weeks after imports
+            # stopped). Reported here as well as in `status` because
+            # visibility, not the trigger, is what actually enforces it.
+            try:
+                from hafiz.core.communications import count_overdue_communications
+
+                overdue = await count_overdue_communications()
+                _check(
+                    "Retention enforced",
+                    overdue == 0,
+                    detail=(
+                        "no communications past retention"
+                        if overdue == 0
+                        else f"{overdue} communication(s) past retention_until"
+                    ),
+                    fix="Run: hafiz forget --all-expired" if overdue else "",
+                )
+            except Exception as e:
+                _check("Retention enforced", False, detail=str(e)[:120])
+
         finally:
             await close_engine()
 
@@ -977,6 +1019,29 @@ def run_doctor(
             else ""
         ),
     )
+
+    # 10b. Accelerator availability. An installed GPU extra is not proof the
+    #      GPU is in use: onnxruntime, onnxruntime-gpu and onnxruntime-openvino
+    #      all install the same `onnxruntime` import package, so whichever lands
+    #      last wins and the others' providers vanish while their metadata
+    #      remains. Naming that case matters — the obvious "install the extra"
+    #      advice appears to succeed and changes nothing.
+    try:
+        from hafiz.core.accelerators import diagnose_accelerators
+        from hafiz.core.host_probe import probe_host
+
+        host = probe_host()
+        for finding in diagnose_accelerators(providers=host.onnx_providers, gpu_name=host.gpu_name):
+            if finding.state == "no-hardware":
+                continue  # nothing to report on a host that can't use it
+            _check(
+                f"Accelerator: {finding.name}",
+                finding.ok,
+                detail=finding.detail,
+                fix=finding.fix,
+            )
+    except Exception as e:
+        _check("Accelerator availability", False, detail=str(e)[:120])
 
     # 11. Recent errors — informational, not a fail. Agents can drill
     #     in with `hafiz errors list --since 1d --json`.

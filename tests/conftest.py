@@ -84,6 +84,7 @@ _DB_DEPENDENT = [
     "test_ingest_flow.py",
     "test_polymorphic_lineage.py",
     "test_recall_and_transcripts.py",
+    "test_retention_visibility.py",
     "test_rewrite_resilience.py",
     "test_search.py",
     "test_session_list_cli.py",

@@ -52,7 +52,7 @@ def run_import_claude_code(
 
     async def _run():
         try:
-            return await import_claude_code(
+            result = await import_claude_code(
                 root=root,
                 project=project,
                 limit=limit,
@@ -60,10 +60,19 @@ def run_import_claude_code(
                 dry_run=dry_run,
                 embed=not no_embed,
             )
+            # Enforce bounded retention opportunistically: this is the command
+            # that grows the source layer, so it's the honest place to prune it.
+            # Deliberately NOT on `ingest` — that's the code/doc subsystem, it
+            # fires per-commit from a hook, and its output goes to /dev/null, so
+            # a sweep there would be unattributable and unobservable.
+            from hafiz.core.communications import tombstone_expired_communications
+
+            sweep = await tombstone_expired_communications(dry_run=dry_run)
+            return result, sweep
         finally:
             await close_engine()
 
-    summary = asyncio.run(_run())
+    summary, sweep = asyncio.run(_run())
 
     if output_json:
         console.print_json(
@@ -76,6 +85,7 @@ def run_import_claude_code(
                     "dry_run": dry_run,
                     "embed": not no_embed,
                     "summary": summary.to_dict(),
+                    "retention_sweep": sweep,
                 }
             )
         )
@@ -94,6 +104,11 @@ def run_import_claude_code(
     table.add_row("Messages embedded", str(s.messages_embedded))
     if s.errors:
         table.add_row("Errors", str(len(s.errors)))
+    if sweep["matched"]:
+        table.add_row(
+            "Retention-expired tombstoned",
+            str(sweep["tombstoned"]) + (" (dry run)" if dry_run else ""),
+        )
     console.print(table)
 
     if dry_run:

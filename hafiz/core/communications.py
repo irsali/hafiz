@@ -462,6 +462,33 @@ async def search_messages(
 # ---------------------------------------------------------------------------
 
 
+async def count_overdue_communications(*, now: datetime | None = None) -> int:
+    """Count communications past ``retention_until`` and not yet tombstoned.
+
+    Bounded retention is an outward-facing commitment, and it was only enforced
+    when someone remembered to run ``hafiz forget --all-expired``. 358 rows sat
+    overdue for four weeks in a real deployment because nothing ever said so.
+    Visibility is the actual fix — a trigger that only fires on ``import`` stops
+    firing precisely when imports stop, while retention keeps ticking.
+
+    Cheap enough (indexed on ``retention_until``) to call from ``status`` and
+    ``doctor`` unconditionally.
+    """
+    now = now or datetime.now(UTC)
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = (
+            select(func.count())
+            .select_from(Communication)
+            .where(
+                Communication.retention_until.isnot(None),
+                Communication.retention_until <= now,
+                Communication.valid_until.is_(None),
+            )
+        )
+        return (await session.execute(stmt)).scalar() or 0
+
+
 async def tombstone_expired_communications(
     *, now: datetime | None = None, dry_run: bool = False
 ) -> dict:
@@ -545,6 +572,7 @@ __all__ = [
     "get_communication",
     "list_messages",
     "search_messages",
+    "count_overdue_communications",
     "tombstone_expired_communications",
     "forget_communication",
     "DEFAULT_RETENTION_DAYS",
