@@ -18,10 +18,31 @@ from rich.panel import Panel
 from rich.table import Table
 
 from hafiz.core.database import close_engine
-from hafiz.core.session import current_session, end_session, start_session
+from hafiz.core.session import (
+    SESSION_KEY_ENV,
+    current_session,
+    end_session,
+    start_session,
+)
 from hafiz.core.sessions import list_sessions
 
 console = Console()
+
+
+def _no_session_hint() -> str:
+    """Explain *why* there's no session — the answer differs off a terminal."""
+    import os
+
+    if os.environ.get(SESSION_KEY_ENV):
+        return "[dim]No active session for this session key.[/dim]"
+    try:
+        os.ttyname(0)
+    except OSError:
+        return (
+            "[dim]No active session. Without a terminal, sessions are keyed "
+            f"explicitly — pass --session-key <id> or set ${SESSION_KEY_ENV}.[/dim]"
+        )
+    return "[dim]No active session for this terminal.[/dim]"
 
 
 def _info_block(data: dict) -> str:
@@ -32,6 +53,10 @@ def _info_block(data: dict) -> str:
         filter_lines += f"\n  [bold]Include:[/bold]  {', '.join(inc)}"
     if exc:
         filter_lines += f"\n  [bold]Exclude:[/bold]  {', '.join(exc)}"
+    # The cursor is keyed by TTY for humans and by an explicit key off a
+    # terminal; label it for whichever it actually is.
+    cursor = data.get("tty") or "—"
+    cursor_label = "Key" if cursor.startswith("key-") else "TTY"
     return (
         f"  [bold]ID:[/bold]       {data.get('session_id')}\n"
         f"  [bold]UUID:[/bold]     {data.get('session_uuid') or '—'}\n"
@@ -39,7 +64,7 @@ def _info_block(data: dict) -> str:
         f"  [bold]Task:[/bold]     {data.get('task') or '—'}\n"
         f"  [bold]Project:[/bold]  {data.get('project') or '—'}\n"
         f"  [bold]Started:[/bold]  {data.get('started_at')}\n"
-        f"  [bold]TTY:[/bold]      {data.get('tty')}"
+        f"  [bold]{cursor_label}:[/bold]      {cursor.removeprefix('key-')}"
         f"{filter_lines}"
     )
 
@@ -51,6 +76,7 @@ def run_session_start(
     project: str | None = None,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
+    session_key: str | None = None,
     output_json: bool = False,
 ) -> None:
     try:
@@ -60,46 +86,60 @@ def run_session_start(
             project=project,
             include_domains=include_domains,
             exclude_domains=exclude_domains,
+            session_key=session_key,
         )
     except RuntimeError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        if output_json:
+            console.print_json(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
     except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        if output_json:
+            console.print_json(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(2)
 
     if output_json:
         console.print_json(json.dumps({"action": "session_start", "session": data}))
         return
 
-    info = (
-        "[bold green]Session started[/bold green]\n\n"
-        f"{_info_block(data)}\n\n"
-        "Subsequent `hafiz observe` / `note` / `capture` in this terminal will\n"
-        "auto-tag with this session + task unless overridden per-call."
-    )
+    key = data.get("tty") or ""
+    if key.startswith("key-"):
+        follow_on = (
+            f"Subsequent calls that pass --session-key or export\n"
+            f"  {SESSION_KEY_ENV}={key.removeprefix('key-')}\n"
+            "will auto-tag with this session + task unless overridden per-call."
+        )
+    else:
+        follow_on = (
+            "Subsequent `hafiz observe` / `note` / `capture` in this terminal will\n"
+            "auto-tag with this session + task unless overridden per-call."
+        )
+    info = f"[bold green]Session started[/bold green]\n\n{_info_block(data)}\n\n{follow_on}"
     console.print(Panel(info, border_style="cyan"))
 
 
-def run_session_show(output_json: bool = False) -> None:
-    data = current_session()
+def run_session_show(*, session_key: str | None = None, output_json: bool = False) -> None:
+    data = current_session(session_key)
     if output_json:
         console.print_json(json.dumps({"session": data}))
         return
     if not data:
-        console.print("[dim]No active session for this terminal.[/dim]")
+        console.print(_no_session_hint())
         return
     info = f"[bold]Active session[/bold]\n\n{_info_block(data)}"
     console.print(Panel(info, border_style="cyan"))
 
 
-def run_session_end(output_json: bool = False) -> None:
-    data = end_session()
+def run_session_end(*, session_key: str | None = None, output_json: bool = False) -> None:
+    data = end_session(session_key)
     if output_json:
         console.print_json(json.dumps({"action": "session_end", "session": data}))
         return
     if not data:
-        console.print("[dim]No active session for this terminal.[/dim]")
+        console.print(_no_session_hint())
         return
     console.print(
         f"[bold green]Session ended:[/bold green] "

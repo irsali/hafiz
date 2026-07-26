@@ -46,6 +46,7 @@ def run_capture(
     tags: list[str] | None = None,
     session: str | None = None,
     task: str | None = None,
+    session_key: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Entry point for the ``hafiz capture`` command."""
@@ -55,7 +56,7 @@ def run_capture(
         raise SystemExit(1)
 
     resolved_session_id, resolved_task = resolve_session_tag(
-        session_override=session, task_override=task
+        session_override=session, task_override=task, session_key=session_key
     )
 
     async def _run():

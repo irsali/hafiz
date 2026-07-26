@@ -83,6 +83,7 @@ def run_observe(
     expires: str | None = None,
     session: str | None = None,
     task: str | None = None,
+    session_key: str | None = None,
     supersedes: str | None = None,
     derived_from: str | None = None,
     allow_duplicate: bool = False,
@@ -98,7 +99,7 @@ def run_observe(
     """
     valid_until = _compute_valid_until(expires_in, expires)
     resolved_session_id, resolved_task = resolve_session_tag(
-        session_override=session, task_override=task
+        session_override=session, task_override=task, session_key=session_key
     )
     derived_ids = _parse_uuid_list(derived_from)
 
@@ -263,6 +264,7 @@ def run_note(
     expires: str | None = None,
     session: str | None = None,
     task: str | None = None,
+    session_key: str | None = None,
     supersedes: str | None = None,
     derived_from: str | None = None,
     output_json: bool = False,
@@ -283,6 +285,7 @@ def run_note(
         expires=expires,
         session=session,
         task=task,
+        session_key=session_key,
         supersedes=supersedes,
         derived_from=derived_from,
         detect_duplicates=False,

@@ -717,9 +717,18 @@ def graph_stats(
 
 session_app = typer.Typer(
     name="session",
-    help="Per-TTY session state — tags subsequent observations and captures.",
+    help=(
+        "Session state — tags subsequent observations and captures. "
+        "Keyed by TTY for humans; use --session-key (or $HAFIZ_SESSION_KEY) "
+        "from hooks, scripts, and CI, which have no terminal."
+    ),
 )
 app.add_typer(session_app)
+
+_SESSION_KEY_HELP = (
+    "Identify the session cursor explicitly instead of by TTY — required from "
+    "hooks / CI / any non-interactive caller. Defaults to $HAFIZ_SESSION_KEY."
+)
 
 
 @session_app.command("start")
@@ -733,21 +742,22 @@ def session_start(
         None,
         "--include-domain",
         help=(
-            "Default data-domain include filter for `query`/`context` in this "
-            "terminal (comma-separated, e.g. 'code,doc')."
+            "Default data-domain include filter for `query`/`context` on this "
+            "cursor (comma-separated, e.g. 'code,doc')."
         ),
     ),
     exclude_domain: str | None = typer.Option(
         None,
         "--exclude-domain",
         help=(
-            "Default data-domain exclude filter for `query`/`context` in this "
-            "terminal (comma-separated)."
+            "Default data-domain exclude filter for `query`/`context` on this "
+            "cursor (comma-separated)."
         ),
     ),
+    session_key: str | None = typer.Option(None, "--session-key", help=_SESSION_KEY_HELP),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """Start a named session for this terminal."""
+    """Start a named session for this terminal (or for --session-key)."""
     from hafiz.commands.session import run_session_start
 
     run_session_start(
@@ -756,28 +766,31 @@ def session_start(
         project=project,
         include_domains=_parse_domain_csv(include_domain),
         exclude_domains=_parse_domain_csv(exclude_domain),
+        session_key=session_key,
         output_json=json_output,
     )
 
 
 @session_app.command("end")
 def session_end(
+    session_key: str | None = typer.Option(None, "--session-key", help=_SESSION_KEY_HELP),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """End the active session for this terminal."""
+    """End the active session for this terminal (or for --session-key)."""
     from hafiz.commands.session import run_session_end
 
-    run_session_end(output_json=json_output)
+    run_session_end(session_key=session_key, output_json=json_output)
 
 
 @session_app.command("show")
 def session_show(
+    session_key: str | None = typer.Option(None, "--session-key", help=_SESSION_KEY_HELP),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """Show the active session for this terminal."""
+    """Show the active session for this terminal (or for --session-key)."""
     from hafiz.commands.session import run_session_show
 
-    run_session_show(output_json=json_output)
+    run_session_show(session_key=session_key, output_json=json_output)
 
 
 @session_app.command("list")
@@ -850,6 +863,7 @@ def observe(
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
+    session_key: str | None = typer.Option(None, "--session-key", help=_SESSION_KEY_HELP),
     supersedes: str | None = typer.Option(
         None,
         "--supersedes",
@@ -894,6 +908,7 @@ def observe(
         expires=expires,
         session=session,
         task=task,
+        session_key=session_key,
         supersedes=supersedes,
         derived_from=derived_from,
         allow_duplicate=allow_duplicate,
@@ -961,6 +976,7 @@ def capture(
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
+    session_key: str | None = typer.Option(None, "--session-key", help=_SESSION_KEY_HELP),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Ingest a transcript / multi-page dump as searchable transcript chunks."""
@@ -976,6 +992,7 @@ def capture(
         tags=tag_list,
         session=session,
         task=task,
+        session_key=session_key,
         output_json=json_output,
     )
 
@@ -1012,6 +1029,7 @@ def note(
         "--task",
         help="Task label to tag (overrides any active `hafiz session`).",
     ),
+    session_key: str | None = typer.Option(None, "--session-key", help=_SESSION_KEY_HELP),
     supersedes: str | None = typer.Option(
         None,
         "--supersedes",
@@ -1038,6 +1056,7 @@ def note(
         expires=expires,
         session=session,
         task=task,
+        session_key=session_key,
         supersedes=supersedes,
         derived_from=derived_from,
         output_json=json_output,
