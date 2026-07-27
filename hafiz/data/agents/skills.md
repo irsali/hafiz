@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 10 -->
-# Hafiz — Workspace Intelligence (v10)
+<!-- SKILLS_VERSION: 11 -->
+# Hafiz — Workspace Intelligence (v11)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -167,6 +167,34 @@ tell reranked output from vector output.
 with `{"ok": false, "error": ...}` on blank input. If you build a query by
 interpolating a variable, check the exit code — an unset variable is a bug in
 your hook, and hafiz will no longer paper over it with confidently-scored noise.
+
+**`--format md` on an empty result set prints nothing at all** — no placeholder
+line. Under a floor, "no rows" is the ordinary answer to an off-topic prompt, so
+a per-task hook can pipe the output straight into context without filtering it.
+
+**Wiring a per-task recall hook.** The whole thing is one command; everything
+that used to need a wrapper script — relevance floor, hit gate, compact
+rendering, dedup of byte-identical rows — is in the CLI now:
+
+```bash
+# Read the harness's prompt from stdin, not from an env var, and only recall
+# for prompts substantial enough to have a topic.
+PROMPT=$(jq -r '.prompt // empty')
+[ ${#PROMPT} -lt 12 ] && exit 0
+hafiz query "$PROMPT" --observations --limit 20 --min-score 0.05 --format md \
+  2>/dev/null || true
+```
+
+Two failure modes worth naming, because both were observed in the wild for 3.5
+weeks without anyone noticing:
+
+- **Confirm your harness actually sets the variable you interpolate.** A hook
+  built on `hafiz context "$CLAUDE_USER_PROMPT"` never delivered once across
+  1,647 prompts — the harness passes the prompt as JSON on stdin and that name
+  is unset. hafiz now exits `2` on the resulting blank query instead of
+  answering it, but a hook ending in `|| true` still swallows that. Check it.
+- **Never let recall fail a turn.** Time it out, swallow errors, exit 0. A
+  memory layer that can break the conversation gets removed.
 
 ## Core Commands
 

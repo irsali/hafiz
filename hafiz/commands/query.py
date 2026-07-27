@@ -95,8 +95,7 @@ def _run_query(
 
     if output_format is OutputFormat.MD:
         if not results and not transcript_hits:
-            print(f"_No results matched “{text}”._")
-            return
+            return  # silence, not a placeholder — see the note in observe.py
         print(f"## Results: {text}\n")
         for r in results:
             print(chunk_md(r, with_ids=with_ids))

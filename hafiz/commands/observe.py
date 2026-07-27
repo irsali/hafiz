@@ -442,7 +442,11 @@ def run_recall(
 
     if output_format is OutputFormat.MD:
         if not results:
-            print(f"_No annotations matched “{query}”._")
+            # Silence, not a placeholder. `md` exists to be injected into a
+            # prompt, and a hook shouldn't have to filter out hafiz saying
+            # nothing — under a floor, "no rows" is the not-relevant signal and
+            # it fires on every off-topic prompt. Callers wanting the count have
+            # `json` / `compact`.
             return
         print(f"## Recall: {query}\n")
         for r in results:

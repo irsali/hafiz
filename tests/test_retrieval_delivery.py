@@ -195,6 +195,25 @@ def test_error_payload_uses_the_project_standard_shape():
     assert error_payload("boom") == {"ok": False, "error": "boom"}
 
 
+def test_md_emits_nothing_when_a_floor_filters_everything_out(capsys, monkeypatch):
+    """`md` is for prompt injection, so empty must mean *empty*.
+
+    With a relevance floor, "no rows" is the normal answer to an off-topic
+    prompt — it fires on most prompts a per-task hook sees. A placeholder line
+    there is text the agent pays for on every turn and a string every integrator
+    has to filter, so the format stays silent instead.
+    """
+    from hafiz.commands import observe
+
+    async def _none(*a, **kw):
+        return []
+
+    monkeypatch.setattr("hafiz.core.annotations.search_annotations", _none)
+    monkeypatch.setattr(observe, "close_engine", _none)
+    observe.run_recall("nothing on topic here", output_format=OutputFormat.MD)
+    assert capsys.readouterr().out == ""
+
+
 def test_annotation_compact_drops_metadata_keeps_meaning():
     row = annotation_compact(_ann("we chose Postgres", 0.61, 0.88))
     assert row == {
