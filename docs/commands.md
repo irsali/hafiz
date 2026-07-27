@@ -351,7 +351,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 |---------|---------|:-----:|-----------|-------------|
 | `observe "<text>"` | Embed and store a fact / decision / learning / pattern / warning / note | Embed | `--json` | rich panel |
 | `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips *near*-duplicate detection; still collapses byte-identical writes) | Embed | `--json` | rich panel |
-| `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations for manual resolution | Embed | `--json` | rich panels |
+| `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations and propose a resolution to run | Embed | `--json` | rich panels |
 | `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables · `--format mermaid` |
 | `distill` | Surface recent notes as promotable candidates (scanner, not promoter) | — | `--json` | rich tables |
 
@@ -370,7 +370,11 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 - **Near-duplicate detection** (on `observe`, not `note`): before writing, Hafiz cosine-compares the new content against **live** annotations of the same kind+project and surfaces any at/above `[dedup] threshold` (default 0.88). Hafiz detects *similarity*, never *contradiction* — the supersede/refine/distinct call stays with the caller. Unlike the exact check, this one *is* governed by `strict`, because only the author can judge whether a similar row refines, contradicts, or merely resembles the old one.
   - **Surface-only** (default): the write always succeeds; matches ride back in `observe --json` as `near_duplicates: [{id, content, kind, score}]` and as a yellow hint in rich output. Skipped when `--supersedes` is set.
   - **Strict** (`[dedup] strict = true`): a match aborts the write — exit `2`, `{"ok": false, "near_duplicates": [...]}` — unless `--supersedes <id>` or `--allow-duplicate` is given.
-  - **`reconcile`** is the after-the-fact backstop: `--project`, `--type`, `--threshold`, `--limit`, `--json`. JSON shape: `{action, clusters: [{kind, project, members: [{id, content, score}]}], total}`. Never mutates.
+  - **`reconcile`** is the after-the-fact backstop: `--project`, `--type`, `--threshold`, `--limit`, `--json`. Never mutates — it proposes, and prints the commands you run yourself.
+    - **Scans the whole store by default.** `--limit` caps the scan (newest first); `0` means all. A cap that bites sets `truncated: true` — a partial sweep is never silent. The old `--limit 500` default reported 34 clusters on a 1,099-row store where a full sweep finds 65, with nothing in the output to say so.
+    - **Every cluster carries a proposal.** One member is the `primary`; the rest are retired. `suggested_action` says what happens to the primary: `retire` (it is the newest row and no shorter than the ones it replaces — it survives untouched) or `merge` (the newest row is under 80% of the longest, so keeping only it would drop text; the primary becomes the *longest* row and you write text that supersedes it). `commands` is the ordered, runnable resolution — at most one `observe`, since `--supersedes` takes a single id.
+    - JSON shape: `{action, scanned, total_live, truncated, threshold, total, clusters: [{kind, project, suggested_action, primary_id, commands: [...], members: [{id, content, score, source, valid_from, chars, primary}]}]}`.
+    - The count also rides on `doctor` (and so on `status --diagnose`) as **Knowledge base deduplicated**, because a read-only command nobody remembers to run surfaces nothing. It is not on `status`: with no vector index on `annotations.embedding` the count is a quadratic scan (~310 ms at 1,099 rows), and `status` is on the hot path.
 - **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
 
 ### Captures (transcripts / multi-page dumps)

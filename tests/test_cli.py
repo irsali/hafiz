@@ -542,6 +542,108 @@ def test_observe_surfaces_near_duplicates_and_reconcile_clusters_them():
         assert first["annotation"]["id"] in clustered
         assert second["annotation"]["id"] in clustered
         assert distinct["annotation"]["id"] not in clustered
+
+        # Coverage is reported, and a full sweep is the default.
+        assert report["scanned"] == report["total_live"] == 3
+        assert report["truncated"] is False
+
+        # Every cluster carries a runnable proposal that spares its primary.
+        cluster = report["clusters"][0]
+        assert cluster["suggested_action"] in {"retire", "merge"}
+        assert cluster["primary_id"] in {m["id"] for m in cluster["members"] if m["primary"]}
+        assert cluster["commands"]
+        for other in (m for m in cluster["members"] if not m["primary"]):
+            assert f"hafiz forget {other['id']} --annotation" in cluster["commands"]
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
+def test_reconcile_reports_a_truncated_scan_instead_of_hiding_it():
+    """A ``--limit`` that bites must be visible in the output.
+
+    The previous default capped the sweep at the newest 500 live annotations
+    and reported the clusters it found with nothing to indicate it had looked
+    at part of the store — 34 clusters on a deployment where a full sweep finds
+    65. An undercount that reads as a complete answer is worse than a slow one.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    proj = "_dedup_coverage_test"
+    written_ids: list[str] = []
+    try:
+        for i in range(3):
+            res = runner.invoke(
+                app,
+                ["observe", f"COVERAGE row {i}", "--type", "fact", "--project", proj, "--json"],
+            )
+            assert res.exit_code == 0, res.output
+            written_ids.append(json.loads(res.output)["annotation"]["id"])
+
+        res = runner.invoke(app, ["reconcile", "--project", proj, "--limit", "2", "--json"])
+        assert res.exit_code == 0, res.output
+        capped = json.loads(res.output)
+        assert capped["scanned"] == 2
+        assert capped["total_live"] == 3
+        assert capped["truncated"] is True
+
+        res = runner.invoke(app, ["reconcile", "--project", proj, "--limit", "0", "--json"])
+        assert res.exit_code == 0, res.output
+        full = json.loads(res.output)
+        assert full["scanned"] == full["total_live"] == 3
+        assert full["truncated"] is False
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
+def test_doctor_counts_near_duplicate_annotations():
+    """Merge pressure has to surface somewhere nobody has to remember to look.
+
+    ``reconcile`` is read-only and opt-in, so drift accumulated unseen — 146
+    rows across 65 clusters on a real store. The count rides on ``doctor``
+    (reachable as ``status --diagnose``) rather than ``status``, because it is a
+    quadratic scan with no vector index behind it.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    async def _clustered() -> int:
+        """Close the engine afterwards: the next ``runner.invoke`` opens its own
+        loop, and a pooled connection bound to this one fails there."""
+        from hafiz.core.annotations import count_clustered_annotations
+        from hafiz.core.database import close_engine
+
+        try:
+            return await count_clustered_annotations()
+        finally:
+            await close_engine()
+
+    proj = "_dedup_doctor_test"
+    written_ids: list[str] = []
+    try:
+        baseline = asyncio.run(_clustered())
+        for text in (
+            "DOCTORDUP: refresh tokens go in httponly cookies for web clients",
+            "DOCTORDUP: refresh tokens belong in httponly cookies for web clients",
+        ):
+            res = runner.invoke(
+                app, ["observe", text, "--type", "decision", "--project", proj, "--json"]
+            )
+            assert res.exit_code == 0, res.output
+            written_ids.append(json.loads(res.output)["annotation"]["id"])
+
+        assert asyncio.run(_clustered()) >= baseline + 2
+
+        res = runner.invoke(app, ["doctor", "--json"])
+        assert res.exit_code in (0, 1), res.output
+        names = {c["name"] for c in json.loads(res.output)["checks"]}
+        assert "Knowledge base deduplicated" in names
     finally:
         for ann_id in written_ids:
             runner.invoke(app, ["forget", ann_id, "--annotation"])

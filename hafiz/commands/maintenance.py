@@ -990,6 +990,31 @@ def run_doctor(
             except Exception as e:
                 _check("Every file has a project", False, detail=str(e)[:120])
 
+            # 7d. Merge pressure. Write-time detection surfaces a near-duplicate
+            # to the caller who is writing it; nothing accumulates that signal,
+            # so drift that slipped through (bulk writes, writes predating
+            # detection) only becomes visible if someone thinks to run
+            # `reconcile`. Nobody does — 146 rows across 65 clusters had piled
+            # up on a real deployment. Reported here rather than in `status`
+            # because the count is a quadratic scan with no vector index behind
+            # it (~310 ms at 1,099 rows), and `status` is on the hot path.
+            try:
+                from hafiz.core.annotations import count_clustered_annotations
+
+                clustered = await count_clustered_annotations()
+                _check(
+                    "Knowledge base deduplicated",
+                    clustered == 0,
+                    detail=(
+                        "no near-duplicate annotations"
+                        if clustered == 0
+                        else f"{clustered} live annotation(s) have a near-duplicate sibling"
+                    ),
+                    fix="Review them with: hafiz reconcile" if clustered else "",
+                )
+            except Exception as e:
+                _check("Knowledge base deduplicated", False, detail=str(e)[:120])
+
         finally:
             await close_engine()
 

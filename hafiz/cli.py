@@ -988,14 +988,20 @@ def reconcile(
         "--threshold",
         help="Cosine similarity to treat as a duplicate (default: [dedup] threshold).",
     ),
-    limit: int = typer.Option(500, "--limit", help="Max live annotations to scan."),
+    limit: int = typer.Option(
+        0, "--limit", help="Max live annotations to scan, newest first (0 = all)."
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Find clusters of near-duplicate live annotations (read-only sweep).
 
     The after-the-fact backstop to write-time detection: surfaces drift that
-    slipped through bulk writes or predates detection. Never mutates — resolve
-    each cluster with ``observe --supersedes`` or ``forget <id> --annotation``.
+    slipped through bulk writes or predates detection. Never mutates — it
+    proposes a keeper and prints the command to resolve each cluster, which you
+    run yourself (``forget <id> --annotation``, or ``observe --supersedes``).
+
+    Scans the whole store by default; a ``--limit`` that bites is reported as
+    ``truncated`` rather than quietly shrinking the cluster count.
     """
     from hafiz.commands.reconcile import run_reconcile
 
@@ -1003,7 +1009,7 @@ def reconcile(
         project=project,
         kind=kind,
         threshold=threshold,
-        limit=limit,
+        limit=limit or None,
         output_json=json_output,
     )
 

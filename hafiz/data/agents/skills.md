@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
 <!-- SKILLS_VERSION: 12 -->
-# Hafiz — Workspace Intelligence (v12)
+# Hafiz — Workspace Intelligence (v13)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -253,7 +253,7 @@ with `[telemetry] retrieval = false`. Query text stays on the machine.
 | `hafiz note "<text>" --source agent:<name>` | Capture a raw thought — anything below decision-grade |
 | `hafiz journal --since 7d --json` | "What did I record recently?" — annotations grouped by day |
 | `hafiz distill --since 7d --json` | Promotable notes + transcript turns with a ready observe scaffold |
-| `hafiz reconcile --json` | Read-only sweep — clusters of near-duplicate live annotations to supersede/retire |
+| `hafiz reconcile --json` | Read-only sweep — clusters near-duplicate live annotations and emits the supersede/retire commands |
 | `hafiz import claude-code --project <name>` | Post-hoc importer for Claude Code session JSONL (idempotent) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
@@ -312,7 +312,23 @@ The reasoning loop:
    default — it never blocks — and is skipped for `note` and when you
    already passed `--supersedes`. To sweep for drift that predates a write
    or slipped through bulk imports, run `hafiz reconcile` (read-only;
-   clusters near-duplicate live annotations so you can supersede/retire).
+   clusters near-duplicate live annotations and hands you the commands).
+
+   **`reconcile` proposes; you run it.** Each cluster names one `primary`
+   member and retires the rest, and `suggested_action` says what happens to
+   the primary: `retire` (it's the newest row and no shorter than the ones it
+   replaces, so it survives as written) or `merge` (the newest row is under
+   80% of the longest — keeping only it would drop text, so the primary
+   becomes the *longest* row and you write the merged text). `commands` is
+   the ordered resolution, ready to run. It sweeps the **whole store** by
+   default; if you pass `--limit` and it bites, the response says
+   `truncated: true` rather than quietly reporting fewer clusters.
+
+   **Treat every proposal as a suggestion, not a verdict.** Hafiz measures
+   *similarity*, never *contradiction*, and near-duplicates are not always
+   restatements — a real 91%-similar pair held a test account's email in one
+   row and its password in the other. Read both rows before running anything;
+   that is why lengths and dates ride along in the output.
 
    **Byte-identical writes are handled separately and unconditionally.** If
    `content` + `kind` + `source` + `project` all match a live row, `observe`
@@ -612,7 +628,7 @@ workstation is a no-op, not a hazard.
 | `hafiz note "<text>"` | Low-bar capture — `kind="note"`. Never gated: a byte-identical repeat returns the existing row with `deduped: true` and exit 0. | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
-| `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations for manual supersede/retire | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
+| `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations and emit the supersede/retire commands to run. Scans everything by default; `--limit 0` = all, and a cap that bites reports `truncated: true`. | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
 | `hafiz session start "<name>"` | Named session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` on the same cursor. Keyed by TTY, or by `--session-key` / `$HAFIZ_SESSION_KEY` when there is no terminal (hooks, CI). | `--task`, `--project`, `--session-key`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz session show` / `end` | Inspect / clear | `--session-key`, `--json` |
 

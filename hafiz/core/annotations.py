@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from hafiz.core import telemetry
 from hafiz.core.database import (
@@ -516,13 +516,77 @@ async def store_annotation_checked(
     return StoreResult(annotation=ann, near_duplicates=near_duplicates)
 
 
+#: A newest row materially shorter than a sibling it would replace is not a safe
+#: plain retire — the longer row probably carries a qualifier (a scope limit, an
+#: excluded case) that the restatement dropped. Below this ratio the proposal
+#: downgrades to a merge the operator has to write.
+_MERGE_IF_SHORTER_THAN = 0.8
+
+
+@dataclass
+class ClusterMember:
+    """One annotation inside a near-duplicate cluster.
+
+    Carries what an operator needs to overrule the suggestion — how long it is
+    and when it was written — not just the text.
+    """
+
+    id: str
+    content: str
+    kind: str
+    score: float
+    source: str | None
+    valid_from: datetime
+    primary: bool
+
+
 @dataclass
 class DuplicateCluster:
-    """A group of mutually near-duplicate live annotations."""
+    """A group of mutually near-duplicate live annotations, with a proposal.
+
+    Every proposal has the same shape — one row is ``primary``, the rest are
+    retired — and ``action`` says what happens to the primary:
+
+    * ``"retire"`` — the primary is the newest row and no shorter than the ones
+      it replaces, so it survives untouched and the others are simply dropped.
+    * ``"merge"`` — the newest row is materially shorter than a sibling, so the
+      primary is instead the *longest* row and the operator has to write merged
+      text that supersedes it. Retiring the longer row against a shorter
+      restatement would silently drop whatever only it says.
+    """
 
     kind: str
     project: str | None
-    members: list[NearDuplicate]
+    members: list[ClusterMember]
+    action: str
+
+    @property
+    def primary(self) -> ClusterMember:
+        """The row the proposal is built around — survivor, or supersede target."""
+        return next(m for m in self.members if m.primary)
+
+    @property
+    def others(self) -> list[ClusterMember]:
+        """The rows the proposal retires."""
+        return [m for m in self.members if not m.primary]
+
+
+@dataclass
+class ReconcileReport:
+    """Clusters plus the coverage they were derived from.
+
+    Coverage is part of the result, not a footnote: the previous version
+    scanned the newest ``limit=500`` rows and reported the clusters it found as
+    if they were the whole store. On a 1,099-row deployment that reported 34
+    clusters where a full sweep finds 65 — an undercount with nothing in the
+    output to suggest one.
+    """
+
+    clusters: list[DuplicateCluster]
+    scanned: int
+    total_live: int
+    truncated: bool
+    threshold: float
 
 
 async def reconcile_duplicates(
@@ -530,19 +594,25 @@ async def reconcile_duplicates(
     project: str | None = None,
     kind: str | None = None,
     threshold: float | None = None,
-    limit: int = 500,
-) -> list[DuplicateCluster]:
+    limit: int | None = None,
+) -> ReconcileReport:
     """Find clusters of near-duplicate *live* annotations — a read-only sweep.
 
     The after-the-fact backstop to write-time detection: surfaces drift that
     slipped through (writes made before detection existed, or via bulk paths).
-    Resolution stays explicit and manual — this command never mutates; the
-    operator picks which row to ``observe --supersedes`` or ``forget``.
+    Resolution stays explicit and manual — this function never mutates; it
+    proposes a keeper, and the operator runs ``forget --annotation`` or
+    ``observe --supersedes``.
 
     Clusters are built by single-linkage: each annotation is compared to the
     others of its kind/project via cosine similarity; rows at/above
     ``threshold`` are linked transitively into one cluster. ``threshold``
     defaults to the configured ``dedup.threshold``.
+
+    ``limit`` caps how many live annotations are scanned, newest first;
+    ``None`` (the default) scans every one of them and is what makes the
+    reported cluster count trustworthy. When a cap does bite, the report says
+    so via ``truncated`` — a partial sweep is never silent.
     """
     from hafiz.core.config import load_settings
 
@@ -550,21 +620,25 @@ async def reconcile_duplicates(
     thr = cfg.threshold if threshold is None else threshold
 
     now = datetime.now(UTC)
+    live = (
+        (Annotation.embedding.isnot(None)),
+        (Annotation.valid_from <= now),
+        ((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now)),
+    )
     session_factory = get_session_factory()
     async with session_factory() as session:
-        stmt = (
-            select(Annotation)
-            .where(Annotation.embedding.isnot(None))
-            .where(Annotation.valid_from <= now)
-            .where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
-            .order_by(Annotation.valid_from.desc())
-            .limit(limit)
-        )
+        stmt = select(Annotation).where(*live).order_by(Annotation.valid_from.desc())
+        count_stmt = select(func.count()).select_from(Annotation).where(*live)
         if project:
             stmt = stmt.where(Annotation.project == project)
+            count_stmt = count_stmt.where(Annotation.project == project)
         if kind:
             stmt = stmt.where(Annotation.kind == kind)
+            count_stmt = count_stmt.where(Annotation.kind == kind)
+        if limit:
+            stmt = stmt.limit(limit)
         rows = list((await session.execute(stmt)).scalars().all())
+        total_live = (await session.execute(count_stmt)).scalar() or 0
 
     # Group by (kind, project), then single-linkage cluster within each group
     # using cosine similarity over the stored embeddings (no re-embedding).
@@ -578,61 +652,135 @@ async def reconcile_duplicates(
     for (grp_kind, grp_project), anns in groups.items():
         if len(anns) < 2:
             continue
-        n = len(anns)
-        parent = list(range(n))
-
-        def find(x: int, _parent: list[int]) -> int:
-            while _parent[x] != x:
-                _parent[x] = _parent[_parent[x]]
-                x = _parent[x]
-            return x
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                sim = _cosine(anns[i].embedding, anns[j].embedding)
-                if sim >= thr:
-                    ri, rj = find(i, parent), find(j, parent)
-                    if ri != rj:
-                        parent[ri] = rj
-
-        members_by_root: dict[int, list[int]] = defaultdict(list)
-        for idx in range(n):
-            members_by_root[find(idx, parent)].append(idx)
-
-        for idxs in members_by_root.values():
+        # One normalized matrix per group, so the O(n²) comparison happens in
+        # BLAS rather than a Python double loop. At 1,099 live rows the pure
+        # Python version took ~10s, which is what made scanning everything look
+        # unaffordable and the 500-row cap look reasonable.
+        sim = _similarity_matrix([a.embedding for a in anns])
+        for idxs in _single_linkage(sim, thr):
             if len(idxs) < 2:
                 continue
-            # Score each member by its best similarity to any sibling, so the
-            # display can lead with the tightest match.
-            members: list[NearDuplicate] = []
-            for idx in idxs:
-                best = max(
-                    (_cosine(anns[idx].embedding, anns[k].embedding) for k in idxs if k != idx),
-                    default=0.0,
-                )
-                members.append(
-                    NearDuplicate(
-                        id=str(anns[idx].id),
-                        content=anns[idx].content,
-                        kind=anns[idx].kind,
-                        score=round(float(best), 4),
-                    )
-                )
-            members.sort(key=lambda m: m.score, reverse=True)
-            clusters.append(DuplicateCluster(kind=grp_kind, project=grp_project, members=members))
+            clusters.append(_build_cluster(grp_kind, grp_project, anns, idxs, sim))
 
     clusters.sort(key=lambda c: max(m.score for m in c.members), reverse=True)
-    return clusters
+    return ReconcileReport(
+        clusters=clusters,
+        scanned=len(rows),
+        total_live=total_live,
+        truncated=len(rows) < total_live,
+        threshold=thr,
+    )
 
 
-def _cosine(a, b) -> float:
-    """Cosine similarity between two embedding vectors (lists/arrays)."""
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
+def _similarity_matrix(embeddings: list):
+    """Pairwise cosine similarity for a group of embeddings."""
+    import numpy as np
+
+    mat = np.asarray(embeddings, dtype=np.float32)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0  # a zero vector is similar to nothing, not everything
+    unit = mat / norms
+    return unit @ unit.T
+
+
+def _single_linkage(sim, threshold: float) -> list[list[int]]:
+    """Group indices transitively linked by ``sim >= threshold``."""
+    n = sim.shape[0]
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if sim[i, j] >= threshold:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    from collections import defaultdict
+
+    groups: dict[int, list[int]] = defaultdict(list)
+    for idx in range(n):
+        groups[find(idx)].append(idx)
+    return list(groups.values())
+
+
+def _build_cluster(
+    kind: str, project: str | None, anns: list, idxs: list[int], sim
+) -> DuplicateCluster:
+    """Assemble one cluster and propose which row the resolution is built around.
+
+    Default to the newest row: a near-duplicate written later is usually the
+    same insight restated, and the later statement is the one currently
+    believed. But when that newest row is materially *shorter* than a sibling,
+    keeping it would drop text, so the primary becomes the longest row and the
+    action becomes ``merge`` — the operator writes text that supersedes it.
+
+    Either way this is a *suggestion*. Every member ships with its length and
+    date so the operator can overrule it.
+    """
+    newest = max(idxs, key=lambda i: anns[i].valid_from)
+    longest = max(idxs, key=lambda i: len(anns[i].content))
+    shrinks = len(anns[newest].content) < _MERGE_IF_SHORTER_THAN * len(anns[longest].content)
+    action = "merge" if shrinks else "retire"
+    primary = longest if shrinks else newest
+
+    members = [
+        ClusterMember(
+            id=str(anns[i].id),
+            content=anns[i].content,
+            kind=anns[i].kind,
+            # Best similarity to any sibling, so the display leads with the
+            # tightest match rather than an arbitrary member.
+            score=round(float(max(sim[i, k] for k in idxs if k != i)), 4),
+            source=anns[i].source,
+            valid_from=anns[i].valid_from,
+            primary=(i == primary),
+        )
+        for i in idxs
+    ]
+    members.sort(key=lambda m: (not m.primary, -m.score))
+    return DuplicateCluster(kind=kind, project=project, members=members, action=action)
+
+
+async def count_clustered_annotations(threshold: float | None = None) -> int:
+    """How many live annotations have at least one near-duplicate sibling.
+
+    The cheap counterpart to :func:`reconcile_duplicates`, for health output
+    that only needs a number to act on. Runs entirely in Postgres — no
+    embeddings cross the wire — because the full sweep ships every vector to
+    Python and is far too slow to sit in a command anyone runs casually.
+
+    Still O(n²) distance computations: ``annotations.embedding`` carries no
+    vector index, so this is a sequential scan and it grows quadratically.
+    Measured at ~310 ms for 1,099 rows, which is why it belongs in ``doctor``
+    and not in ``status``.
+    """
+    from sqlalchemy import text
+
+    from hafiz.core.config import load_settings
+
+    thr = load_settings().dedup.threshold if threshold is None else threshold
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        return (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM annotations a "
+                    "WHERE a.valid_until IS NULL AND a.embedding IS NOT NULL "
+                    "AND EXISTS (SELECT 1 FROM annotations b "
+                    "  WHERE b.valid_until IS NULL AND b.embedding IS NOT NULL "
+                    "    AND b.id <> a.id AND b.kind = a.kind "
+                    "    AND b.project IS NOT DISTINCT FROM a.project "
+                    "    AND (1 - (a.embedding <=> b.embedding)) >= :thr)"
+                ),
+                {"thr": thr},
+            )
+        ).scalar() or 0
 
 
 async def search_annotations(
