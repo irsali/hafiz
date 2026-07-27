@@ -52,12 +52,24 @@ class _Row:
 
 @pytest.fixture
 def fake_search(monkeypatch):
-    """Drive ``vector_search`` off a fixed row list, no DB and no model."""
+    """Drive ``vector_search`` off a fixed row list, no DB and no model.
+
+    Telemetry is silenced too. It defaults on and uses the *real* session
+    factory, not the fake one below, so without this these tests wrote rows to
+    whatever DB was configured — and touching the real engine from inside a
+    faked session left a connection dirty, which surfaced several modules later
+    as "another operation is in progress" in an unrelated test.
+    """
     captured: dict = {}
 
     def _install(rows):
         async def _embed(_q):
             return [0.0] * 768
+
+        async def _no_telemetry(**_kw):
+            return None
+
+        monkeypatch.setattr("hafiz.core.telemetry.record_retrieval", _no_telemetry)
 
         class _Result:
             def all(self):

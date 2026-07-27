@@ -133,6 +133,33 @@ class IngestSettings(BaseModel):
     max_file_bytes: int = 2_097_152  # 2 MB
 
 
+class TelemetrySettings(BaseModel):
+    """Local-only record of what was retrieved, so the store can be evaluated.
+
+    Hafiz could not answer the most basic question about itself: which
+    annotations have ever been recalled, which surfaced and were useful, and
+    which have never come up once. Answering "is this earning its keep?" for a
+    3.5-week deployment required parsing 169 Claude Code transcripts, because
+    hafiz kept no record of its own reads. Every quality mechanism that might
+    grow from here — decaying dead knowledge, promoting proven knowledge,
+    noticing that recall quality regressed — needs data it wasn't collecting.
+
+    What's stored is a new *category* of data for this store: the query text is
+    what you were **looking for**, not what you concluded. It never leaves the
+    machine, and it inherits the source layer's guarantees — bounded retention,
+    reachable by ``forget``, included in ``export``. Set ``retrieval = false``
+    to record nothing.
+    """
+
+    retrieval: bool = True
+    # Matches the communications default. Long enough to see a month-over-month
+    # trend, short enough that a query log doesn't become a permanent archive.
+    retention_days: int = 90
+    # Queries below this length are navigational noise ("yes", "continue") and
+    # tell you nothing about what the store was asked for.
+    min_query_chars: int = 3
+
+
 class LLMSettings(BaseModel):
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-20250514"
@@ -182,6 +209,7 @@ class HafizSettings(BaseSettings):
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     graph: GraphSettings = Field(default_factory=GraphSettings)

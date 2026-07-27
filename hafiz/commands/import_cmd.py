@@ -66,8 +66,16 @@ def run_import_claude_code(
             # fires per-commit from a hook, and its output goes to /dev/null, so
             # a sweep there would be unattributable and unobservable.
             from hafiz.core.communications import tombstone_expired_communications
+            from hafiz.core.telemetry import tombstone_expired_retrievals
 
             sweep = await tombstone_expired_communications(dry_run=dry_run)
+            retr = await tombstone_expired_retrievals(dry_run=dry_run)
+            sweep = {
+                **sweep,
+                "matched": sweep["matched"] + retr["matched"],
+                "tombstoned": sweep["tombstoned"] + retr["tombstoned"],
+                "retrievals": retr,
+            }
             return result, sweep
         finally:
             await close_engine()

@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 11 -->
-# Hafiz — Workspace Intelligence (v11)
+<!-- SKILLS_VERSION: 12 -->
+# Hafiz — Workspace Intelligence (v12)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -23,7 +23,7 @@ side-by-side; agents must treat them differently.
 | Layer | Tables | Examples | Default visibility |
 |---|---|---|---|
 | **Knowledge** | `units` · `unit_revisions` · `embeddings` · `edges` · `annotations` · `files` · `commits` | code, docs, decisions, learnings, patterns, runbooks | surfaced by default |
-| **Source** | `sessions` · `communications` · `communication_messages` · `annotation_targets` | imported agent transcripts, future events | **hidden by default; opt-in via `hafiz recall` or `--include-transcripts`** |
+| **Source** | `sessions` · `communications` · `communication_messages` · `annotation_targets` · `retrievals` | imported agent transcripts, recorded searches, future events | **hidden by default; opt-in via `hafiz recall` or `--include-transcripts`** |
 
 **Rule of thumb:** the wisdom layer is primary. Source rows surface
 only when you explicitly ask for them. Don't dilute default queries
@@ -196,6 +196,42 @@ weeks without anyone noticing:
 - **Never let recall fail a turn.** Time it out, swallow errors, exit 0. A
   memory layer that can break the conversation gets removed.
 
+## Code and docs are not the same corpus
+
+`query --observations` searches the wisdom layer. Plain `query` searches the
+indexed units — and that index is **~89% documentation**, ~7% whole-file text,
+and only ~4% code. Two consequences:
+
+- **Don't dismiss the unit index as "the code index".** Prose questions
+  ("how does X decide which rules apply") land on the doc corpus, which is
+  exactly what grep can't reach from that wording.
+- **Do check the freshness block before trusting code results.** `query` output
+  carries `staleness` naming any project whose index trails its repo, with
+  `commits_behind` / `is_ancestor`. When it's non-empty, verify against the
+  working tree — and for the file you're actively editing, prefer reading the
+  file. Staleness concentrates exactly where the work is: on a measured index,
+  4.4% of files overall had changed since indexing, but 80.5% had in the one repo
+  under active development.
+
+`--include-domain code` / `--exclude-domain code` scope this deliberately.
+
+## Retrieval telemetry
+
+Every search is recorded locally (`retrievals` table) so the store can be
+evaluated: what's never recalled, what's recalled constantly, and what was asked
+for and **not found**. That last one is the useful one for you:
+
+```bash
+hafiz retrievals --since-days 7 --json
+```
+
+`unanswered` is a list of questions the store couldn't answer — i.e. a worklist
+of things to `observe`. If you see a topic there that you *do* now know the
+answer to, record it.
+
+Recording never fails a search, is bounded by retention, and is switchable off
+with `[telemetry] retrieval = false`. Query text stays on the machine.
+
 ## Core Commands
 
 | Command | When to use |
@@ -207,6 +243,7 @@ weeks without anyone noticing:
 | `hafiz query "<text>" --min-score 0.05 --format compact` | Same, with a relevance floor and the token-lean shape. `--format rich\|json\|compact\|md`; `--json` is an alias for `--format json` |
 | `hafiz query "<text>" --include-transcripts --json` | Add matching transcript turns to results, tagged ``layer="source"`` |
 | `hafiz query "<text>" --include-domain code --json` | Restrict to a data domain (``code``, ``doc``, ``chat``, …). Inverse: ``--exclude-domain``. Comma-separated for multiple. |
+| `hafiz retrievals --since-days 7 --json` | What the store was asked for and couldn't answer — a worklist of things to record |
 | `hafiz query "<topic>" --observations --type decision --json` | Search the wisdom layer (annotations: decisions, facts, learnings, patterns, warnings). *(Was `--recall`; the flag was renamed to end the collision with the command below. `--recall` still works as a hidden alias for one release, with a deprecation warning.)* |
 | `hafiz recall <session-or-comm-id>` | List ordered messages from a session/communication (source layer). Add ``--query "<text>"`` for similarity search across the session's turns. Use deliberately. *(`recall` is the source layer; `query --observations` is the wisdom layer — different jobs.)* |
 | `hafiz graph deps <name> --json` | What this unit depends on (outgoing edges) |
@@ -667,6 +704,7 @@ designed to enable it later.
 - `communications` — agent transcripts, chat threads. Idempotent by ``(agent, external_id)``. ``retention_until`` defaults to ``started_at + 90 days``.
 - `communication_messages` — append-only turns. ``content`` is canonical (NOT NULL); ``embedding`` is nullable and populated only when the message clears the selective-embed policy. ``seq`` is monotonic per-communication.
 - `annotation_targets` — polymorphic pivot. An annotation may cite units, other annotations, messages, communications, or sessions via ``target_kind`` + ``target_id`` + ``relation``.
+- `retrievals` — append-only record of every search: ``query_text``, ``result_ids``, ``n_results``, ``top_score``, ``reranked``, ``filters``. Retention-bounded like ``communications``; read it with ``hafiz retrievals``. Rows with ``n_results = 0`` are the store's blind spots.
 
 </details>
 

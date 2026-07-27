@@ -202,8 +202,11 @@ def run_status(*, output_json: bool = False) -> None:
             # runs on `import`, which stops firing exactly when it's needed. The
             # count is what makes an unenforced policy visible.
             from hafiz.core.communications import count_overdue_communications
+            from hafiz.core.telemetry import count_overdue_retrievals
 
-            overdue = await count_overdue_communications()
+            overdue_comms = await count_overdue_communications()
+            overdue_retr = await count_overdue_retrievals()
+            overdue = overdue_comms + overdue_retr
 
             stats = {
                 "files": files_count,
@@ -222,7 +225,11 @@ def run_status(*, output_json: bool = False) -> None:
                     p or "(none)": c for p, c in last_commit_per_project.items()
                 },
                 "staleness": staleness,
-                "retention": {"overdue": overdue},
+                "retention": {
+                    "overdue": overdue,
+                    "communications": overdue_comms,
+                    "retrievals": overdue_retr,
+                },
                 # A project-less ingest can't update a project's rows — `files`
                 # is unique on (project, path) — so it writes a parallel
                 # untagged copy that search then returns alongside the real one.
@@ -935,15 +942,16 @@ def run_doctor(
             # visibility, not the trigger, is what actually enforces it.
             try:
                 from hafiz.core.communications import count_overdue_communications
+                from hafiz.core.telemetry import count_overdue_retrievals
 
-                overdue = await count_overdue_communications()
+                overdue = await count_overdue_communications() + await count_overdue_retrievals()
                 _check(
                     "Retention enforced",
                     overdue == 0,
                     detail=(
-                        "no communications past retention"
+                        "no source-layer rows past retention"
                         if overdue == 0
-                        else f"{overdue} communication(s) past retention_until"
+                        else f"{overdue} source-layer row(s) past retention_until"
                     ),
                     fix="Run: hafiz forget --all-expired" if overdue else "",
                 )

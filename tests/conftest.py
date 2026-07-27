@@ -86,6 +86,7 @@ _DB_DEPENDENT = [
     "test_prune_untagged.py",
     "test_recall_and_transcripts.py",
     "test_retention_visibility.py",
+    "test_retrieval_telemetry.py",
     "test_rewrite_resilience.py",
     "test_search.py",
     "test_session_list_cli.py",

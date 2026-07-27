@@ -94,7 +94,7 @@ questions an operator or agent actually asks of `status`:
       "is_ancestor": true
     }
   },
-  "retention": {"overdue": 0},
+  "retention": {"overdue": 0, "communications": 0, "retrievals": 0},
   "untagged": {"files": 0}
 }
 ```
@@ -108,9 +108,10 @@ questions an operator or agent actually asks of `status`:
   there would be meaningless: `rev-list A..HEAD` on a missing A yields nothing,
   which reads as "up to date". All fields are `null` when the repo can't be
   located — `status` must still print when something is already wrong.
-- `retention.overdue` counts communications past `retention_until` that haven't
-  been tombstoned. The sweep runs on `import`; this is how you see the backlog
-  when imports have stopped. Clear it with `hafiz forget --all-expired`.
+- `retention.overdue` counts **source-layer** rows past `retention_until` that
+  haven't been tombstoned, summed across `communications` and `retrievals` and
+  also broken out per table. The sweep runs on `import`; this is how you see the
+  backlog when imports have stopped. Clear it with `hafiz forget --all-expired`.
 - `untagged.files` counts live `files` rows with `project IS NULL` — the shadow
   index a project-less ingest builds (see `prune --untagged`). Non-zero means
   search is returning some content twice. `doctor` carries the same check as
@@ -463,9 +464,34 @@ would be unattributable and unobservable.
 An import-bound trigger is not sufficient on its own — it stops firing exactly
 when it's needed, since retention keeps ticking after imports stop. **Visibility
 is the enforcement mechanism**: the overdue count is a first-class field on
-`status --json` (`retention.overdue`) and a `doctor` check. Sweep manually with
-`hafiz forget --all-expired`. Sweeps are soft tombstones (`valid_until = now`);
-rows survive for audit, and `--hard` remains explicit and per-target.
+`status --json` (`retention.overdue`, broken down into `communications` and
+`retrievals`) and a `doctor` check. Sweep manually with `hafiz forget
+--all-expired`, which covers **both** source-layer tables — a retention
+guarantee that reaches only part of the layer isn't one. Sweeps are soft
+tombstones (`valid_until = now`); rows survive for audit, and `--hard` remains
+explicit and per-target.
+
+### Retrieval telemetry
+
+Hafiz could not evaluate itself. Answering "is this earning its keep?" for a live
+3.5-week deployment required parsing 169 Claude Code transcripts, because hafiz
+kept no record of its own reads — it could not say which annotations had ever
+been recalled, which surfaced and were useful, or which had never come up once.
+Every quality mechanism that might grow from here (decay dead knowledge, promote
+proven knowledge, notice recall quality regressing) needs that data.
+
+One append-only source-layer table, one INSERT per search.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `retrievals` | Never-recalled knowledge, most-recalled rows, and queries that returned nothing. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], telemetry_started, enabled}` | rich tables |
+
+- **Recorded in `hafiz/core/`, not the commands layer.** `hafiz/core/daemon.py` calls `search_annotations` directly, so command-layer telemetry would silently miss every warm request — the exact failure class this audit kept finding. `vector_search` / `search_annotations` default `telemetry_command` to their label, so a *new* caller is recorded without knowing telemetry exists; pass `None` to opt a call out.
+- **Never fails a search.** Recording is best-effort and swallows everything. A memory layer that can break the read path gets removed.
+- **`n_results = 0` rows are the point.** The gap between what agents ask for and what the store holds is the only signal that says what to write down *next*; nothing else in hafiz produces it.
+- **`blind_before`** is the subset of never-recalled rows written before telemetry existed. Without it, "1,094 never recalled" reads as an indictment of knowledge that simply predates the log.
+- **Query text is a new data category** for this store: it's what you were *looking for*, not what you concluded. So it lands in the source layer with the source layer's guarantees — `retention_until` (default 90d), swept by `forget --all-expired`, counted in `status`/`doctor` — and it never leaves the machine.
+- **Opt out** with `[telemetry] retrieval = false` (or `HAFIZ_TELEMETRY__RETRIEVAL=false`). `retention_days` and `min_query_chars` are tunable in the same block; queries shorter than `min_query_chars` (default 3) aren't recorded, since "ok" / "yes" say nothing about what was asked for.
 
 ### Sovereignty (export)
 

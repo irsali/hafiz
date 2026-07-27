@@ -183,15 +183,32 @@ def run_forget_sweep(
     dry_run: bool = False,
     output_json: bool = False,
 ) -> None:
-    """Tombstone every communication past its ``retention_until``."""
+    """Tombstone every source-layer row past its ``retention_until``.
 
-    async def _do() -> dict:
+    Covers ``communications`` *and* ``retrievals``: a retention guarantee that
+    reaches only some of the source layer is not a guarantee. Counts are
+    reported per table and summed, so the headline number still answers "how
+    much is overdue?".
+    """
+
+    async def _do() -> tuple[dict, dict]:
         try:
-            return await tombstone_expired_communications(dry_run=dry_run)
+            from hafiz.core.telemetry import tombstone_expired_retrievals
+
+            comms = await tombstone_expired_communications(dry_run=dry_run)
+            retr = await tombstone_expired_retrievals(dry_run=dry_run)
+            return comms, retr
         finally:
             await close_engine()
 
-    result = asyncio.run(_do())
+    comms, retr = asyncio.run(_do())
+    result = {
+        "matched": comms["matched"] + retr["matched"],
+        "tombstoned": comms["tombstoned"] + retr["tombstoned"],
+        "dry_run": dry_run,
+        "communications": comms,
+        "retrievals": retr,
+    }
     payload = {"action": "forget_sweep", **result}
 
     if output_json:

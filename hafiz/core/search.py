@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import func, not_, or_, select
 
+from hafiz.core import telemetry
 from hafiz.core.database import (
     Embedding,
     File,
@@ -126,6 +127,7 @@ async def vector_search(
     exclude_domains: list[str] | None = None,
     similarity_threshold: float = 0.0,
     dedup: bool = True,
+    telemetry_command: str | None = telemetry.QUERY,
 ) -> list[SearchResult]:
     """Search embeddings by cosine similarity and return enriched results.
 
@@ -151,6 +153,10 @@ async def vector_search(
             the copy with the deepest heading path. On by default: the same
             bytes repeated in one result set is never what a caller wants,
             and it was costing ~36% of every doc/code result set.
+        telemetry_command: Label for this search in the ``retrievals`` log.
+            Defaults to ``"query"`` so a new caller is recorded without having
+            to know telemetry exists; pass ``None`` to record nothing (internal
+            fan-out that isn't a caller-visible search).
 
     Returns:
         List of SearchResult ordered by similarity (best first).
@@ -237,7 +243,25 @@ async def vector_search(
         elif len(result.unit_name or "") > len(results[index].unit_name or ""):
             results[index] = result
 
-    return results[:limit] if dedup else results
+    final = results[:limit] if dedup else results
+
+    if telemetry_command:
+        await telemetry.record_retrieval(
+            command=telemetry_command,
+            query=query,
+            result_ids=[r.id for r in final],
+            top_score=final[0].score if final else None,
+            filters={
+                "project": project,
+                "kind": kind,
+                "include_domains": inc or None,
+                "exclude_domains": exc or None,
+                "limit": limit,
+                "min_score": similarity_threshold or None,
+            },
+        )
+
+    return final
 
 
 async def count_embeddings(project: str | None = None) -> int:

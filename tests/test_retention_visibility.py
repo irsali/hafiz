@@ -30,14 +30,18 @@ from hafiz.core.database import Communication, close_engine, get_session_factory
 AGENT = "retention-test"
 
 
-async def _db_available() -> bool:
+async def _db_available() -> tuple[bool, str]:
+    """(reachable, why-not). The reason is carried out rather than swallowed:
+    a bare "Postgres not reachable" skip once hid a dirtied connection pool for
+    an entire suite run, which is the same silent-failure shape this branch is
+    about."""
     try:
         factory = get_session_factory()
         async with factory() as s:
             await s.execute(text("SELECT 1 FROM communications LIMIT 1"))
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
 
 
 async def _wipe() -> None:
@@ -51,8 +55,9 @@ async def _wipe() -> None:
 async def db():
     """Requested explicitly, not autouse: the CLI-level test below drives its
     own ``asyncio.run`` and can't share this fixture's event loop."""
-    if not await _db_available():
-        pytest.skip("Postgres not reachable")
+    ok, why = await _db_available()
+    if not ok:
+        pytest.skip(f"Postgres not reachable — {why}")
     await _wipe()
     yield
     await _wipe()
@@ -183,8 +188,9 @@ def test_status_reports_the_overdue_count():
 
         return asyncio.run(_wrapped())
 
-    if not _run(_db_available()):
-        pytest.skip("Postgres not reachable")
+    ok, why = _run(_db_available())
+    if not ok:
+        pytest.skip(f"Postgres not reachable — {why}")
 
     _run(_seed(retention_offset_days=5))
     try:

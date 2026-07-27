@@ -206,6 +206,28 @@ def serve_stop(
     run_stop(output_json=json_output)
 
 
+# ─── RETRIEVALS ─────────────────────────────────────────────────────
+
+
+@app.command()
+def retrievals(
+    since_days: int = typer.Option(
+        30, "--since-days", help="Window to report on.", min=1, max=3650
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", help="Rows per section.", min=1, max=200),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
+) -> None:
+    """What the store was asked for, and what it couldn't answer.
+
+    Reports never-recalled knowledge, the most-recalled rows, and — most
+    usefully — queries that returned nothing, which is a list of things worth
+    writing down. Requires `[telemetry] retrieval = true` (the default).
+    """
+    from hafiz.commands.telemetry import run_retrievals
+
+    run_retrievals(since_days=since_days, limit=limit, output_json=json_output)
+
+
 # ─── PRUNE ──────────────────────────────────────────────────────────
 
 

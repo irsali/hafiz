@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from hafiz.core import telemetry
 from hafiz.core.database import (
     Annotation,
     AnnotationTarget,
@@ -644,6 +645,7 @@ async def search_annotations(
     active_only: bool = True,
     rerank: bool | None = None,
     min_score: float | None = None,
+    telemetry_command: str | None = telemetry.OBSERVATIONS,
 ) -> list[AnnotationResult]:
     """Search annotations by vector similarity, optionally cross-encoder reranked.
 
@@ -652,6 +654,9 @@ async def search_annotations(
     cross-encoder reorders them by joint (query, content) relevance before
     truncating to ``limit``. Reranking is strictly a reordering: on any failure
     it falls back to the vector order. ``rerank=False`` forces pure vector.
+
+    ``telemetry_command`` labels the search in the ``retrievals`` log (default
+    ``"query --observations"``); pass ``None`` explicitly to record nothing.
 
     ``min_score`` is a 0–1 relevance floor applied to
     :attr:`AnnotationResult.ranking_score` — the cross-encoder score when
@@ -734,7 +739,28 @@ async def search_annotations(
 
     if min_score is not None:
         candidates = [r for r in candidates if r.ranking_score >= min_score]
-    return candidates[:limit]
+    final = candidates[:limit]
+
+    # Recorded here rather than in the CLI: hafiz/core/daemon.py calls this
+    # function directly, so command-layer telemetry would silently miss every
+    # warm request.
+    if telemetry_command:
+        await telemetry.record_retrieval(
+            command=telemetry_command,
+            query=query,
+            result_ids=[r.id for r in final],
+            top_score=final[0].ranking_score if final else None,
+            reranked=any(r.rerank_score is not None for r in final),
+            filters={
+                "project": project,
+                "kind": kind,
+                "source": source,
+                "limit": limit,
+                "min_score": min_score,
+                "include_superseded": None if active_only else True,
+            },
+        )
+    return final
 
 
 async def list_annotations(

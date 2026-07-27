@@ -568,6 +568,53 @@ class AnnotationTarget(Base):
     )
 
 
+class Retrieval(Base):
+    """One search: what was asked, what came back, and how well it scored.
+
+    Source layer, because it records an event rather than a conclusion — and
+    because the query text is a different kind of data from everything else
+    here: it's what somebody was *looking for*. Retention-bounded and
+    switchable off via ``[telemetry] retrieval = false``.
+
+    Exists because hafiz couldn't evaluate itself. Answering "which annotations
+    have ever been recalled?" for a live deployment meant parsing another tool's
+    logs. ``n_results = 0`` rows are the most useful ones: they're the gap
+    between what agents ask for and what the store holds.
+    """
+
+    __tablename__ = "retrievals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        default=lambda: datetime.now(UTC),
+    )
+    command: Mapped[str] = mapped_column(Text, nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    filters: Mapped[dict] = mapped_column(JSONB, default=dict)
+    result_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
+    n_results: Mapped[int] = mapped_column(Integer, default=0)
+    top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reranked: Mapped[bool] = mapped_column(Boolean, default=False)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retention_until: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_retrievals_at", "at"),
+        Index("idx_retrievals_command", "command"),
+        Index("idx_retrievals_retention", "retention_until"),
+        Index("idx_retrievals_result_ids", "result_ids", postgresql_using="gin"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Transition stubs — Phase 3 removes these
 # ---------------------------------------------------------------------------
