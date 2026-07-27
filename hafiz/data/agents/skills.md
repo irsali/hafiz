@@ -141,9 +141,23 @@ Three flags, on both `query` and `context`:
 default, and `--min-score` filters the reranked score, not the raw cosine
 `score`. That matters: under reranking `score` is *not* monotonic down the
 result list, so a floor on it would drop a higher-ranked row and keep a
-lower-ranked one. Reranked scores separate sharply, so **useful floors are low**
-— `0.05` is a good default; `0.4` is aggressive. Under `--no-rerank` the floor
-applies to cosine similarity, where the useful band is ~`0.5`–`0.65`.
+lower-ranked one.
+
+**Why useful floors are low.** Measured on a 1,200-annotation store, three
+on-topic against three off-topic questions, comparing the best score in each
+result set:
+
+| | cosine `score` | `rerank_score` |
+|---|---|---|
+| on-topic | 0.713 – 0.789 | 0.962 – 0.998 |
+| off-topic | 0.480 – 0.523 | 0.0001 – 0.0002 |
+
+Cosine leaves a 0.19 gap you have to calibrate into; the reranker leaves three
+orders of magnitude. So one flag does both jobs — `--min-score 0.05` sits ~50×
+above the off-topic ceiling and still keeps every genuinely relevant row, and
+"nothing came back" *is* the not-relevant signal. No separate hit gate, no
+set-max heuristic. `0.4` is aggressive tail-trimming; under `--no-rerank` the
+floor applies to cosine, where the useful band is ~`0.5`–`0.65`.
 
 `--json` output carries both `score` (cosine) and `rerank_score` (0–1, or `null`
 when reranking didn't run), plus a top-level `reranked` boolean — that's how you
