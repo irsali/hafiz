@@ -107,6 +107,15 @@ class SearchResult:
     is_neighbor: bool = False
 
 
+# How far to over-fetch when collapsing duplicates, so the caller still gets
+# ``limit`` *distinct* rows. The markdown parser attaches each paragraph to every
+# ancestor heading, so one paragraph can be indexed once per heading level.
+# Measured on a 34k-unit doc corpus: 7,490 paragraphs appear once, 3,420 twice,
+# 4,926 three times, with a thin tail to eight. 4 covers the mass; the tail costs
+# a slightly short result set, never a wrong one.
+_DEDUP_OVERFETCH = 4
+
+
 async def vector_search(
     query: str,
     *,
@@ -116,6 +125,7 @@ async def vector_search(
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
     similarity_threshold: float = 0.0,
+    dedup: bool = True,
 ) -> list[SearchResult]:
     """Search embeddings by cosine similarity and return enriched results.
 
@@ -137,6 +147,10 @@ async def vector_search(
             Applied in SQL, *before* the ``limit`` is taken, so the caller
             gets the top ``limit`` results that clear the floor rather than
             the survivors of the top ``limit`` overall.
+        dedup: Collapse byte-identical content within the same file, keeping
+            the copy with the deepest heading path. On by default: the same
+            bytes repeated in one result set is never what a caller wants,
+            and it was costing ~36% of every doc/code result set.
 
     Returns:
         List of SearchResult ordered by similarity (best first).
@@ -163,7 +177,9 @@ async def vector_search(
         .where(Unit.valid_until.is_(None))
         .where(File.valid_until.is_(None))
         .order_by(Embedding.embedding.cosine_distance(query_embedding))
-        .limit(limit)
+        # Over-fetch so dedup happens *before* the cap, not after — trimming
+        # first would spend the caller's limit on copies and then delete them.
+        .limit(limit * _DEDUP_OVERFETCH if dedup else limit)
     )
     if similarity_threshold > 0:
         stmt = stmt.where(similarity_expr >= similarity_threshold)
@@ -183,28 +199,45 @@ async def vector_search(
     async with session_factory() as session:
         rows = (await session.execute(stmt)).all()
 
+    # (file, content) → the row we're keeping for it. Identical content embeds
+    # identically, so duplicates tie on score and collapsing can't reorder
+    # anything; the only choice is which name to keep, and the deepest heading
+    # path is the most informative ("X > Integrations > Geolocation Services"
+    # beats "X"). Keyed on the file, so the same text in two files stays twice —
+    # those are genuinely different sources.
+    at: dict[tuple[str, str], int] = {}
     results: list[SearchResult] = []
     for emb, rev, unit, file, sim in rows:
         sim_f = float(sim)
         if sim_f < similarity_threshold:
             continue
-        results.append(
-            SearchResult(
-                id=str(emb.id),
-                unit_id=str(unit.id),
-                unit_name=unit.name,
-                kind=unit.kind,
-                content=emb.content,
-                source_file=file.path,
-                line_start=rev.line_start,
-                line_end=rev.line_end,
-                language=file.language,
-                project=file.project,
-                part_index=emb.part_index,
-                score=round(sim_f, 4),
-            )
+        result = SearchResult(
+            id=str(emb.id),
+            unit_id=str(unit.id),
+            unit_name=unit.name,
+            kind=unit.kind,
+            content=emb.content,
+            source_file=file.path,
+            line_start=rev.line_start,
+            line_end=rev.line_end,
+            language=file.language,
+            project=file.project,
+            part_index=emb.part_index,
+            score=round(sim_f, 4),
         )
-    return results
+        if not dedup:
+            results.append(result)
+            continue
+
+        key = (file.path, emb.content_hash)
+        index = at.get(key)
+        if index is None:
+            at[key] = len(results)
+            results.append(result)
+        elif len(result.unit_name or "") > len(results[index].unit_name or ""):
+            results[index] = result
+
+    return results[:limit] if dedup else results
 
 
 async def count_embeddings(project: str | None = None) -> int:

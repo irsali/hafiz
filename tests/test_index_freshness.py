@@ -314,6 +314,70 @@ async def test_untagged_files_are_excluded_from_per_repo_staleness(db):
     assert "freshness-test-j" in out
 
 
+# ── Freshness as a signal a caller can read ─────────────────────────────
+#
+# Search results carried no freshness field at all, so a caller could not tell a
+# current result from a 28-commit-stale one. The only safe policy was a blanket
+# "never trust the index", which a real integrator adopted — and which throws out
+# the 89% of the corpus that is documentation to protect against the 3.9% that is
+# code. Measured: 4.4% of live files changed since their indexed commit, 3 deleted
+# outright, but the repo being actively edited was 80.5% stale.
+
+
+def test_stale_projects_keeps_only_what_is_actionable():
+    from hafiz.core.freshness import stale_projects
+
+    got = stale_projects(
+        {
+            "behind": {"commits_behind": 12, "is_ancestor": True},
+            "diverged": {"commits_behind": None, "is_ancestor": False},
+            "current": {"commits_behind": 0, "is_ancestor": True},
+            "unknown": {"commits_behind": None, "is_ancestor": None},
+        }
+    )
+    assert sorted(got) == ["behind", "diverged"]
+
+
+def test_unknown_is_not_reported_as_stale():
+    """ "Unknown" usually means the repo isn't on this machine. Warning about it
+    would train the reader to ignore the warning."""
+    from hafiz.core.freshness import stale_projects
+
+    assert stale_projects({"p": {"commits_behind": None, "is_ancestor": None}}) == {}
+
+
+async def test_an_empty_project_scope_does_no_work(monkeypatch):
+    """A result set with no project-tagged rows must not sweep the whole store."""
+    from hafiz.core import freshness
+
+    async def _boom(*a, **kw):
+        raise AssertionError("should not query")
+
+    monkeypatch.setattr("hafiz.core.store.last_indexed_commit_per_project", _boom)
+    assert await freshness.index_staleness([]) == {}
+    assert await freshness.index_staleness([None]) == {}
+
+
+@pytest.mark.parametrize(
+    ("staleness", "expected"),
+    [
+        ({"Web": {"commits_behind": 12, "is_ancestor": True}}, "Web 12 behind"),
+        ({"Admin": {"commits_behind": None, "is_ancestor": False}}, "Admin diverged"),
+        (
+            {
+                "Web": {"commits_behind": 12, "is_ancestor": True},
+                "Admin": {"commits_behind": None, "is_ancestor": False},
+            },
+            "Web 12 behind, Admin diverged",
+        ),
+    ],
+)
+def test_staleness_line_is_short_enough_to_inject(staleness, expected):
+    from hafiz.commands.query import _staleness_line
+
+    assert _staleness_line(staleness) == expected
+
+
 def test_status_counts_untagged_files():
     """The field that would have surfaced the shadow index without an audit.
 

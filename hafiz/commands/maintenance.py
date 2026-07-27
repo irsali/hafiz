@@ -86,39 +86,14 @@ async def _index_staleness(last_commit_per_project: dict[str | None, str]) -> di
 
     Fills the gap that let four repos drift 31-64 commits behind while hooks
     were installed and firing: nothing ever compared the index to the repo.
-    A stale code index is worse than no index — search returns code that no
-    longer exists — so the absence of a staleness signal was the real defect.
 
-    The repo path isn't stored anywhere, so it's recovered from the common
-    prefix of each project's file paths. Every field degrades to ``None``
-    rather than raising: an operator reaches for ``status`` when something is
-    already wrong, and it must still print.
+    Thin wrapper over :func:`hafiz.core.freshness.index_staleness`, which search
+    results share — the probe belongs in core, and two copies would drift. The
+    already-computed map is handed over rather than re-derived.
     """
-    from hafiz.core.git_context import commits_behind_head, is_git_repo
-    from hafiz.core.store import indexed_root_per_project
+    from hafiz.core.freshness import index_staleness
 
-    roots = await indexed_root_per_project()
-    out: dict[str, dict] = {}
-    for project, indexed_sha in last_commit_per_project.items():
-        if project is None:
-            # The untagged bucket isn't a repo — its files span every repo a
-            # project-less hook ever walked, so a common-prefix "root" comes out
-            # as "/" and a HEAD comparison is meaningless. Reported separately,
-            # as a shadow index to clean up rather than an index to refresh.
-            continue
-        key = project
-        root = roots.get(project)
-        entry: dict = {
-            "repo_path": root,
-            "indexed_commit": indexed_sha,
-            "head_commit": None,
-            "commits_behind": None,
-            "is_ancestor": None,
-        }
-        if root and is_git_repo(Path(root)):
-            entry.update(commits_behind_head(indexed_sha, Path(root)))
-        out[key] = entry
-    return out
+    return await index_staleness(list(last_commit_per_project), last_commit=last_commit_per_project)
 
 
 def _staleness_note(entry: dict) -> tuple[str, str]:

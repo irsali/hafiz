@@ -565,8 +565,15 @@ async def latest_indexed_commit(project: str | None) -> str | None:
     return counter.most_common(1)[0][0]
 
 
-async def last_indexed_commit_per_project() -> dict[str | None, str]:
+async def last_indexed_commit_per_project(
+    projects: list[str] | None = None,
+) -> dict[str | None, str]:
     """Map each project to the commit it was most recently indexed at.
+
+    ``projects`` narrows the scan. A whole-store sweep costs ~40ms on a
+    15-project index, which is fine for ``status`` but not for something a
+    search result carries, so callers that only care about the projects in a
+    result set pass them in.
 
     "Most recently" means **latest ``commits.committed_at``**, not
     ``max(hash)``. Hashes are hex, so a lexicographic max picks a commit
@@ -602,6 +609,8 @@ async def last_indexed_commit_per_project() -> dict[str | None, str]:
                 func.max(File.created_at).desc(),
             )
         )
+        if projects is not None:
+            stmt = stmt.where(File.project.in_(projects))
         rows = (await session.execute(stmt)).all()
 
     # Rows arrive newest-first, so the first sighting of a project wins.
@@ -611,7 +620,9 @@ async def last_indexed_commit_per_project() -> dict[str | None, str]:
     return latest
 
 
-async def indexed_root_per_project() -> dict[str | None, str]:
+async def indexed_root_per_project(
+    projects: list[str] | None = None,
+) -> dict[str | None, str]:
     """Map each project to the deepest directory containing all its files.
 
     Derived rather than stored: nothing records "where does project X live on
@@ -625,9 +636,10 @@ async def indexed_root_per_project() -> dict[str | None, str]:
     """
     session_factory = get_session_factory()
     async with session_factory() as session:
-        rows = (
-            await session.execute(select(File.project, File.path).where(File.valid_until.is_(None)))
-        ).all()
+        stmt = select(File.project, File.path).where(File.valid_until.is_(None))
+        if projects is not None:
+            stmt = stmt.where(File.project.in_(projects))
+        rows = (await session.execute(stmt)).all()
 
     by_project: dict[str | None, list[str]] = {}
     for project, path in rows:

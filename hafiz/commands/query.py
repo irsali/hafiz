@@ -17,6 +17,17 @@ console = Console()
 query_app = typer.Typer(name="query", help="Search indexed content")
 
 
+def _staleness_line(staleness: dict[str, dict]) -> str:
+    """ "Web 12 behind, Admin diverged" — the short form for humans and prompts."""
+    parts = []
+    for project, entry in staleness.items():
+        if entry.get("is_ancestor") is False:
+            parts.append(f"{project} diverged")
+        else:
+            parts.append(f"{project} {entry['commits_behind']} behind")
+    return ", ".join(parts)
+
+
 def _run_query(
     text: str,
     *,
@@ -72,11 +83,24 @@ def _run_query(
                 transcript_hits = [
                     (r, score) for r, score in rows if min_score is None or score >= min_score
                 ]
-            return results, transcript_hits
+            # Freshness of the projects these results came from — scoped to
+            # those projects, not the whole store, so it costs a few ms rather
+            # than ~40. Without it a caller cannot tell a current result from a
+            # 28-commit-stale one, and the only safe policy is to distrust the
+            # whole index (which a real integrator adopted).
+            from hafiz.core.freshness import index_staleness, stale_projects
+
+            try:
+                staleness = stale_projects(
+                    await index_staleness(sorted({r.project for r in results if r.project}))
+                )
+            except Exception:  # noqa: BLE001 — a git hiccup must not fail a search
+                staleness = {}
+            return results, transcript_hits, staleness
         finally:
             await close_engine()
 
-    results, transcript_hits = asyncio.run(_search())
+    results, transcript_hits, staleness = asyncio.run(_search())
 
     if output_format is OutputFormat.COMPACT:
         data = {
@@ -84,6 +108,8 @@ def _run_query(
             "results": [chunk_compact(r, with_ids=with_ids) for r in results],
             "total": len(results) + len(transcript_hits),
         }
+        if staleness:
+            data["staleness"] = staleness
         if include_transcripts:
             data["transcripts"] = [
                 {"content": msg.content, "role": msg.role, "seq": msg.seq}
@@ -102,6 +128,11 @@ def _run_query(
             print()
         for msg, _ in transcript_hits:
             print(f"### transcript · {msg.role} · seq {msg.seq}\n\n{msg.content}\n")
+        if staleness:
+            print(
+                f"_Stale index: {_staleness_line(staleness)}. "
+                f"Verify against the working tree before relying on these._"
+            )
         return
 
     if output_format is OutputFormat.JSON:
@@ -142,6 +173,7 @@ def _run_query(
             ],
             "total": len(results) + len(transcript_hits),
             "include_transcripts": include_transcripts,
+            "staleness": staleness,
         }
         console.print_json(json.dumps(data))
         return
@@ -177,6 +209,12 @@ def _run_query(
                 title=f"Knowledge-layer results ({len(results)} matches)",
                 border_style="cyan",
             )
+        )
+    if staleness:
+        console.print(
+            f"  [yellow]Stale index:[/yellow] {_staleness_line(staleness)}.\n"
+            f"  [dim]Results may not match the working tree. "
+            f"Re-index with: hafiz ingest <path> --project <name>[/dim]"
         )
 
     if transcript_hits:
