@@ -162,12 +162,21 @@ def run_observe(
             console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
 
+    from hafiz.core.annotations import oversized_warning
+
+    # Advisory only, and computed from what was actually stored so a deduped
+    # write reports on the row the caller ends up with.
+    oversized = oversized_warning(ann.content, kind=ann.kind)
+
     if output_json:
         data = {
             "action": "observe",
             # True when an identical live row already existed and nothing new
             # was written — the annotation below is that pre-existing row.
             "deduped": deduped,
+            # None unless the record is long enough to be several records.
+            # Never a failure: the write above already succeeded.
+            "oversized": oversized,
             "near_duplicates": [
                 {"id": d.id, "content": d.content, "kind": d.kind, "score": d.score}
                 for d in near_dupes
@@ -219,6 +228,14 @@ def run_observe(
         f"  [bold]Content:[/bold]    {ann.content[:200]}"
     )
     console.print(Panel(info, border_style="cyan"))
+
+    if oversized:
+        console.print(
+            f"[yellow]⚠ {oversized['chars']} chars — long enough to be several "
+            f"annotations[/yellow] [dim](soft limit {oversized['limit']})[/dim]\n"
+            "[dim]One claim per record recalls better. Split it and link the parts "
+            "with --derived-from.[/dim]"
+        )
 
     if near_dupes:
         _print_dupe_hint(near_dupes)
@@ -386,6 +403,17 @@ def run_recall(
                 rerank=rerank,
                 min_score=min_score,
             )
+            # Only the two formats that exist to be injected into a prompt get
+            # trimmed; `json` and `rich` keep the full record, so nothing is
+            # ever unreachable. Best-effort — a failure here leaves `snippet`
+            # unset and the caller renders full content.
+            if output_format in (OutputFormat.COMPACT, OutputFormat.MD):
+                from hafiz.core.config import load_settings
+                from hafiz.core.snippets import attach_snippets
+
+                await attach_snippets(
+                    query, results, budget=load_settings().annotations.snippet_chars
+                )
             return results
         finally:
             await close_engine()

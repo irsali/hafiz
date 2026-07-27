@@ -559,6 +559,60 @@ def test_observe_surfaces_near_duplicates_and_reconcile_clusters_them():
             runner.invoke(app, ["forget", ann_id, "--annotation"])
 
 
+def test_oversized_observe_warns_but_still_stores():
+    """The brake is advisory. If it ever starts failing writes, agents will
+    route around it and the store loses the record entirely — which is worse
+    than a long record."""
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    proj = "_oversize_test"
+    written_ids: list[str] = []
+    try:
+        long_res = runner.invoke(
+            app,
+            [
+                "observe",
+                "OVERSIZE " + "x" * 2000,
+                "--type",
+                "decision",
+                "--project",
+                proj,
+                "--json",
+            ],
+        )
+        assert long_res.exit_code == 0, long_res.output
+        long_data = json.loads(long_res.output)
+        written_ids.append(long_data["annotation"]["id"])
+        assert long_data["oversized"]["chars"] == 2009
+        assert long_data["oversized"]["limit"] == 1500
+        # The row is really there, warning notwithstanding.
+        assert long_data["annotation"]["content"].startswith("OVERSIZE ")
+
+        short_res = runner.invoke(
+            app,
+            ["observe", "OVERSIZE short one", "--type", "decision", "--project", proj, "--json"],
+        )
+        assert short_res.exit_code == 0, short_res.output
+        short_data = json.loads(short_res.output)
+        written_ids.append(short_data["annotation"]["id"])
+        assert short_data["oversized"] is None
+
+        # The note firehose is never gated, and never nagged.
+        note_res = runner.invoke(
+            app, ["note", "OVERSIZE note " + "y" * 2000, "--project", proj, "--json"]
+        )
+        assert note_res.exit_code == 0, note_res.output
+        note_data = json.loads(note_res.output)
+        written_ids.append(note_data["annotation"]["id"])
+        assert note_data["oversized"] is None
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
 def test_reconcile_reports_a_truncated_scan_instead_of_hiding_it():
     """A ``--limit`` that bites must be visible in the output.
 

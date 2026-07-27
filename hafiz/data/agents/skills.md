@@ -137,6 +137,18 @@ Three flags, on both `query` and `context`:
 
 `--limit` also exists on `context` (caps each section).
 
+**`compact` and `md` give you an excerpt of a long annotation, not the whole
+record.** Anything over `[annotations] snippet_chars` (default 480) is trimmed
+to its best-matching span — measured at **−65%** on a `--observations --limit
+20` recall. Short records are untouched. You can always tell which is which:
+`compact` sets `excerpt: true` plus `full_chars`, `md` appends `excerpt of N
+chars`, and both elide with `…`.
+
+**When you see that marker and the excerpt doesn't settle the question, go get
+the whole record** — `--format json` (or `rich`) never trims. That matters most
+for decisions: an excerpt can land on the conclusion and miss the scope it only
+applies under. Don't act on a partial decision record; re-read it in full.
+
 **Which score the floor uses.** Annotation recall is cross-encoder reranked by
 default, and `--min-score` filters the reranked score, not the raw cosine
 `score`. That matters: under reranking `score` is *not* monotonic down the
@@ -339,6 +351,36 @@ The reasoning loop:
    exit `0`, `deduped: true`, the existing row returned, nothing written — the
    raw-capture lane is never gated, it just stops storing the same byte twice.
    Blank content is refused on both.
+
+5. **Write one claim per record.** `kind` is the only schema an annotation
+   has, so there is nothing stopping you from packing a decision, its
+   rationale, its scope and its rejected alternatives into one blob — and
+   that is exactly what agents do. On a real store the mean annotation grew
+   from 746 to 1,127 characters in eight weeks.
+
+   It costs you three ways, all at recall time:
+
+   - **You get the whole record back.** There is no snippet extraction, so a
+     2,700-char blob spends ~700 tokens of your context to deliver the two
+     sentences that matched.
+   - **It retrieves worse.** One embedding covers the entire record, so a blob
+     spanning four topics is found by the *average* of four topics and matches
+     none of them sharply.
+   - **Duplicate detection goes blind.** Similarity is computed blob-to-blob,
+     so two records that state the same decision with different rationale
+     don't look alike, and near-duplicates accumulate unseen.
+
+   So: one claim per `observe`. Put the rejected alternative in its own record
+   and link it with `--derived-from <id>`; the same for a scope caveat worth
+   recalling on its own. Above `[annotations] max_recommended_chars` (default
+   1,500) `observe` says so — a hint in human output, `oversized: {chars,
+   limit, hint}` in `--json`. **It is advisory: the write always succeeds**,
+   exit `0`, and `oversized` is `null` the rest of the time. Never fires on
+   `note`.
+
+   Long records are sometimes right. Splitting a genuinely single claim into
+   fragments that each recall badly is worse than one long record, so treat
+   the warning as a prompt to check, not an instruction to chop.
 
 Sessions (optional) group everything you record in one thread of work:
 ```bash
@@ -602,7 +644,7 @@ workstation is a no-op, not a hazard.
 
 - **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the cursor.
 - **`--min-score FLOAT`** (0–1): relevance floor on the score results are *ranked* by — the reranked score under `--observations`, cosine similarity otherwise. Applied after reranking, before the limit. Reranked scores separate sharply, so useful floors are low (`0.05` default-ish, `0.4` aggressive); cosine floors sit around `0.5`–`0.65`.
-- **`--format rich|json|compact|md`**: `--json` is an alias for `--format json` and keeps its exact shape. `compact` emits content + kind + source + age; add `--with-ids` when you might `--supersedes` later. `md` emits raw markdown for prompt injection.
+- **`--format rich|json|compact|md`**: `--json` is an alias for `--format json` and keeps its exact shape. `compact` emits content + kind + source + age; add `--with-ids` when you might `--supersedes` later. `md` emits raw markdown for prompt injection. Both **excerpt** annotations over `[annotations] snippet_chars` (default 480) to the best-matching span, marked with `excerpt: true` / `excerpt of N chars` and `…`; `json` and `rich` always carry full `content`.
 - **Two scores in `--json`**: `score` (cosine) and `rerank_score` (0–1, `null` when reranking didn't run), plus a top-level `reranked` boolean. Under reranking `score` is non-monotonic down the list — don't sort or filter on it.
 - **Blank query → exit 2** with `{"ok": false, "error": ...}` on both commands. Check the exit code if you interpolate a variable into the query.
 

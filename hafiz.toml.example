@@ -54,6 +54,25 @@ strict = false
 # Cap on how many duplicates to surface per write.
 max_candidates = 5
 
+[annotations]
+# Soft size brake on `observe` (not `note`). `kind` is the only schema an
+# annotation has, so decision + rationale + scope + rejected-alternatives tend
+# to end up in one prose blob — which is injected whole at recall, gets a
+# single embedding averaging several unrelated topics, and defeats blob-to-blob
+# duplicate detection. Above this many characters, `observe` prints a hint and
+# sets `oversized` in --json. Advisory only: the write always succeeds.
+# 1500 is ~p90 on a real store — it fires on the long tail, not the median.
+# Set to 0 to disable. Env override: HAFIZ_ANNOTATIONS__MAX_RECOMMENDED_CHARS=0
+max_recommended_chars = 1500
+# The read-side half: how much of a record `--format compact` and `--format md`
+# inject. Those two exist to be piped into a prompt; `json` and `rich` always
+# carry the full text, so nothing is unreachable. Records at or under this pass
+# through whole. Excerpts are marked (`excerpt: true` / "excerpt of N chars").
+# Measured: a --observations --limit 20 recall went 18,839 -> 6,495 bytes
+# (~-65%) for ~+0.5s. Set to 0 to always inject full records.
+# Env override: HAFIZ_ANNOTATIONS__SNIPPET_CHARS=0
+snippet_chars = 480
+
 [ingest]
 # Skip any file larger than this (bytes). Guards against minified
 # bundles, generated output, and accidentally-committed binaries that

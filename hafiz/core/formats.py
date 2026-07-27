@@ -74,24 +74,40 @@ def annotation_compact(a, *, with_ids: bool = False) -> dict:
     might write back, because an agent that can read a decision and not cite it
     cannot ``--supersedes`` it, and the corpus silently accumulates
     contradictions instead.
+
+    ``content`` is the best-matching excerpt when one was extracted, and
+    ``excerpt: true`` says so. That flag is not decoration: a reader who
+    mistakes a fragment for the whole record can act on a decision without its
+    scope qualifier. The full text is always in ``--format json``.
     """
+    snippet = getattr(a, "snippet", None)
     row = {
-        "content": a.content,
+        "content": snippet or a.content,
         "kind": a.kind,
         "source": a.source,
         "age": age_label(a.valid_from)[0],
     }
+    if snippet:
+        row["excerpt"] = True
+        row["full_chars"] = len(a.content)
     if with_ids:
         row["id"] = a.id
     return row
 
 
 def annotation_md(a, *, with_ids: bool = False) -> str:
-    """One annotation as a markdown bullet."""
+    """One annotation as a markdown bullet.
+
+    An excerpt is labelled in the metadata line as well as being elided with
+    ellipses, so the marker survives a reader skimming only the prose.
+    """
+    snippet = getattr(a, "snippet", None)
     meta = [a.source or "unknown source", age_label(a.valid_from)[0]]
+    if snippet:
+        meta.append(f"excerpt of {len(a.content)} chars")
     if with_ids:
         meta.append(a.id)
-    return f"- **[{a.kind}]** {a.content}\n  _({' · '.join(meta)})_"
+    return f"- **[{a.kind}]** {snippet or a.content}\n  _({' · '.join(meta)})_"
 
 
 # ── Chunks (code / doc units) ───────────────────────────────────────────

@@ -297,14 +297,36 @@ hooks parse it; new fields are additive.
 |---|---|---|
 | `rich` | terminals | default |
 | `json` | existing integrations | today's full shape, field-for-field |
-| `compact` | context-window injection | content + kind + source + age only |
-| `md` | prompt injection | raw markdown, not Rich-rendered |
+| `compact` | context-window injection | content + kind + source + age only; long annotations excerpted |
+| `md` | prompt injection | raw markdown, not Rich-rendered; long annotations excerpted |
 
 `compact` drops uuids, timestamps, null fields, float scores, and (on `context`)
 the graph section's edge lists, collapsing units to `name (kind)`. Pass
 `--with-ids` to re-add ids — **do this whenever the consumer might write back**,
 because an agent that can read a decision but not cite it cannot
 `observe --supersedes` it, and the corpus silently accumulates contradictions.
+
+#### Snippet extraction (`compact` / `md` only)
+
+Annotations have no schema beyond `kind`, so they arrive as prose blobs —
+median 951 chars, p90 1,589 on a measured store — and were injected whole.
+`compact` and `md` now carry the **best-matching excerpt** of any annotation
+over `[annotations] snippet_chars` (default 480); shorter records pass through
+untouched. Measured on a `--observations --limit 20` recall: **18,839 → 6,495
+bytes (−65%)** for **~+0.5 s**.
+
+- **Marked, never silent.** `compact` sets `excerpt: true` and `full_chars`;
+  `md` appends `excerpt of N chars` to the metadata line; both elide with `…`.
+  A decision read without its scope qualifier is worse than one never
+  retrieved, so truncation is always visible.
+- **Nothing becomes unreachable.** `json` and `rich` always carry full
+  `content`. Set `snippet_chars = 0` to disable extraction entirely.
+- **Two-stage selection**, mirroring the search path: a free lexical pass
+  shortlists a few spans per record (always including the head), then the same
+  cross-encoder that ranked the results picks among them. Cross-encoding every
+  span cost ~1.0 s; shortlisting first cuts that to ~0.5 s.
+- **Degrades, never fails.** If the cross-encoder is unavailable the lexical
+  winner is used, and failing that the head of the record.
 
 Measured on a real session-start injection (`query --observations --source
 user:anjum --limit 50`): 70,272 B of `json` → **2,498 B** of `compact

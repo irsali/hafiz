@@ -122,6 +122,37 @@ class DedupSettings(BaseModel):
     max_candidates: int = 5
 
 
+class AnnotationSettings(BaseModel):
+    """Write hygiene for annotation *shape*, as distinct from duplication.
+
+    ``kind`` is the only schema an annotation has, so a decision, its
+    rationale, its scope and its rejected alternatives all get crammed into
+    one prose blob. That drives three separate problems: the record is
+    injected whole at recall time; the single embedding covering it is the
+    centroid of several unrelated topics, which costs precision; and
+    near-duplicate detection compares blob to blob, so two records that share
+    a decision but differ in rationale don't look alike.
+
+    Measured on a real 1,099-annotation store, the mean length grew from 746
+    to 1,127 chars over eight weeks — the walls get taller on their own. This
+    is the cheap brake: advisory only, on ``observe`` and never on the
+    ``note`` firehose, warning on the tail rather than the median.
+    """
+
+    # Warn above this many characters. 1,500 is ~p90 on the measured store:
+    # it fires on the 12.7% of rows that hold 23.5% of all annotation text,
+    # and stays quiet for the median 951-char record. Set to 0 to disable.
+    max_recommended_chars: int = 1500
+
+    # The read-side half of the same problem: how much of a record `compact`
+    # and `md` inject. Those two formats exist to be piped into a prompt;
+    # `json` and `rich` always carry the full text, so nothing is unreachable.
+    # Records at or under this pass through whole — 480 chars (~120 tokens)
+    # trims the long tail while leaving short, single-claim records untouched,
+    # which is also what keeps the extraction cost near zero. 0 disables it.
+    snippet_chars: int = 480
+
+
 class IngestSettings(BaseModel):
     """Policy caps for the ingest pipeline — hard guards, not probed."""
 
@@ -208,6 +239,7 @@ class HafizSettings(BaseSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
+    annotations: AnnotationSettings = Field(default_factory=AnnotationSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)

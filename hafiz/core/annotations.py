@@ -131,6 +131,10 @@ class AnnotationResult:
     metadata: dict
     score: float
     rerank_score: float | None = None
+    #: Best-matching excerpt, set only for ``compact``/``md`` output and only
+    #: when ``content`` exceeded the snippet budget. ``None`` means the full
+    #: record is what gets rendered — see :mod:`hafiz.core.snippets`.
+    snippet: str | None = None
 
     @property
     def ranking_score(self) -> float:
@@ -184,6 +188,36 @@ class ExactDuplicateAnnotationError(Exception):
             f"identical live {kind} already exists: {existing_id} "
             "(supersede it, edit the text, or pass --allow-duplicate)"
         )
+
+
+def oversized_warning(content: str, *, kind: str) -> dict | None:
+    """Advisory notice when a record is long enough to be several records.
+
+    Returns ``None`` for anything at or under the configured limit, and never
+    raises or blocks — the write always succeeds. A hard cap would be wrong
+    here: some records genuinely are long, and hafiz cannot tell which. What
+    it can do is say so at the moment the author could still split it, which
+    is the only moment splitting is cheap.
+
+    Not applied to ``note``: raw capture is never gated, and a note is
+    below decision-grade by definition.
+    """
+    from hafiz.core.config import load_settings
+
+    limit = load_settings().annotations.max_recommended_chars
+    if kind == "note" or limit <= 0 or len(content) <= limit:
+        return None
+    return {
+        "chars": len(content),
+        "limit": limit,
+        "hint": (
+            "This is long enough to be several annotations. One claim per record "
+            "recalls better: the span that matched is the span you get back, the "
+            "embedding isn't an average of unrelated topics, and near-duplicate "
+            "detection can actually compare them. Split it and link the parts with "
+            "--derived-from."
+        ),
+    }
 
 
 async def find_near_duplicates(

@@ -111,6 +111,37 @@ def normalize_score(logit: float) -> float:
     return 1.0 / (1.0 + math.exp(-logit))
 
 
+async def score_passages(query: str, passages: list[str]) -> list[float] | None:
+    """Normalized 0–1 relevance for each passage, **in input order**.
+
+    The primitive underneath :func:`rerank_scored`, for callers that need the
+    scores positionally rather than sorted — picking which span of a long
+    record to show, say, where the answer is "which index won", not "what is
+    the new order".
+
+    Returns ``None`` if scoring could not run, so the caller can fall back
+    rather than mistake a failure for a uniform score. Passages are *not*
+    truncated to ``_RERANK_DOC_CHARS``: a caller scoring spans has already
+    made them short, and silently trimming them here would score a prefix and
+    report it as the span's score.
+    """
+    if not passages or not query.strip():
+        return None
+    try:
+        model = get_reranker()
+        async with _infer_lock:
+            raw = await asyncio.to_thread(lambda: list(model.rerank(query, passages)))
+    except Exception as exc:  # noqa: BLE001 — degrade, never raise into a search
+        logger.warning("passage scoring failed (%s)", exc)
+        return None
+    if len(raw) != len(passages):
+        logger.warning(
+            "passage scoring returned %d scores for %d passages", len(raw), len(passages)
+        )
+        return None
+    return [normalize_score(float(s)) for s in raw]
+
+
 async def rerank_scored[T](
     query: str,
     items: list[T],
