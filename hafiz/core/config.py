@@ -153,6 +153,40 @@ class AnnotationSettings(BaseModel):
     snippet_chars: int = 480
 
 
+class DistillSettings(BaseModel):
+    """How the promotable backlog is assembled — the sleep-time distill loop.
+
+    ``distill`` stays a scanner: it groups raw captures by theme and hands
+    back an ``observe --derived-from`` scaffold per theme. Hafiz never calls
+    an LLM, so the synthesis judgement belongs to whoever reads the output —
+    "automatic" here means the backlog is assembled, drained and surfaced
+    automatically, not that beliefs are written automatically.
+    """
+
+    # Cosine similarity at/above which two captures land in one theme.
+    # Deliberately far below ``dedup.threshold`` (0.88): dedup asks "is this
+    # the same claim restated?", clustering asks "are these about the same
+    # thing?". A theme is a much looser join, and at 0.88 nothing groups.
+    cluster_threshold: float = 0.65
+
+    # Source-layer turns pulled into the candidate window. Was a hardcoded
+    # 50 taken oldest-first, which on a busy window surfaced the least
+    # relevant end of it.
+    message_limit: int = 50
+
+    # ``--brief`` gates. The backlog only earns an interruption when it is
+    # either big enough or old enough; either condition fires it. Below both,
+    # ``--brief`` prints nothing at all, so a session hook can pipe it
+    # straight into context without filtering.
+    brief_min_pending: int = 3
+    brief_min_age_days: float = 2.0
+
+    # Themes rendered by ``--brief``, and members shown per theme. Brief has
+    # to stay cheap enough to inject on every session start.
+    brief_max_themes: int = 5
+    brief_max_members: int = 4
+
+
 class IngestSettings(BaseModel):
     """Policy caps for the ingest pipeline — hard guards, not probed."""
 
@@ -240,6 +274,7 @@ class HafizSettings(BaseSettings):
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     annotations: AnnotationSettings = Field(default_factory=AnnotationSettings)
+    distill: DistillSettings = Field(default_factory=DistillSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)

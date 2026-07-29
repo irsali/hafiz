@@ -246,12 +246,15 @@ hafiz journal --day yesterday --session jwt-migration
 
 ### Distill
 
-Turn raw notes into durable decisions. `hafiz distill` **lists** recent notes and transcripts as promotable candidates — it does not auto-promote and does not call an LLM. The agent or human reads the candidates and decides:
+Turn raw notes into durable decisions. `hafiz distill` **lists** promotable candidates — it does not auto-promote and does not call an LLM. The agent or human reads them and decides:
 
 ```bash
 hafiz distill --since 7d
-# prints a ready-to-run `hafiz observe ... --derived-from <ids>` scaffold
+# groups candidates into themes; each theme prints the one
+# `hafiz observe ... --derived-from <ids>` that would drain it
 ```
+
+Notes and transcript turns are grouped **together** by similarity, so a note lands with the turns it came from and one observation can cite both.
 
 Promote with `--derived-from` to record lineage (non-destructive):
 
@@ -260,6 +263,17 @@ hafiz observe "Use httponly cookies for refresh tokens" \
   --type decision \
   --derived-from <note-id>,<note-id>
 ```
+
+**The backlog drains itself.** Citing a capture is what removes it from the queue, so promoting is the only bookkeeping there is. To decline one instead, retire it: `hafiz forget <id> --annotation`. Nothing is deleted either way, and `hafiz distill --include-promoted` shows what has already been drained.
+
+**Sleep-time distillation.** `--brief` emits token-lean markdown built for a session-start hook, and prints **nothing at all** unless the backlog is big enough or old enough to be worth interrupting you for:
+
+```bash
+# In a session-start hook. Never let recall fail a turn.
+timeout 10s hafiz distill --since 30d --brief 2>/dev/null || true
+```
+
+Your agent then reads the themes and writes the observations — the synthesis stays with whoever can actually judge it. Tune the gate under `[distill]` in `hafiz.toml` (`brief_min_pending`, `brief_min_age_days`, `cluster_threshold`).
 
 ### Supersede
 
@@ -318,7 +332,7 @@ Recall also shows each row's age (e.g. `3mo ago`) and dims results older than 90
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
 | `hafiz journal` | Time-bounded digest of observations **and** captures, grouped by day | `--since`, `--day`, `--project/-p`, `--workspace/-w`, `--source`, `--type/-t`, `--session`, `--task`, `--limit/-l`, `--json/-j` |
-| `hafiz distill` | Surface recent notes + transcripts as promotable candidates (scanner — no LLM call) | `--since`, `--project/-p`, `--workspace/-w`, `--session`, `--task`, `--no-transcripts`, `--limit/-l`, `--json/-j` |
+| `hafiz distill` | Surface the promotable backlog, grouped into themes (scanner — no LLM call) | `--since`, `--project/-p`, `--workspace/-w`, `--session`, `--task`, `--no-transcripts`, `--include-promoted`, `--limit/-l`, `--message-limit`, `--brief`, `--json/-j` |
 
 ### Sessions
 

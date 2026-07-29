@@ -73,6 +73,32 @@ max_recommended_chars = 1500
 # Env override: HAFIZ_ANNOTATIONS__SNIPPET_CHARS=0
 snippet_chars = 480
 
+[distill]
+# How the promotable backlog is assembled. `distill` stays a scanner and never
+# calls an LLM — "automatic" means the backlog drains, groups and surfaces
+# itself, not that beliefs get written for you.
+#
+# Cosine similarity at/above which two captures land in the same theme.
+# Deliberately far below [dedup] threshold (0.88): dedup asks "is this the same
+# claim restated?", clustering asks "are these about the same thing?". A theme
+# is a much looser join, and at 0.88 essentially nothing groups.
+# Env override: HAFIZ_DISTILL__CLUSTER_THRESHOLD=0.7
+cluster_threshold = 0.65
+# Cap on source-layer turns pulled into the window, taken salient-first then
+# newest. Env override: HAFIZ_DISTILL__MESSAGE_LIMIT=100
+message_limit = 50
+# `--brief` gate. It prints NOTHING unless the backlog has at least this many
+# pending captures OR one that has waited this long — either condition fires
+# it. `--brief` is built for a session-start hook, so silence must be the
+# ordinary answer or the hook gets removed.
+# Env override: HAFIZ_DISTILL__BRIEF_MIN_PENDING=5
+brief_min_pending = 3
+brief_min_age_days = 2.0
+# How much `--brief` renders. It has to stay cheap enough to inject every
+# session; anything dropped is stated in the output, never silently.
+brief_max_themes = 5
+brief_max_members = 4
+
 [ingest]
 # Skip any file larger than this (bytes). Guards against minified
 # bundles, generated output, and accidentally-committed binaries that

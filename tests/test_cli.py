@@ -859,3 +859,146 @@ def test_review_runs_clean_on_v5_schema():
     # None of the removed-table sentinels should leak into output.
     assert "Chunk" not in result.output
     assert "Entity" not in result.output
+
+
+def test_distill_backlog_drains_when_a_note_is_promoted_or_declined():
+    """The backlog has to converge, or it stops being believable.
+
+    A candidate leaves the queue two ways, and neither needs a new column:
+    ``observe --derived-from`` cites it (promoted), or ``forget --annotation``
+    retires it (declined). Before this, ``distill`` re-offered the same notes
+    on every run forever — across the real store's whole life, 0 of 16 notes
+    had ever been drained while 52 ``derived_from`` citations existed between
+    decision-grade rows.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    proj = "_distill_drain_test"
+    written_ids: list[str] = []
+    try:
+        for i in range(3):
+            res = runner.invoke(
+                app, ["note", f"DRAIN candidate number {i}", "--project", proj, "--json"]
+            )
+            assert res.exit_code == 0, res.output
+            written_ids.append(json.loads(res.output)["annotation"]["id"])
+        promoted_note, declined_note, remaining_note = written_ids
+
+        def backlog(*extra: str) -> dict:
+            res = runner.invoke(app, ["distill", "--project", proj, "--json", *extra])
+            assert res.exit_code == 0, res.output
+            return json.loads(res.output)
+
+        start = backlog()
+        assert start["backlog"]["pending"] == 3
+        assert start["backlog"]["promoted"] == 0
+
+        # Three pending clears brief_min_pending, so the gate opens and the
+        # scaffold names every candidate.
+        brief = runner.invoke(app, ["distill", "--project", proj, "--brief"])
+        assert brief.exit_code == 0, brief.output
+        assert "Distillation backlog" in brief.output
+
+        # ── promoted: cited via --derived-from ──────────────────────────
+        res = runner.invoke(
+            app,
+            [
+                "observe",
+                "DRAIN distilled decision",
+                "--type",
+                "decision",
+                "--project",
+                proj,
+                "--derived-from",
+                promoted_note,
+                "--json",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        written_ids.append(json.loads(res.output)["annotation"]["id"])
+
+        after_promote = backlog()
+        assert after_promote["backlog"]["pending"] == 2
+        assert after_promote["backlog"]["promoted"] == 1
+        assert promoted_note not in [n["id"] for n in after_promote["notes"]]
+
+        # Still auditable — the drain is visible, not just a shorter list.
+        audited = backlog("--include-promoted")
+        by_id = {n["id"]: n for n in audited["notes"]}
+        assert by_id[promoted_note]["promoted"] is True
+        assert by_id[remaining_note]["promoted"] is False
+
+        # ── declined: retired with no replacement ──────────────────────
+        res = runner.invoke(app, ["forget", declined_note, "--annotation"])
+        assert res.exit_code == 0, res.output
+
+        after_decline = backlog()
+        assert after_decline["backlog"]["pending"] == 1
+        assert [n["id"] for n in after_decline["notes"]] == [remaining_note]
+
+        # One young capture is below both gates, so brief goes quiet again.
+        brief = runner.invoke(app, ["distill", "--project", proj, "--brief"])
+        assert brief.exit_code == 0, brief.output
+        assert brief.output.strip() == ""
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])
+
+
+def test_distill_limit_is_spent_on_candidates_not_on_promoted_rows():
+    """`--limit` must bite on work, not on rows that get discarded after.
+
+    Filtering promoted notes in Python meant the cap was consumed by already-
+    distilled rows: a window of 3 notes with 2 promoted returned 1 candidate
+    under `--limit 2` and looked like a truncated scan of real work. And
+    `promoted` is the one metric that says whether the loop is working, so it
+    is counted un-capped.
+    """
+    import asyncio
+
+    if not asyncio.run(_db_available()):
+        pytest.skip("No live Postgres with hafiz schema available")
+
+    proj = "_distill_limit_test"
+    written_ids: list[str] = []
+    try:
+        notes: list[str] = []
+        for i in range(3):
+            res = runner.invoke(app, ["note", f"LIMIT candidate {i}", "--project", proj, "--json"])
+            assert res.exit_code == 0, res.output
+            notes.append(json.loads(res.output)["annotation"]["id"])
+        written_ids.extend(notes)
+
+        # Promote two of the three.
+        for note_id in notes[:2]:
+            res = runner.invoke(
+                app,
+                [
+                    "observe",
+                    f"LIMIT distilled {note_id[:8]}",
+                    "--type",
+                    "decision",
+                    "--project",
+                    proj,
+                    "--derived-from",
+                    note_id,
+                    "--json",
+                ],
+            )
+            assert res.exit_code == 0, res.output
+            written_ids.append(json.loads(res.output)["annotation"]["id"])
+
+        res = runner.invoke(app, ["distill", "--project", proj, "--limit", "2", "--json"])
+        assert res.exit_code == 0, res.output
+        data = json.loads(res.output)
+        # The one pending note survives the cap; the promoted pair never
+        # competed for a slot.
+        assert [n["id"] for n in data["notes"]] == [notes[2]]
+        assert data["backlog"]["pending"] == 1
+        assert data["backlog"]["promoted"] == 2
+    finally:
+        for ann_id in written_ids:
+            runner.invoke(app, ["forget", ann_id, "--annotation"])

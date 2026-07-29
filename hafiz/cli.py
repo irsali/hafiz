@@ -1219,13 +1219,36 @@ def distill(
         "--no-transcripts",
         help="Only surface notes; skip transcript candidates.",
     ),
+    include_promoted: bool = typer.Option(
+        False,
+        "--include-promoted",
+        help=(
+            "Also show captures a live annotation already cites via "
+            "--derived-from. Hidden by default — those are distilled."
+        ),
+    ),
     limit: int = typer.Option(200, "--limit", "-l", help="Maximum notes (default 200)."),
+    message_limit: int | None = typer.Option(
+        None,
+        "--message-limit",
+        help="Maximum source-layer turns (default: distill.message_limit, 50).",
+    ),
+    brief: bool = typer.Option(
+        False,
+        "--brief",
+        help=(
+            "Token-lean markdown for a session hook. Prints NOTHING unless the "
+            "backlog clears distill.brief_min_pending / brief_min_age_days."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """Surface recent notes + transcripts as promotable candidates.
+    """Surface the promotable backlog — recent notes + transcript turns, grouped by theme.
 
-    Distill is a SCANNER, not a promoter. Read the candidates, then
-    promote via `hafiz observe '<distilled>' --type decision --derived-from <ids>`.
+    Distill is a SCANNER, not a promoter. Read the candidates, then promote via
+    `hafiz observe '<distilled>' --type decision --derived-from <ids>`. Citing a
+    capture is what drains it from the backlog; `hafiz forget <id> --annotation`
+    declines one.
     """
     if project and workspace:
         typer.echo("Error: --project and --workspace are mutually exclusive.")
@@ -1240,8 +1263,11 @@ def distill(
         session_id=session,
         task=task,
         include_transcripts=not no_transcripts,
+        include_promoted=include_promoted,
         limit=limit,
+        message_limit=message_limit,
         output_json=json_output,
+        brief=brief,
     )
 
 

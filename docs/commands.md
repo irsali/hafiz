@@ -375,7 +375,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 | `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips *near*-duplicate detection; still collapses byte-identical writes) | Embed | `--json` | rich panel |
 | `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations and propose a resolution to run | Embed | `--json` | rich panels |
 | `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables · `--format mermaid` |
-| `distill` | Surface recent notes as promotable candidates (scanner, not promoter) | — | `--json` | rich tables |
+| `distill` | Surface the promotable backlog — recent notes + transcript turns, grouped into themes (scanner, not promoter) | Embed | `--json` · `--brief` | rich panels |
 
 - **Annotation kinds**: `fact` · `decision` · `learning` · `pattern` · `warning` · `note` · `concept` · `service`.
 - **Auto-captured git context**: `commit_hash` column; `branch` / `is_dirty` in metadata JSONB. Captured when writing inside a git repo.
@@ -398,6 +398,21 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
     - JSON shape: `{action, scanned, total_live, truncated, threshold, total, clusters: [{kind, project, suggested_action, primary_id, commands: [...], members: [{id, content, score, source, valid_from, chars, primary}]}]}`.
     - The count also rides on `doctor` (and so on `status --diagnose`) as **Knowledge base deduplicated**, because a read-only command nobody remembers to run surfaces nothing. It is not on `status`: with no vector index on `annotations.embedding` the count is a quadratic scan (~310 ms at 1,099 rows), and `status` is on the hot path.
 - **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
+
+#### The distillation backlog (`distill`)
+
+`distill` is still a scanner and still never calls an LLM — the synthesis is yours. What is automatic is the *backlog*: it drains, it groups itself, and it can come find you.
+
+- **It drains, using state that already existed.** There is no "distilled" flag and no proposals table. A capture leaves the queue when `observe --derived-from <id>` cites it (**promoted** — that citation in `annotation_targets` is the receipt) or when `forget <id> --annotation` retires it (**declined** — the candidate query only ever returned live rows). A citation from an annotation that was itself retired or expired doesn't count: the distilled belief is gone, so the note is promotable again. `--include-promoted` shows the drained rows, flagged `promoted: true`, for auditing.
+- **Themes, not a flat list.** Candidates are grouped by embedding similarity using the same single-linkage clustering as `reconcile`, at `distill.cluster_threshold` (default `0.65`). That floor is deliberately far below `dedup.threshold` (`0.88`): dedup asks "is this the same claim restated?", clustering asks "are these about the same thing?" — at `0.88` essentially nothing groups. Notes and transcript turns cluster **together**, so a note lands with the turns it came from and one `observe` can cite both. Each theme carries a `scaffold` citing **every** member — a truncated citation list would strand the uncited members in the queue permanently.
+- **An unembedded turn is not a candidate.** Selective embedding already declined it at import (short turns, pure tool-result echoes). Re-offering it here contradicts that judgement: on a real 90-day window it buried 2 useful themes under ~26 singletons of browser chatter and raw `<toolCall>` echoes. The drop is counted in `backlog.skipped_unembedded`, never silent. Notes are exempt — a note is a deliberate capture, so an unembedded one stays as a singleton.
+- **Retention is a filter, not a nicety.** Turns whose communication is past `retention_until` are excluded. Distilling one would mint a fresh annotation carrying its content, and an annotation has no `retention_until` — the source data would outlive the window it was promised to expire in. The `forget --all-expired` sweep can lag; this must not.
+- **`--brief` is the automatic surface.** Token-lean markdown for a session-start hook, printed with plain `print` (Rich soft-wrap would insert hard newlines mid-command, and a wrapped scaffold is a broken scaffold). It prints **nothing at all** unless the backlog clears `distill.brief_min_pending` (default 3) **or** `distill.brief_min_age_days` (default 2.0) — either fires it. Silence has to be the ordinary answer or the hook gets removed. Rendering is capped by `brief_max_themes` / `brief_max_members`, and anything dropped is stated in the output.
+- **Ordering:** biggest theme first, then most recent — the head of the list is where distillation pays best. Members inside a theme run oldest-first, so reading one is reading how the thought developed.
+- **Caps:** `--limit` on notes (default 200), `--message-limit` on turns (default `distill.message_limit`, 50). Turns are taken salient-first then newest; the previous hardcoded 50 under `ts ASC` surfaced the *oldest* fifty in a window and ignored `marked_salient` entirely.
+- **`--json` shape:** the existing keys are unchanged, plus `notes[].promoted`, and two new blocks:
+  - `backlog: {pending, promoted, oldest_pending_age_days, themes, clustered, skipped_unembedded}`. `pending` is derived from the themes, not the raw candidate lists, so "30 pending in 14 themes" cannot disagree with itself and the `--brief` gate counts only work a reader can act on.
+  - `themes: [{size, score, oldest, newest, scaffold, members: [{id, kind, label, ts, content}]}]` where `kind` is `note` or `message`.
 
 ### Captures (transcripts / multi-page dumps)
 
@@ -562,7 +577,10 @@ Defaults & flags:
 | `--session` | `observe`, `note`, `journal`, `distill` | Explicit session id |
 | `--task` | `observe`, `note`, `journal`, `distill` | Explicit task label |
 | `--supersedes` | `observe`, `note` | UUID of annotation being replaced |
-| `--derived-from` | `observe`, `note` | UUIDs this row was distilled from |
+| `--derived-from` | `observe`, `note` | UUIDs this row was distilled from — also what drains those ids from the `distill` backlog |
+| `--include-promoted` | `distill` | Show captures a live annotation already cites (hidden by default) |
+| `--message-limit` | `distill` | Cap on source-layer turns (default `distill.message_limit`, 50) |
+| `--brief` | `distill` | Token-lean markdown for a session hook; silent unless the backlog clears its gate |
 | `--include-superseded` | `query --observations` | Return superseded / expired rows |
 | `--include-transcripts` | `query`, `context` | Add source-layer transcript matches to results (off by default) |
 | `--include-domain` | `query`, `context`, `session start` | Comma-separated data-domain allowlist (`code`, `doc`, `chat`, …). Domain = `kind` prefix before the first dot. |

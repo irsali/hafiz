@@ -1,5 +1,5 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 12 -->
+<!-- SKILLS_VERSION: 13 -->
 # Hafiz — Workspace Intelligence (v13)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
@@ -264,7 +264,8 @@ with `[telemetry] retrieval = false`. Query text stays on the machine.
 | `hafiz observe "<text>" --derived-from <id>,<id>` | Cite annotations OR messages OR sessions — polymorphic via the ``annotation_targets`` pivot |
 | `hafiz note "<text>" --source agent:<name>` | Capture a raw thought — anything below decision-grade |
 | `hafiz journal --since 7d --json` | "What did I record recently?" — annotations grouped by day |
-| `hafiz distill --since 7d --json` | Promotable notes + transcript turns with a ready observe scaffold |
+| `hafiz distill --since 7d --json` | Promotable backlog — notes + transcript turns grouped into themes, each with a ready observe scaffold |
+| `hafiz distill --brief` | Same backlog, token-lean; prints nothing unless it clears its gate — the form to put in a session-start hook |
 | `hafiz reconcile --json` | Read-only sweep — clusters near-duplicate live annotations and emits the supersede/retire commands |
 | `hafiz import claude-code --project <name>` | Post-hoc importer for Claude Code session JSONL (idempotent) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
@@ -282,11 +283,42 @@ The reasoning loop:
 
 2. **Review.** `hafiz journal --since 7d` groups by day.
 
-3. **Distill.** `hafiz distill --since 7d` lists promotable notes.
-   Hafiz does **not** call an LLM — you are the distiller. Promote via:
+3. **Distill.** `hafiz distill --since 7d` groups the promotable backlog
+   into **themes** — notes and transcript turns clustered together by
+   similarity, so a note arrives alongside the turns it came from. Each
+   theme prints the one `observe` that would drain it. Hafiz does **not**
+   call an LLM — you are the distiller. Promote via:
    ```bash
    hafiz observe "<distilled decision>" --type decision --derived-from <note-id>,<note-id>
    ```
+
+   **The backlog drains itself, and `--derived-from` is what drains it.**
+   Citing a capture is the promotion receipt, so there is no separate
+   bookkeeping step — and no way for the queue to keep re-offering work
+   you already did. Cite **every** id in the theme, not just the one you
+   found most useful; an uncited member stays in the queue forever. To
+   reject a capture instead of promoting it, retire it:
+
+   ```bash
+   hafiz forget <note-id> --annotation      # declined, not promoted
+   hafiz distill --include-promoted --json  # audit what's already drained
+   ```
+
+   **Sleep-time distillation.** `hafiz distill --brief` renders the
+   backlog as token-lean markdown and prints **nothing at all** unless it
+   is big enough or old enough to be worth interrupting a session for.
+   That makes it safe in a session-start hook:
+
+   ```bash
+   # Never let it fail a turn: bound it, swallow errors, exit 0.
+   timeout 10s hafiz distill --since 30d --brief 2>/dev/null || true
+   ```
+
+   When it does fire, you are the sleep-time agent: read the themes,
+   write the observations. Hafiz assembles and surfaces the queue; it
+   never synthesizes a belief on its own. Gate and clustering tunables
+   live under `[distill]` (`brief_min_pending`, `brief_min_age_days`,
+   `cluster_threshold`).
 
 4. **Handle contradicting knowledge — never overwrite.** When new
    information conflicts with something already recorded, Hafiz's model
@@ -669,7 +701,7 @@ workstation is a no-op, not a hazard.
 | `hafiz query --observations "<topic>" --include-superseded` | Read prior beliefs — superseded/expired annotations, dimmed | `--include-superseded`, plus all `query --observations` flags |
 | `hafiz note "<text>"` | Low-bar capture — `kind="note"`. Never gated: a byte-identical repeat returns the existing row with `deduped: true` and exit 0. | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
-| `hafiz distill` | Promotable notes (scanner; no LLM call) | `--since`, `--project`, `--session`, `--task`, `--limit`, `--json` |
+| `hafiz distill` | Promotable backlog, grouped into themes (scanner; no LLM call). Drains via `observe --derived-from`; decline with `forget --annotation`. | `--since`, `--project`, `--session`, `--task`, `--no-transcripts`, `--include-promoted`, `--limit`, `--message-limit`, `--brief`, `--json` |
 | `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations and emit the supersede/retire commands to run. Scans everything by default; `--limit 0` = all, and a cap that bites reports `truncated: true`. | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
 | `hafiz session start "<name>"` | Named session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` on the same cursor. Keyed by TTY, or by `--session-key` / `$HAFIZ_SESSION_KEY` when there is no terminal (hooks, CI). | `--task`, `--project`, `--session-key`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz session show` / `end` | Inspect / clear | `--session-key`, `--json` |
