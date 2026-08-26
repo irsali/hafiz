@@ -341,6 +341,17 @@ def query(
         "--source",
         help="(with --observations) Filter by source (e.g. user:anjum, agent:claude-code).",
     ),
+    tags: str | None = typer.Option(
+        None,
+        "--tags",
+        help=(
+            "(with --observations) Keep only rows carrying any of these tags "
+            "(comma-separated). Use it to pin a curated set — 'the rules that "
+            "always apply' is not a semantic property, so no query text can "
+            "retrieve it. Pair with --no-rerank and no --min-score for an "
+            "exact, order-stable pin."
+        ),
+    ),
     include_superseded: bool = typer.Option(
         False,
         "--include-superseded",
@@ -402,6 +413,13 @@ def query(
             err=True,
         )
 
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    if tag_list and not (observations or recall_alias):
+        # A filter that silently does nothing is worse than no filter: the
+        # caller would trust an unfiltered result set. Only the wisdom layer
+        # carries tags, so refuse rather than ignore.
+        _fail("--tags applies to annotations; add --observations.", fmt=fmt, code=1)
+
     if observations or recall_alias:
         from hafiz.commands.observe import run_recall
 
@@ -413,6 +431,7 @@ def query(
                 workspace=workspace,
                 kind=type,
                 source=source,
+                tags=tag_list,
                 include_superseded=include_superseded,
                 rerank=not no_rerank,
                 min_score=min_score,

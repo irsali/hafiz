@@ -27,6 +27,7 @@ import networkx as nx
 from sqlalchemy import select
 
 from hafiz.core import graph_analysis as ga
+from hafiz.core import telemetry
 from hafiz.core.annotations import AnnotationResult, search_annotations
 from hafiz.core.config import get_settings
 from hafiz.core.database import File, get_session_factory
@@ -234,10 +235,15 @@ async def build_context(
         include_domains=include_domains,
         exclude_domains=exclude_domains,
         similarity_threshold=min_score or 0.0,
+        telemetry_command=telemetry.CONTEXT,
     )
     entities = await _graph_from_chunks(chunks, project=project)
     annotations = await search_annotations(
-        query, limit=limit_annotations, project=project, min_score=min_score
+        query,
+        limit=limit_annotations,
+        project=project,
+        min_score=min_score,
+        telemetry_command=telemetry.CONTEXT_OBSERVATIONS,
     )
 
     return ContextBundle(
@@ -333,10 +339,15 @@ async def build_workspace_context(
         include_domains=include_domains,
         exclude_domains=exclude_domains,
         similarity_threshold=min_score or 0.0,
+        telemetry_command=telemetry.CONTEXT,
     )
     entities = await _graph_from_chunks(chunks, project=projects)
     annotations = await search_annotations(
-        query, limit=limit_annotations, project=projects, min_score=min_score
+        query,
+        limit=limit_annotations,
+        project=projects,
+        min_score=min_score,
+        telemetry_command=telemetry.CONTEXT_OBSERVATIONS,
     )
 
     distribution: dict[str, int] = {}

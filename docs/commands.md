@@ -235,6 +235,17 @@ score near-perfectly against every future query — a permanent noise magnet.
 
 **Reranking** (on `query --observations`): vector similarity compresses relevant rows and near-random noise into a narrow band; a cross-encoder re-scores the top `limit × rerank.candidate_multiplier` candidates against the query and reorders them, then returns the top `limit`. On by default (`rerank.enabled` config); `--no-rerank` skips it. The reranker model (`Xenova/ms-marco-MiniLM-L-6-v2`, ~80 MB) ships with fastembed — no extra dependency — and loads lazily, cached alongside the embedding model. Reranking is strictly a reordering: if the model is unavailable it falls back to vector order. Warm via the daemon it adds ~300-400ms; the gain is sharp signal/noise separation. Disable on constrained hosts with `hafiz config set rerank.enabled false`.
 
+**Pinning vs. ranking** (`--tags` on `query --observations`): some sets are
+defined by curation, not by content. "The rules that always apply" is the
+canonical case — it is not a semantic property, so no query text retrieves it.
+Measured on a 1,528-row store, the best hand-tuned query for the topic-independent
+hard rules recovered 2 of ~6; the rest sat below any usable floor. `--tags`
+closes that gap: tag the rows once, then address them exactly. The filter runs in
+SQL alongside the vector scan, so `--limit` counts only matching rows. For a
+stable pin, pair it with `--no-rerank` and **no** `--min-score` — a floor would
+re-introduce the ranking judgement the pin exists to bypass. Tags are still
+free-form; hafiz does not reserve any name.
+
 #### Two scores, and which one to filter on
 
 `query --observations --json` returns **both**:
@@ -525,10 +536,11 @@ One append-only source-layer table, one INSERT per search.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `retrievals` | Never-recalled knowledge, most-recalled rows, and queries that returned nothing. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], telemetry_started, enabled}` | rich tables |
+| `retrievals` | Never-recalled knowledge, most-recalled rows, per-entry-point usage, and queries that returned nothing. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, by_command[], empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], telemetry_started, enabled}` | rich tables |
 
 - **Recorded in `hafiz/core/`, not the commands layer.** `hafiz/core/daemon.py` calls `search_annotations` directly, so command-layer telemetry would silently miss every warm request — the exact failure class this audit kept finding. `vector_search` / `search_annotations` default `telemetry_command` to their label, so a *new* caller is recorded without knowing telemetry exists; pass `None` to opt a call out.
 - **Never fails a search.** Recording is best-effort and swallows everything. A memory layer that can break the read path gets removed.
+- **`by_command` answers "is anyone calling this?"** — `{command, calls, empty, avg_top_score}` per entry point. Each label is one search against one layer, so a `context` bundle records **two** rows: `context` (units) and `context --observations` (annotations). Those labels exist because they didn't: `context` used to record under `query` / `query --observations`, which made the command the docs open with indistinguishable from a plain query — a 30-day audit could not tell "never used" from "never instrumented". The `enabled` flag and `retrievals` total say whether recording works; `by_command` says whether the *product* is being used.
 - **`n_results = 0` rows are the point.** The gap between what agents ask for and what the store holds is the only signal that says what to write down *next*; nothing else in hafiz produces it.
 - **`blind_before`** is the subset of never-recalled rows written before telemetry existed. Without it, "1,094 never recalled" reads as an indictment of knowledge that simply predates the log.
 - **Query text is a new data category** for this store: it's what you were *looking for*, not what you concluded. So it lands in the source layer with the source layer's guarantees — `retention_until` (default 90d), swept by `forget --all-expired`, counted in `status`/`doctor` — and it never leaves the machine.
@@ -582,6 +594,7 @@ Defaults & flags:
 | `--message-limit` | `distill` | Cap on source-layer turns (default `distill.message_limit`, 50) |
 | `--brief` | `distill` | Token-lean markdown for a session hook; silent unless the backlog clears its gate |
 | `--include-superseded` | `query --observations` | Return superseded / expired rows |
+| `--tags` | `query --observations` | Comma-separated tag allowlist; keeps rows carrying **any** of them (array overlap). Filters in SQL, so `--limit` counts only matching rows. Refused without `--observations` — only annotations carry tags. |
 | `--include-transcripts` | `query`, `context` | Add source-layer transcript matches to results (off by default) |
 | `--include-domain` | `query`, `context`, `session start` | Comma-separated data-domain allowlist (`code`, `doc`, `chat`, …). Domain = `kind` prefix before the first dot. |
 | `--exclude-domain` | `query`, `context`, `session start` | Comma-separated data-domain denylist. Mutually exclusive *per-domain* with `--include-domain`. |

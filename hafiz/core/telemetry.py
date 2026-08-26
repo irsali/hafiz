@@ -31,7 +31,12 @@ logger = logging.getLogger(__name__)
 #: derived from argv so the daemon and the CLI agree on the label.
 QUERY = "query"
 OBSERVATIONS = "query --observations"
+#: ``context`` fans out to both layers, so it records one row per layer under
+#: its own labels. Without them a context bundle was indistinguishable from a
+#: plain ``query`` — the flagship command was invisible in its own telemetry,
+#: and "never used" read the same as "never instrumented".
 CONTEXT = "context"
+CONTEXT_OBSERVATIONS = "context --observations"
 RECALL = "recall"
 
 
@@ -198,10 +203,38 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
             )
         ).one()
 
+        # Which entry points are actually in use. Without this the report can
+        # say how well retrieval performed but not whether anyone is calling
+        # the command that matters — and a label with no reader is not
+        # instrumentation. Empty-per-command is here too because a caller that
+        # always comes back empty is a different problem from an unused one.
+        by_command = (
+            await session.execute(
+                select(
+                    Retrieval.command,
+                    func.count().label("n"),
+                    func.sum(cast(and_(Retrieval.n_results == 0), Integer)).label("empty"),
+                    func.avg(Retrieval.top_score).label("avg_top"),
+                )
+                .where(Retrieval.at >= since)
+                .group_by(Retrieval.command)
+                .order_by(desc(literal_column("n")))
+            )
+        ).all()
+
     return {
         "since_days": since_days,
         "telemetry_started": first_row.isoformat() if first_row else None,
         "retrievals": total,
+        "by_command": [
+            {
+                "command": c,
+                "calls": n,
+                "empty": int(e or 0),
+                "avg_top_score": round(float(a), 3) if a is not None else None,
+            }
+            for c, n, e, a in by_command
+        ],
         "empty_result_rate": (
             round((empty_rate.empty or 0) / empty_rate.n, 3) if empty_rate.n else None
         ),

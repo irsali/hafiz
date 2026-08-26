@@ -87,6 +87,26 @@ def run_retrievals(
     console.print()
     console.print(table)
 
+    if report["by_command"]:
+        console.print()
+        # Retrieval quality and product usage are different questions, and the
+        # metrics table above only answers the first. A store can look healthy
+        # here while the command the docs open with is never called.
+        usage = Table(title="Where the calls come from", border_style="cyan")
+        usage.add_column("Entry point")
+        usage.add_column("Calls", justify="right")
+        usage.add_column("Empty", justify="right")
+        usage.add_column("Avg top score", justify="right")
+        for row in report["by_command"]:
+            avg = row["avg_top_score"]
+            usage.add_row(
+                row["command"],
+                str(row["calls"]),
+                f"[yellow]{row['empty']}[/yellow]" if row["empty"] else "0",
+                f"{avg:.3f}" if avg is not None else "[dim]—[/dim]",
+            )
+        console.print(usage)
+
     if report["unanswered"]:
         console.print()
         gaps = Table(

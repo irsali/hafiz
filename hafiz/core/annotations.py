@@ -824,6 +824,7 @@ async def search_annotations(
     project: str | list[str] | None = None,
     kind: str | None = None,
     source: str | None = None,
+    tags: list[str] | None = None,
     active_only: bool = True,
     rerank: bool | None = None,
     min_score: float | None = None,
@@ -845,6 +846,13 @@ async def search_annotations(
     reranking ran, the cosine similarity otherwise. It is applied **after**
     reranking and **before** the ``limit`` truncation, so the caller gets up
     to ``limit`` rows that all clear the floor.
+
+    ``tags`` narrows to rows carrying **any** of the given tags (array overlap),
+    applied in SQL alongside the vector scan so the limit counts only matching
+    rows. This is the one filter that makes a *curated* set addressable rather
+    than merely rankable: "the rules that always apply" is not a semantic
+    property, so no query text can retrieve it — a caller that needs an exact,
+    hand-picked set pins it by tag and skips the floor.
 
     Raises:
         EmptyQueryError: if ``query`` is blank.
@@ -883,6 +891,9 @@ async def search_annotations(
             stmt = stmt.where(Annotation.kind == kind)
         if source:
             stmt = stmt.where(Annotation.source == source)
+        if tags:
+            # Overlap (&&), not containment: any one matching tag qualifies.
+            stmt = stmt.where(Annotation.tags.overlap(tags))
         if active_only:
             now = datetime.now(UTC)
             stmt = stmt.where(Annotation.valid_from <= now)
@@ -937,6 +948,7 @@ async def search_annotations(
                 "project": project,
                 "kind": kind,
                 "source": source,
+                "tags": tags,
                 "limit": limit,
                 "min_score": min_score,
                 "include_superseded": None if active_only else True,

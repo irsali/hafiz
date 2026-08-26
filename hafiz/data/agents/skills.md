@@ -137,6 +137,15 @@ Three flags, on both `query` and `context`:
 
 `--limit` also exists on `context` (caps each section).
 
+**When you need an exact set rather than the best matches, pin it by tag.**
+`query --observations --tags <a,b>` keeps only rows carrying any of those tags
+(filtered in SQL, so `--limit` counts matching rows). This is the escape hatch
+for sets that curation defines and content does not — "the rules that always
+apply" is not a semantic property, so no query text retrieves it reliably. For a
+stable pin, pair `--tags` with `--no-rerank` and **no** `--min-score`; a floor
+would re-introduce exactly the ranking judgement the pin exists to bypass.
+`--tags` is refused without `--observations` (only annotations carry tags).
+
 **`compact` and `md` give you an excerpt of a long annotation, not the whole
 record.** Anything over `[annotations] snippet_chars` (default 480) is trimmed
 to its best-matching span — measured at **−65%** on a `--observations --limit
@@ -672,7 +681,7 @@ workstation is a no-op, not a hazard.
 |---------|---------|-----------|
 | `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
-| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Cross-encoder reranked by default. Renamed from `--recall`; that alias still works one release. | `--type`, `--limit`, `--min-score`, `--format`, `--with-ids`, `--no-rerank`, `--project`, `--workspace`, `--json` |
+| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Cross-encoder reranked by default. Renamed from `--recall`; that alias still works one release. | `--type`, `--limit`, `--min-score`, `--format`, `--with-ids`, `--no-rerank`, `--tags`, `--project`, `--workspace`, `--json` |
 
 - **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the cursor.
 - **`--min-score FLOAT`** (0–1): relevance floor on the score results are *ranked* by — the reranked score under `--observations`, cosine similarity otherwise. Applied after reranking, before the limit. Reranked scores separate sharply, so useful floors are low (`0.05` default-ish, `0.4` aggressive); cosine floors sit around `0.5`–`0.65`.

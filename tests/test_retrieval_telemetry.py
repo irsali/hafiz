@@ -201,6 +201,50 @@ def test_search_records_by_default_so_a_new_caller_cannot_forget():
     )
 
 
+def test_context_records_under_its_own_labels():
+    """`context` fans out to both layers. Labelling those calls `query` /
+    `query --observations` made the flagship command invisible in its own
+    telemetry — a 30-day audit could not distinguish "never used" from "never
+    instrumented", and `telemetry.CONTEXT` sat defined-but-unreferenced. Assert
+    on the source so the labels can't silently revert to the defaults."""
+    import inspect
+
+    from hafiz.core import context as context_mod
+
+    src = inspect.getsource(context_mod)
+    assert src.count("telemetry_command=telemetry.CONTEXT,") == 2
+    assert src.count("telemetry_command=telemetry.CONTEXT_OBSERVATIONS,") == 2
+    assert telemetry.CONTEXT != telemetry.QUERY
+    assert telemetry.CONTEXT_OBSERVATIONS != telemetry.OBSERVATIONS
+
+
+async def test_the_report_breaks_down_by_command(db):
+    """A label with no reader is not instrumentation: the report has to say
+    which entry points are in use, or wiring `context` changes nothing you can
+    see."""
+    await telemetry.record_retrieval(
+        command=telemetry.CONTEXT, query=f"{MARK} bundle", result_ids=[], top_score=None
+    )
+    await telemetry.record_retrieval(
+        command=telemetry.CONTEXT_OBSERVATIONS,
+        query=f"{MARK} bundle",
+        result_ids=[uuid.uuid4()],
+        top_score=0.9,
+    )
+    report = await telemetry.retrieval_report(since_days=1)
+
+    rows = {r["command"]: r for r in report["by_command"]}
+    assert telemetry.CONTEXT in rows
+    assert telemetry.CONTEXT_OBSERVATIONS in rows
+    assert rows[telemetry.CONTEXT]["calls"] >= 1
+    # Counts are per-command, and every row carries the same keys so a caller
+    # can tabulate without probing for absent fields.
+    for r in report["by_command"]:
+        assert set(r) == {"command", "calls", "empty", "avg_top_score"}
+        assert isinstance(r["empty"], int)
+    assert sum(r["calls"] for r in report["by_command"]) == report["retrievals"]
+
+
 # ── Retention ───────────────────────────────────────────────────────────
 
 

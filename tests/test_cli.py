@@ -93,6 +93,50 @@ def test_query_recall_has_no_rerank_flag():
     assert "--no-rerank" in result.output
 
 
+def test_query_tags_flag_is_documented():
+    result = runner.invoke(app, ["query", "--help"])
+    assert result.exit_code == 0
+    assert "--tags" in result.output
+
+
+def test_query_tags_without_observations_is_refused():
+    """Only annotations carry tags. Silently ignoring the filter would hand
+    back an unfiltered set the caller then trusts, so refuse instead."""
+    result = runner.invoke(app, ["query", "anything", "--tags", "always"])
+    assert result.exit_code == 1
+    assert "--observations" in result.output
+
+
+def test_query_tags_are_split_and_trimmed(monkeypatch):
+    """`--tags a, b` reaches the search layer as ["a", "b"] — comma-split,
+    whitespace-trimmed, empties dropped."""
+    captured = {}
+
+    def fake_run_recall(text, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("hafiz.commands.observe.run_recall", fake_run_recall)
+    result = runner.invoke(
+        app, ["query", "standing rules", "--observations", "--tags", "always, pinned ,"]
+    )
+    assert result.exit_code == 0
+    assert captured["tags"] == ["always", "pinned"]
+
+
+def test_query_without_tags_passes_none(monkeypatch):
+    """Absent --tags must be None, not an empty list — an empty list would
+    read as "match no tags" if a future caller truth-tests it differently."""
+    captured = {}
+
+    def fake_run_recall(text, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("hafiz.commands.observe.run_recall", fake_run_recall)
+    result = runner.invoke(app, ["query", "standing rules", "--observations"])
+    assert result.exit_code == 0
+    assert captured["tags"] is None
+
+
 def test_forget_annotation_rejects_hard_combo():
     result = runner.invoke(app, ["forget", "some-id", "--annotation", "--hard"])
     assert result.exit_code == 1
