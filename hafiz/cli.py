@@ -413,7 +413,13 @@ def query(
             err=True,
         )
 
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    tag_list = _parse_domain_csv(tags)
+    if tags is not None and tag_list is None:
+        # `--tags ""` / `--tags ","` / an unset shell variable. Falling through
+        # would run an ordinary semantic recall while the caller believes it
+        # holds a curated pin — the same failure as the blank query that went
+        # unnoticed in a hook for 3.5 weeks, so it exits the same way.
+        _fail("--tags was passed but names no tag.", fmt=fmt, code=2)
     if tag_list and not (observations or recall_alias):
         # A filter that silently does nothing is worse than no filter: the
         # caller would trust an unfiltered result set. Only the wisdom layer

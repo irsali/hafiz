@@ -240,11 +240,21 @@ defined by curation, not by content. "The rules that always apply" is the
 canonical case — it is not a semantic property, so no query text retrieves it.
 Measured on a 1,528-row store, the best hand-tuned query for the topic-independent
 hard rules recovered 2 of ~6; the rest sat below any usable floor. `--tags`
-closes that gap: tag the rows once, then address them exactly. The filter runs in
+closes that gap: tag the rows once, then address them by tag. The filter runs in
 SQL alongside the vector scan, so `--limit` counts only matching rows. For a
 stable pin, pair it with `--no-rerank` and **no** `--min-score` — a floor would
 re-introduce the ranking judgement the pin exists to bypass. Tags are still
 free-form; hafiz does not reserve any name.
+
+**`--limit` still truncates, and silently.** `--tags` picks *which* rows are
+eligible; it does not exempt them from the limit, which defaults to **10** and
+cuts in cosine order with no signal that anything was dropped (`total` in
+`--json` is the post-truncation count). So a pin is only exact when `--limit` is
+at least the size of the tagged set — set it deliberately above the expected
+size, and treat a result count equal to the limit as "possibly truncated".
+Adding an ANN index (`hnsw`/`ivfflat`) to `annotations.embedding` would break
+the guarantee differently and more quietly, by bounding recall before the tag
+filter is applied; there is no such index today.
 
 #### Two scores, and which one to filter on
 
@@ -541,6 +551,8 @@ One append-only source-layer table, one INSERT per search.
 - **Recorded in `hafiz/core/`, not the commands layer.** `hafiz/core/daemon.py` calls `search_annotations` directly, so command-layer telemetry would silently miss every warm request — the exact failure class this audit kept finding. `vector_search` / `search_annotations` default `telemetry_command` to their label, so a *new* caller is recorded without knowing telemetry exists; pass `None` to opt a call out.
 - **Never fails a search.** Recording is best-effort and swallows everything. A memory layer that can break the read path gets removed.
 - **`by_command` answers "is anyone calling this?"** — `{command, calls, empty, avg_top_score}` per entry point. Each label is one search against one layer, so a `context` bundle records **two** rows: `context` (units) and `context --observations` (annotations). Those labels exist because they didn't: `context` used to record under `query` / `query --observations`, which made the command the docs open with indistinguishable from a plain query — a 30-day audit could not tell "never used" from "never instrumented". The `enabled` flag and `retrievals` total say whether recording works; `by_command` says whether the *product* is being used.
+  - `avg_top_score` is a SQL `AVG`, so it skips rows with a NULL `top_score` — i.e. it averages the **non-empty** calls only. It is not `calls`-weighted; don't multiply the two.
+  - It covers the two instrumented layers, not every command. `recall` (source layer) records nothing — `telemetry.RECALL` is defined but unwired — so its absence from `by_command` is "not instrumented", not "not used". That's the same ambiguity these labels fixed for `context`, still open one layer down.
 - **`n_results = 0` rows are the point.** The gap between what agents ask for and what the store holds is the only signal that says what to write down *next*; nothing else in hafiz produces it.
 - **`blind_before`** is the subset of never-recalled rows written before telemetry existed. Without it, "1,094 never recalled" reads as an indictment of knowledge that simply predates the log.
 - **Query text is a new data category** for this store: it's what you were *looking for*, not what you concluded. So it lands in the source layer with the source layer's guarantees — `retention_until` (default 90d), swept by `forget --all-expired`, counted in `status`/`doctor` — and it never leaves the machine.

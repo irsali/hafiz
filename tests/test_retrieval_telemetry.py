@@ -201,19 +201,34 @@ def test_search_records_by_default_so_a_new_caller_cannot_forget():
     )
 
 
-def test_context_records_under_its_own_labels():
+async def test_context_records_under_its_own_labels(monkeypatch):
     """`context` fans out to both layers. Labelling those calls `query` /
     `query --observations` made the flagship command invisible in its own
     telemetry — a 30-day audit could not distinguish "never used" from "never
-    instrumented", and `telemetry.CONTEXT` sat defined-but-unreferenced. Assert
-    on the source so the labels can't silently revert to the defaults."""
-    import inspect
+    instrumented", and `telemetry.CONTEXT` sat defined-but-unreferenced.
 
+    Asserted on the calls rather than on the source text: a `getsource`
+    substring count passes even if `vector_search` ignored the argument, and
+    breaks on a harmless reformat."""
     from hafiz.core import context as context_mod
 
-    src = inspect.getsource(context_mod)
-    assert src.count("telemetry_command=telemetry.CONTEXT,") == 2
-    assert src.count("telemetry_command=telemetry.CONTEXT_OBSERVATIONS,") == 2
+    seen = {}
+
+    async def fake_vector_search(query, **kw):
+        seen["units"] = kw.get("telemetry_command")
+        return []
+
+    async def fake_search_annotations(query, **kw):
+        seen["annotations"] = kw.get("telemetry_command")
+        return []
+
+    monkeypatch.setattr(context_mod, "vector_search", fake_vector_search)
+    monkeypatch.setattr(context_mod, "search_annotations", fake_search_annotations)
+    await context_mod.build_context("anything at all")
+
+    assert seen["units"] == telemetry.CONTEXT
+    assert seen["annotations"] == telemetry.CONTEXT_OBSERVATIONS
+    # Distinct from the plain-query labels, or the whole point is lost.
     assert telemetry.CONTEXT != telemetry.QUERY
     assert telemetry.CONTEXT_OBSERVATIONS != telemetry.OBSERVATIONS
 
@@ -242,7 +257,13 @@ async def test_the_report_breaks_down_by_command(db):
     for r in report["by_command"]:
         assert set(r) == {"command", "calls", "empty", "avg_top_score"}
         assert isinstance(r["empty"], int)
-    assert sum(r["calls"] for r in report["by_command"]) == report["retrievals"]
+    # Not asserted equal to report["retrievals"]: `total` and `by_command` are
+    # separate statements at READ COMMITTED, so each gets its own snapshot. On a
+    # live store with a per-prompt recall hook writing rows, one concurrent
+    # insert between them would fail an equality — a flaky test, not a defect.
+    assert sum(r["calls"] for r in report["by_command"]) >= 2
+    assert rows[telemetry.CONTEXT]["empty"] == 1  # the result_ids=[] call
+    assert rows[telemetry.CONTEXT]["avg_top_score"] is None  # NULLs are skipped, not zeroed
 
 
 # ── Retention ───────────────────────────────────────────────────────────

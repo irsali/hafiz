@@ -144,7 +144,15 @@ for sets that curation defines and content does not — "the rules that always
 apply" is not a semantic property, so no query text retrieves it reliably. For a
 stable pin, pair `--tags` with `--no-rerank` and **no** `--min-score`; a floor
 would re-introduce exactly the ranking judgement the pin exists to bypass.
-`--tags` is refused without `--observations` (only annotations carry tags).
+
+Two things to get right, or the pin quietly stops being exact:
+
+- **Raise `--limit` above the tagged set.** `--tags` chooses what's eligible, not
+  what survives; the limit still cuts (default 10, cosine order, no signal). A
+  result count equal to your limit means "possibly truncated".
+- **Pass a non-empty value.** `--tags ""` or an unset shell variable exits **2**
+  rather than running an unpinned recall you'd mistake for a pinned one. Same
+  for `--tags` without `--observations` (exit 1) — only annotations carry tags.
 
 **`compact` and `md` give you an excerpt of a long annotation, not the whole
 record.** Anything over `[annotations] snippet_chars` (default 480) is trimmed

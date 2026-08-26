@@ -145,6 +145,7 @@ class _Server:
                 project=req.get("project"),
                 kind=req.get("kind"),
                 source=req.get("source"),
+                tags=req.get("tags"),
                 rerank=req.get("rerank"),  # None → honor config default
                 min_score=req.get("min_score"),
             )

@@ -99,6 +99,17 @@ def test_query_tags_flag_is_documented():
     assert "--tags" in result.output
 
 
+def test_query_tags_empty_after_trimming_is_refused():
+    """`--tags ""` / `--tags ","` / an unset shell variable. Falling through
+    would run an ordinary recall while the caller believes it holds a curated
+    pin — the same silent-wrong-answer as the blank query that sat unnoticed in
+    a hook for 3.5 weeks, so it exits the same way."""
+    for value in ("", ",", " , "):
+        result = runner.invoke(app, ["query", "anything", "--observations", "--tags", value])
+        assert result.exit_code == 2, f"--tags {value!r} should refuse"
+        assert "no tag" in result.output
+
+
 def test_query_tags_without_observations_is_refused():
     """Only annotations carry tags. Silently ignoring the filter would hand
     back an unfiltered set the caller then trusts, so refuse instead."""
