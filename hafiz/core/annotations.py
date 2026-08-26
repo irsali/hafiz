@@ -22,7 +22,7 @@ model reference.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -550,11 +550,115 @@ async def store_annotation_checked(
     return StoreResult(annotation=ann, near_duplicates=near_duplicates)
 
 
-#: A newest row materially shorter than a sibling it would replace is not a safe
-#: plain retire — the longer row probably carries a qualifier (a scope limit, an
-#: excluded case) that the restatement dropped. Below this ratio the proposal
-#: downgrades to a merge the operator has to write.
-_MERGE_IF_SHORTER_THAN = 0.8
+#: Shortest run of words that reads as a distinct claim rather than phrasing.
+#: Used to grade `review` against `merge` — never to decide whether text may be
+#: dropped, which counts every word however short.
+_FRAGMENT_WORDS = 4
+
+#: Symbols that carry the meaning of the sentence they sit in. Stripping these
+#: made "latency <= 500" and "latency >= 500" compare as the same words, which
+#: on the retire path means proposing to destroy the surviving statement of a
+#: reversed bound. Mapped to word-like sentinels so they survive tokenizing and
+#: still align positionally.
+_OPERATOR_TOKENS = {
+    "<=": "\x00le",
+    ">=": "\x00ge",
+    "!=": "\x00ne",
+    "==": "\x00eq",
+    "->": "\x00to",
+    "<": "\x00lt",
+    ">": "\x00gt",
+}
+
+
+def _words(content: str) -> list[str]:
+    """Lowercased word tokens — the unit overlap is measured in.
+
+    Case and most punctuation are dropped deliberately: the duplicates this
+    command exists to find are re-records of the same event, and on the store it
+    was built against they differed mostly by a rewrite pass swapping ``+`` for
+    ``plus`` and stripping braces. Comparing raw text scored those as materially
+    different.
+
+    Two things are deliberately *not* dropped, because this feeds a decision
+    about destroying text rather than a retrieval score:
+
+    * **Comparison and equality operators** (see :data:`_OPERATOR_TOKENS`). A
+      reversed bound is the same hazard shape as the stage-vs-prod pair this
+      command exists for, and more likely in a store full of thresholds, ports
+      and versions.
+    * **Non-Latin scripts.** ``[^a-z0-9]`` erased CJK, Cyrillic, Greek, Arabic,
+      Hebrew, Devanagari and Thai wholesale, so any such row tokenized to
+      nothing and then compared as *fully contained* — turning the safety check
+      off entirely for those locales. ``\\w`` is Unicode-aware, so scripts
+      survive; unspaced scripts collapse to one token per run, which is coarse
+      but errs toward "not contained".
+    """
+    import re
+
+    lowered = content.lower()
+    for symbol, sentinel in _OPERATOR_TOKENS.items():
+        lowered = lowered.replace(symbol, f" {sentinel} ")
+    return re.findall(r"\w+|\x00\w+", lowered)
+
+
+def _text_delta(candidate: str, keeper: str) -> tuple[float, list[str], int]:
+    """How much ``candidate`` overlaps ``keeper``, and what only it says.
+
+    Returns ``(overlap, unique_fragments, unique_word_count)``. This is the
+    question an operator actually has to answer before retiring a row — "does
+    dropping this lose anything?" — and it is exactly computable, unlike the
+    similarity question cosine answers.
+
+    ``unique_fragments`` is **every** unmatched run, longest first — the caller
+    needs something to look at, and the short-run case is exactly the one worth
+    eyeballing. ``unique_word_count`` counts every unmatched word and is what
+    the decision keys on. A single one can be the whole point: a commit sha, an
+    AppID, a file:line, a port — or, in a pair this command's tests were written
+    around, one row held a test account's email and the other its password. So
+    ``_FRAGMENT_WORDS`` may grade how much work a cluster is; it never governs
+    whether text may be dropped.
+
+    What ``unique_word_count == 0`` proves, precisely: every word of
+    ``candidate`` also appears in ``keeper``, in order — a word-level
+    subsequence. That is strictly weaker than "the keeper says the same thing",
+    because a subsequence can invert meaning: "consent is not required" sits
+    inside "consent is not optional and consent is required". Callers must not
+    promise more than this.
+
+    Why this is not just cosine again: measured on a 1,540-row store, median
+    word-level overlap by cosine band ran 0.99+ -> 0.93, 0.97-0.99 -> 0.61,
+    0.95-0.97 -> 0.48, 0.92-0.95 -> 0.19, 0.88-0.92 -> 0.09. At the default
+    0.88 threshold, members share under a tenth of their words: same subject,
+    different statement. One such cluster paired the Web Channel v2 *stage*
+    pipeline path with the *prod* one, where the prod row says in as many words
+    "NOT banner/v2 like stage". Cosine cannot see that; this can.
+    """
+    import difflib
+
+    a, b = _words(candidate), _words(keeper)
+    if not a:
+        # Nothing to align, so containment cannot be established. Reporting it
+        # as contained is how a tokenizer gap becomes a destructive proposal:
+        # the previous version returned (1.0, [], 0) here and any content the
+        # tokenizer did not understand was declared redundant. Only byte-equal
+        # text is safe to call redundant without an alignment.
+        flat_a, flat_b = " ".join(candidate.split()), " ".join(keeper.split())
+        if flat_a and flat_a == flat_b:
+            return 1.0, [], 0
+        return 0.0, ([flat_a] if flat_a else []), 1
+    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    unmatched = [
+        (i1, i2) for tag, i1, i2, _, _ in matcher.get_opcodes() if tag in ("delete", "replace")
+    ]
+    # Every run, longest first — not only the long ones. A caller shown nothing
+    # cannot check anything, and the short-run case is precisely the one worth
+    # eyeballing. Length grades the tier; it is not a filter here.
+    fragments = [
+        " ".join(w.lstrip("\x00") for w in a[i1:i2])
+        for i1, i2 in sorted(unmatched, key=lambda r: r[0] - r[1])
+    ]
+    return round(matcher.ratio(), 4), fragments, sum(i2 - i1 for i1, i2 in unmatched)
 
 
 @dataclass
@@ -572,6 +676,16 @@ class ClusterMember:
     source: str | None
     valid_from: datetime
     primary: bool
+    #: Literal word-level overlap with the cluster's primary, 0–1. Distinct from
+    #: ``score``: cosine says "same subject", this says "same words".
+    overlap: float = 1.0
+    #: Every run of words this row has and the primary does not, longest first.
+    #: What the operator reads as "only here" before deciding.
+    unique_fragments: list[str] = field(default_factory=list)
+    #: Every word this row has and the primary does not, however short. This is
+    #: what the retire/merge decision is made on: one unmatched word can be a
+    #: commit sha or a password, and is gone for good once retired.
+    unique_words: int = 0
 
 
 @dataclass
@@ -581,12 +695,27 @@ class DuplicateCluster:
     Every proposal has the same shape — one row is ``primary``, the rest are
     retired — and ``action`` says what happens to the primary:
 
-    * ``"retire"`` — the primary is the newest row and no shorter than the ones
-      it replaces, so it survives untouched and the others are simply dropped.
-    * ``"merge"`` — the newest row is materially shorter than a sibling, so the
-      primary is instead the *longest* row and the operator has to write merged
-      text that supersedes it. Retiring the longer row against a shorter
-      restatement would silently drop whatever only it says.
+    * ``"retire"`` — every word of the siblings also appears in the primary, in
+      order, verified by alignment. No *wording* is lost. That is the strongest
+      thing text can establish, and it is still not "the primary says the same
+      thing": a subsequence can invert a claim ("consent is not required" sits
+      inside "consent is not optional and consent is required"), so this is the
+      cheapest tier to check, not a tier that skips checking.
+    * ``"review"`` — siblings differ only by stray words, none forming a run of
+      ``_FRAGMENT_WORDS``. Usually contractions and spelling variants; sometimes
+      a reversal. A glance settles it, and the proposal stays the safe one.
+    * ``"merge"`` — a sibling carries whole claims the primary lacks. Write text
+      that covers them (see ``unique_fragments``) before retiring anything.
+
+    The tiers grade **evidence, not meaning**. Whether an unmatched word is
+    rewording or reversal is a semantic judgement, and this command deliberately
+    does not guess: it says precisely what differs and leaves the call with the
+    operator. Earlier versions guessed — first from length, then from a
+    four-word floor — and each guess had a case where it proposed destroying a
+    fact.
+
+    Similarity plays no part in any of it. Members can sit at 0.9 cosine and
+    share under a tenth of their words, which is two facts about one subject.
     """
 
     kind: str
@@ -748,25 +877,92 @@ def _build_cluster(
 ) -> DuplicateCluster:
     """Assemble one cluster and propose which row the resolution is built around.
 
-    Default to the newest row: a near-duplicate written later is usually the
-    same insight restated, and the later statement is the one currently
-    believed. But when that newest row is materially *shorter* than a sibling,
-    keeping it would drop text, so the primary becomes the longest row and the
-    action becomes ``merge`` — the operator writes text that supersedes it.
+    Cosine decides *membership*; text overlap decides the *proposal*. Those were
+    the same decision until a sweep of this store showed they diverge sharply
+    below ~0.97 similarity — see :func:`_text_delta` for the measured bands.
 
-    Either way this is a *suggestion*. Every member ships with its length and
-    date so the operator can overrule it.
+    Primary selection asks which row is the **superset**: the candidate that
+    leaves every sibling with nothing unique to say. That replaces
+    newest-unless-materially-shorter, which read plausibly and inverted in
+    practice — on a same-day pair it proposed retiring the only row carrying
+    "supersedes the earlier same-task decision", because the row that lacked
+    that sentence happened to be a few characters longer. Length is a proxy for
+    containment; containment is checkable directly.
+
+    ``action`` is then honest by construction: ``retire`` only when dropping
+    every non-primary row loses no *wording*, otherwise ``merge``. Newest still
+    wins ties, since among rows that say the same thing the later statement is
+    the one currently believed. Note the limit of that guarantee — see
+    :func:`_text_delta`: containment is a word-level subsequence, so it cannot
+    rule out a reversal of meaning.
+
+    Either way this is a *suggestion*. Every member ships with its length, date,
+    overlap and unique fragments so the operator can overrule it.
     """
-    newest = max(idxs, key=lambda i: anns[i].valid_from)
-    longest = max(idxs, key=lambda i: len(anns[i].content))
-    shrinks = len(anns[newest].content) < _MERGE_IF_SHORTER_THAN * len(anns[longest].content)
-    action = "merge" if shrinks else "retire"
-    primary = longest if shrinks else newest
+    contents = {i: anns[i].content for i in idxs}
+    lengths = {i: len(_words(contents[i])) for i in idxs}
+
+    lost: dict[tuple[int, int], list[str]] = {}
+    ratio: dict[tuple[int, int], float] = {}
+    lost_words: dict[tuple[int, int], int] = {}
+
+    def delta(i: int, k: int) -> int:
+        """Words of ``i`` missing from ``k``, memoised — difflib is O(n·m)."""
+        if (i, k) not in lost_words:
+            ratio[(i, k)], lost[(i, k)], lost_words[(i, k)] = _text_delta(contents[i], contents[k])
+        return lost_words[(i, k)]
+
+    def covers_everything(keeper: int) -> bool:
+        # Every word, not every reportable fragment. See _text_delta. `all`
+        # short-circuits on the first sibling the keeper fails to contain.
+        return all(delta(i, keeper) == 0 for i in idxs if i != keeper)
+
+    # Only the *longest* members can be supersets: a subsequence is never longer
+    # than what contains it. That turns the search from n·(n-1) alignments into
+    # k·(n-1) with k normally 1 — which matters because clusters are built by
+    # transitive single-linkage over a user-settable `--threshold`, so
+    # `--threshold 0.7` can chain most of one kind into a single component.
+    # Measured before this bound, one 80-member cluster of ~430-word rows took
+    # 16.8s inside a read-only command.
+    widest = max(lengths.values())
+    supersets = [i for i in idxs if lengths[i] == widest and covers_everything(i)]
+    if supersets:
+        # Among true supersets prefer the newest: they say the same things, so
+        # the later statement is the current one.
+        primary = max(supersets, key=lambda i: anns[i].valid_from)
+        action = "retire"
+    else:
+        # Nothing contains everything. Keep the widest starting point for the
+        # operator to write from, and say plainly that text must be merged.
+        primary = max(idxs, key=lambda i: (len(contents[i]), anns[i].valid_from))
+        action = "merge"
+
+    # The superset search short-circuits, so the deltas against the row that
+    # ended up primary may not all have been computed. Fill them in — every
+    # member reports its own overlap, so these are needed regardless of tier.
+    for i in idxs:
+        if i != primary:
+            delta(i, primary)
+
+    if action != "retire":
+        # Distinguish "differs by a few stray words" from "differs by whole
+        # claims". Both need a human, but the first is a glance and the second
+        # is real work, and collapsing them means 70 identical-looking cards.
+        # This grades *evidence*, never meaning: whether `cannot` against
+        # `can't` is rewording, or `not` against nothing is a reversal, is a
+        # semantic call no string comparison gets to make.
+        substantial = any(
+            len(frag.split()) >= _FRAGMENT_WORDS
+            for i in idxs
+            if i != primary
+            for frag in lost[(i, primary)]
+        )
+        action = "merge" if substantial else "review"
 
     members = [
         ClusterMember(
             id=str(anns[i].id),
-            content=anns[i].content,
+            content=contents[i],
             kind=anns[i].kind,
             # Best similarity to any sibling, so the display leads with the
             # tightest match rather than an arbitrary member.
@@ -774,10 +970,15 @@ def _build_cluster(
             source=anns[i].source,
             valid_from=anns[i].valid_from,
             primary=(i == primary),
+            overlap=1.0 if i == primary else ratio[(i, primary)],
+            unique_fragments=[] if i == primary else lost[(i, primary)],
+            unique_words=0 if i == primary else lost_words[(i, primary)],
         )
         for i in idxs
     ]
-    members.sort(key=lambda m: (not m.primary, -m.score))
+    # Least-overlapping first among the non-primaries: the rows most likely to
+    # carry something the keeper doesn't are the ones worth reading.
+    members.sort(key=lambda m: (not m.primary, m.overlap))
     return DuplicateCluster(kind=kind, project=project, members=members, action=action)
 
 

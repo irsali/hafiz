@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 13 -->
-# Hafiz — Workspace Intelligence (v13)
+<!-- SKILLS_VERSION: 14 -->
+# Hafiz — Workspace Intelligence (v14)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -148,7 +148,8 @@ would re-introduce exactly the ranking judgement the pin exists to bypass.
 Two things to get right, or the pin quietly stops being exact:
 
 - **Raise `--limit` above the tagged set.** `--tags` chooses what's eligible, not
-  what survives; the limit still cuts (default 10, cosine order, no signal). A
+  what survives; the limit still cuts, with no signal (default 10, in reranked
+  order — cosine order only under `--no-rerank`). A
   result count equal to your limit means "possibly truncated".
 - **Pass a non-empty value.** `--tags ""` or an unset shell variable exits **2**
   rather than running an unpinned recall you'd mistake for a pinned one. Same
@@ -283,7 +284,7 @@ with `[telemetry] retrieval = false`. Query text stays on the machine.
 | `hafiz journal --since 7d --json` | "What did I record recently?" — annotations grouped by day |
 | `hafiz distill --since 7d --json` | Promotable backlog — notes + transcript turns grouped into themes, each with a ready observe scaffold |
 | `hafiz distill --brief` | Same backlog, token-lean; prints nothing unless it clears its gate — the form to put in a session-start hook |
-| `hafiz reconcile --json` | Read-only sweep — clusters near-duplicate live annotations and emits the supersede/retire commands |
+| `hafiz reconcile --json` | Read-only sweep — clusters near-duplicate live annotations and emits the supersede/retire commands. `suggested_action` is `retire`/`review`/`merge`; only `retire` establishes that no wording is lost, and even that cannot rule out a reversal |
 | `hafiz import claude-code --project <name>` | Post-hoc importer for Claude Code session JSONL (idempotent) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
@@ -376,14 +377,33 @@ The reasoning loop:
    clusters near-duplicate live annotations and hands you the commands).
 
    **`reconcile` proposes; you run it.** Each cluster names one `primary`
-   member and retires the rest, and `suggested_action` says what happens to
-   the primary: `retire` (it's the newest row and no shorter than the ones it
-   replaces, so it survives as written) or `merge` (the newest row is under
-   80% of the longest — keeping only it would drop text, so the primary
-   becomes the *longest* row and you write the merged text). `commands` is
-   the ordered resolution, ready to run. It sweeps the **whole store** by
-   default; if you pass `--limit` and it bites, the response says
-   `truncated: true` rather than quietly reporting fewer clusters.
+   member and retires the rest, and `suggested_action` is one of three tiers:
+
+   - `retire` — every word of the siblings also appears in the primary, in
+     order. No *wording* is lost. Still not proof the primary means the same:
+     a subsequence can invert a claim ("consent is not required" sits inside
+     "consent is not optional and consent is required"). Cheapest to check,
+     not safe to skip checking.
+   - `review` — words differ but none form a run of 4+. Read them: usually a
+     contraction or spelling, occasionally a reversal.
+   - `merge` — a sibling carries whole claims the primary lacks. Write text
+     covering `unique_fragments`, then retire.
+
+   `commands` is the ordered resolution, ready to run; `review` gets the
+   *merge* commands on purpose, because merging mere rewording is cheap and
+   retiring real text is not. It sweeps the **whole store** by default; if
+   you pass `--limit` and it bites, the response says `truncated: true`.
+
+   **Cosine groups the cluster; text decides the action — read the text
+   fields, not the score.** Each non-primary member carries `overlap`,
+   `unique_words` and `unique_fragments`. At the default `0.88` threshold
+   members typically share under a tenth of their words: two facts about one
+   subject, not one fact twice. Judge safety on `unique_words == 0`, never on
+   `overlap` being high — `overlap` is `2·matches/total`, so a row fully
+   contained in a keeper four times its length scores ~0.40 while losing
+   nothing (`2M/T`: 2x -> 0.67, 3x -> 0.50, 4x -> 0.40). And note the tiers grade *evidence*, not *meaning*: a total
+   meaning change carried by one short word (`stage` vs `prod`) lands in
+   `review`. Only `retire` makes a promise.
 
    **Treat every proposal as a suggestion, not a verdict.** Hafiz measures
    *similarity*, never *contradiction*, and near-duplicates are not always
@@ -719,7 +739,7 @@ workstation is a no-op, not a hazard.
 | `hafiz note "<text>"` | Low-bar capture — `kind="note"`. Never gated: a byte-identical repeat returns the existing row with `deduped: true` and exit 0. | same as `observe` minus `--type` |
 | `hafiz journal` | Time-bounded digest grouped by day | `--since`, `--day`, `--project`, `--workspace`, `--source`, `--type`, `--session`, `--task`, `--limit`, `--json` |
 | `hafiz distill` | Promotable backlog, grouped into themes (scanner; no LLM call). Drains via `observe --derived-from`; decline with `forget --annotation`. | `--since`, `--project`, `--session`, `--task`, `--no-transcripts`, `--include-promoted`, `--limit`, `--message-limit`, `--brief`, `--json` |
-| `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations and emit the supersede/retire commands to run. Scans everything by default; `--limit 0` = all, and a cap that bites reports `truncated: true`. | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
+| `hafiz reconcile` | Read-only sweep: cluster near-duplicate live annotations and emit the supersede/retire commands to run. Grades each cluster `retire`/`review`/`merge` on word-level text overlap, not on similarity — `retire` means every word survives in the keeper, which is the strongest claim text supports and still not proof of same meaning. Scans everything by default; `--limit 0` = all, and a cap that bites reports `truncated: true`. | `--project`, `--type`, `--threshold`, `--limit`, `--json` |
 | `hafiz session start "<name>"` | Named session; subsequent writes auto-tag, and `--include-domain`/`--exclude-domain` become defaults for `query`/`context` on the same cursor. Keyed by TTY, or by `--session-key` / `$HAFIZ_SESSION_KEY` when there is no terminal (hooks, CI). | `--task`, `--project`, `--session-key`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz session show` / `end` | Inspect / clear | `--session-key`, `--json` |
 

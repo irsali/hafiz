@@ -604,7 +604,7 @@ def test_observe_surfaces_near_duplicates_and_reconcile_clusters_them():
 
         # Every cluster carries a runnable proposal that spares its primary.
         cluster = report["clusters"][0]
-        assert cluster["suggested_action"] in {"retire", "merge"}
+        assert cluster["suggested_action"] in {"retire", "review", "merge"}
         assert cluster["primary_id"] in {m["id"] for m in cluster["members"] if m["primary"]}
         assert cluster["commands"]
         for other in (m for m in cluster["members"] if not m["primary"]):

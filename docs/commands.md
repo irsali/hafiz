@@ -248,7 +248,8 @@ free-form; hafiz does not reserve any name.
 
 **`--limit` still truncates, and silently.** `--tags` picks *which* rows are
 eligible; it does not exempt them from the limit, which defaults to **10** and
-cuts in cosine order with no signal that anything was dropped (`total` in
+cuts with no signal that anything was dropped — in reranked order by default,
+cosine order only under `--no-rerank` (`total` in
 `--json` is the post-truncation count). So a pin is only exact when `--limit` is
 at least the size of the tagged set — set it deliberately above the expected
 size, and treat a result count equal to the limit as "possibly truncated".
@@ -415,8 +416,26 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
   - **Strict** (`[dedup] strict = true`): a match aborts the write — exit `2`, `{"ok": false, "near_duplicates": [...]}` — unless `--supersedes <id>` or `--allow-duplicate` is given.
   - **`reconcile`** is the after-the-fact backstop: `--project`, `--type`, `--threshold`, `--limit`, `--json`. Never mutates — it proposes, and prints the commands you run yourself.
     - **Scans the whole store by default.** `--limit` caps the scan (newest first); `0` means all. A cap that bites sets `truncated: true` — a partial sweep is never silent. The old `--limit 500` default reported 34 clusters on a 1,099-row store where a full sweep finds 65, with nothing in the output to say so.
-    - **Every cluster carries a proposal.** One member is the `primary`; the rest are retired. `suggested_action` says what happens to the primary: `retire` (it is the newest row and no shorter than the ones it replaces — it survives untouched) or `merge` (the newest row is under 80% of the longest, so keeping only it would drop text; the primary becomes the *longest* row and you write text that supersedes it). `commands` is the ordered, runnable resolution — at most one `observe`, since `--supersedes` takes a single id.
-    - JSON shape: `{action, scanned, total_live, truncated, threshold, total, clusters: [{kind, project, suggested_action, primary_id, commands: [...], members: [{id, content, score, source, valid_from, chars, primary}]}]}`.
+    - **Cosine clusters; text overlap decides.** These were the same judgement until a full sweep showed they diverge below ~0.97. Median word-level overlap of cluster members, by cosine band, on a 1,540-row store:
+
+      | cosine | ≥0.99 | 0.97–0.99 | 0.95–0.97 | 0.92–0.95 | 0.88–0.92 |
+      |---|---:|---:|---:|---:|---:|
+      | same words | 0.93 | 0.61 | 0.48 | 0.19 | **0.09** |
+
+      At the default `0.88`, members share under a tenth of their words — same *subject*, different *statement*. One cluster paired the Web Channel v2 **stage** pipeline path with the **prod** one, where the prod row says in as many words "NOT banner/v2 like stage". So `threshold` still governs what gets grouped (and what `observe` surfaces on write, where "you may already have said this" is useful), but it no longer governs what gets recommended.
+    - **Every cluster carries a proposal, and the proposal is made on text.** One member is the `primary`; the rest are retired. Each non-primary member reports `overlap` (word-level ratio vs the primary), `unique_words` (every word it has and the primary lacks) and `unique_fragments` (those words as contiguous runs, longest first). `suggested_action` has three tiers:
+
+      | tier | means | your move |
+      |---|---|---|
+      | `retire` | `unique_words == 0` on every sibling — every word of theirs appears in the primary, in order | no *wording* is lost; still read the pair, since a subsequence can invert a claim |
+      | `review` | words differ, but none form a run of ≥4 | read the stray words; usually a contraction or spelling |
+      | `merge` | a sibling carries whole claims the primary lacks | write text covering `unique_fragments`, then retire |
+
+      `commands` is the ordered, runnable resolution — at most one `observe`, since `--supersedes` takes a single id. `review` gets the **merge** commands, not a ready-made `forget`: merging mere rewording costs a redundant rewrite, retiring real text costs the fact. The terminal names the cheaper path in prose instead of pasting it.
+    - **The tiers grade evidence, not meaning.** Whether an unmatched word is a rewording or a reversal is a semantic judgement, and this command deliberately does not guess — two earlier versions did, and each had a case where it proposed destroying a fact. So a total meaning change carried by one short word (`stage` vs `prod`) lands in `review`, not `merge`. `review` still means a human looks, which is the property that matters. Only `retire` makes a promise, and it is the one promise text can actually keep.
+    - **Judge safety on `unique_words == 0`, never on `overlap` being high.** `overlap` is `2·matches/total`, so length asymmetry drags it down: a row wholly contained in a keeper four times its length scores ~0.40 while losing nothing (`2M/T`: 2× → 0.67, 3× → 0.50, 4× → 0.40). Terminal output prints the verdict ("nothing only here" / "N word(s) only here") next to the ratio for exactly this reason.
+    - **Primary is the superset, not the newest.** Newest-unless-materially-shorter read plausibly and inverted in practice: on a same-day pair it proposed retiring the only row carrying "supersedes the earlier same-task decision", because the row lacking that sentence was a few characters longer. Containment is checked directly; newest wins only among rows that already say the same things.
+    - JSON shape: `{action, scanned, total_live, truncated, threshold, total, clusters: [{kind, project, suggested_action, primary_id, commands: [...], members: [{id, content, score, source, valid_from, chars, primary, overlap, unique_words, unique_fragments}]}]}`. `suggested_action` is `retire` | `review` | `merge` — `review` is new, so a consumer switching on the value needs a branch for it.
     - The count also rides on `doctor` (and so on `status --diagnose`) as **Knowledge base deduplicated**, because a read-only command nobody remembers to run surfaces nothing. It is not on `status`: with no vector index on `annotations.embedding` the count is a quadratic scan (~310 ms at 1,099 rows), and `status` is on the hot path.
 - **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
 

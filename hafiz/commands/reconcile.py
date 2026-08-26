@@ -39,19 +39,27 @@ def _shell_quote(text: str) -> str:
 def _commands_for(cluster) -> list[str]:
     """The resolution to run, as literal commands, in order.
 
-    Both actions retire everything but the primary. They differ only in what
-    happens to the primary itself: under ``retire`` it survives as written;
-    under ``merge`` the operator first writes text that supersedes it, because
-    the newest row is shorter than this one and dropping it would lose whatever
-    only it says. The ``<merged text>`` placeholder is deliberate — hafiz does
-    not call an LLM, and guessing the merge is exactly the lossy step this
-    branch exists to prevent.
+    Every action retires everything but the primary. They differ only in what
+    happens to the primary itself: under ``retire`` it survives as written,
+    because it was verified to contain every word its siblings carry. Under
+    ``merge`` — and under ``review``, which is a merge whose unmatched text is
+    short enough that a glance may downgrade it — no row contains the others, so
+    the operator first writes text that supersedes the primary.
+
+    ``review`` deliberately gets the *merge* commands rather than a ready-made
+    ``forget``. Merging text that turned out to be mere rewording costs a
+    redundant rewrite; retiring text that turned out to matter costs the fact.
+    The panel names the cheaper path in prose instead of pasting it.
+
+    The ``<merged text>`` placeholder is deliberate — hafiz does not call an LLM,
+    and guessing the merge is exactly the lossy step this command exists to
+    prevent.
 
     One ``observe`` at most: ``--supersedes`` takes a single id, so a merge is
     "supersede the primary, retire the rest" rather than one new row per member.
     """
     cmds = []
-    if cluster.action == "merge":
+    if cluster.action in ("merge", "review"):
         primary = cluster.primary
         cmds.append(
             f"hafiz observe '<merged text>' --type {cluster.kind}"
@@ -108,6 +116,9 @@ def run_reconcile(
                             "valid_from": m.valid_from.isoformat(),
                             "chars": len(m.content),
                             "primary": m.primary,
+                            "overlap": m.overlap,
+                            "unique_fragments": m.unique_fragments,
+                            "unique_words": m.unique_words,
                         }
                         for m in c.members
                     ],
@@ -143,19 +154,67 @@ def run_reconcile(
             f"[dim]kind={c.kind} · project={c.project or '—'} · suggested: {c.action}[/dim]",
             "",
         ]
-        primary_label = "[green]KEEP  [/green]" if c.action == "retire" else "[cyan]MERGE [/cyan]"
+        primary_label = {
+            "retire": "[green]KEEP  [/green]",
+            "review": "[yellow]CHECK [/yellow]",
+        }.get(c.action, "[cyan]MERGE [/cyan]")
         for m in c.members:
             label = primary_label if m.primary else "[red]RETIRE[/red]"
+            # Both numbers, always: cosine is why these are grouped, overlap is
+            # why the proposal is what it is, and the two disagree often enough
+            # that showing only one invites the wrong action.
+            metrics = f"{m.score:.0%} sim"
+            if not m.primary:
+                # The verdict, not just the ratio. A row fully contained in a
+                # much longer keeper scores a *low* ratio (SequenceMatcher is
+                # 2·matches/total, so length asymmetry drags it down) while
+                # losing nothing — one real pair sits at 40% and is a strict
+                # subset. Showing the ratio alone would read as "mostly
+                # different" and argue against the safe action.
+                # Keyed on unique_words, the count the decision itself uses, so
+                # the verdict shown can never disagree with the tier assigned.
+                if not m.unique_words:
+                    verdict = "[green]nothing only here[/green]"
+                else:
+                    verdict = f"[yellow]{m.unique_words} word(s) only here[/yellow]"
+                metrics += f" · {m.overlap:.0%} same words · {verdict}"
             lines.append(
-                f"  {label} [cyan]{m.id}[/cyan]  [dim]({m.score:.0%} · "
+                f"  {label} [cyan]{m.id}[/cyan]  [dim]({metrics} · "
                 f"{len(m.content)} chars · {m.valid_from:%Y-%m-%d})[/dim]"
             )
             lines.append(f"         {_preview(m.content)}")
+            # The whole point: what dies if this row is retired. Under `review`
+            # the runs are single words, so one per line spends three lines
+            # saying "a", "1", "a s" — joined, they read as the wording drift
+            # they are. Under `merge` they are whole clauses and each earns a
+            # line.
+            if m.unique_fragments and c.action == "review":
+                joined = " · ".join(m.unique_fragments)
+                lines.append(f"         [yellow]only here:[/yellow] [dim]{_preview(joined)}[/dim]")
+            else:
+                for frag in m.unique_fragments[:3]:
+                    lines.append(
+                        f"         [yellow]only here:[/yellow] [dim]{_preview(frag)}[/dim]"
+                    )
+                if len(m.unique_fragments) > 3:
+                    lines.append(
+                        f"         [dim]…and {len(m.unique_fragments) - 3} more unique fragment(s)"
+                        "[/dim]"
+                    )
         lines.append("")
         if c.action == "merge":
             lines.append(
-                "  [yellow]The newest row is the shorter one, so it is not safe to keep on its"
-                "\n  own — write text that carries both, then retire the rest:[/yellow]"
+                "  [yellow]No row here contains the others — each keeps something of its own"
+                "\n  (see 'only here' above). Write text that carries all of it, then retire"
+                "\n  the rest:[/yellow]"
+            )
+        elif c.action == "review":
+            lines.append(
+                "  [yellow]These differ only by the stray words above. Usually that is a"
+                "\n  contraction or a spelling — occasionally it is a reversal that flips"
+                "\n  the meaning, which is why no plain retire is pre-pasted here. Read the"
+                "\n  words. If they are rewording, retire the RETIRE ids above directly;"
+                "\n  otherwise:[/yellow]"
             )
         for cmd in _commands_for(c):
             lines.append(f"  [bold]{cmd}[/bold]")

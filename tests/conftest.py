@@ -71,6 +71,7 @@ collect_ignore = [
 # modules are added — a missing entry surfaces as a connection error, not a
 # silent skip.
 _DB_DEPENDENT = [
+    "test_annotation_tag_pin.py",
     "test_cli.py",
     "test_communications_schema.py",
     "test_config.py",

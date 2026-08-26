@@ -7,10 +7,36 @@ hand. The DB-backed half — scan coverage and the ``doctor`` count — lives in
 The thing under test is a *safety* property as much as a correctness one.
 Reconcile proposes destructive commands, and the near-duplicate pairs in a real
 store are not all restatements: a 91%-similar pair turned out to be one row
-holding a test account's email and another holding its password. Retiring
-either would have destroyed a fact the other did not carry. So the rule is that
-a proposal may never suggest keeping a row that is materially shorter than one
-it would retire.
+holding a test account's email and another holding its password. Retiring the
+wrong one destroys a fact nothing else carries.
+
+The rule that guards it has been rewritten three times, because each earlier
+version read plausibly and each had a case where it proposed exactly that:
+
+1. *Never keep a row materially shorter than one it would retire.* Length is a
+   proxy for containment, and it inverts — on a same-day pair it proposed
+   retiring the only row carrying "supersedes the earlier same-task decision",
+   because the row lacking that sentence was a few characters longer.
+2. *Retire when no run of four-plus words is unique.* A four-word floor cannot
+   see a one-word difference, and one word is a commit sha, a port, or a
+   password.
+3. *Retire when the keeper contains every word* — right in principle, but the
+   tokenizer decided what "a word" was, and it dropped everything outside
+   ``[a-z0-9]``. So any non-Latin row tokenized to nothing and then compared as
+   *fully contained*, and ``latency >= 500`` compared equal to ``latency <=
+   500``. A safety check is only as strong as its comparison unit.
+
+What holds now: ``retire`` requires that every word of the retired row appear in
+the keeper, in order, with a tokenizer that keeps scripts and comparison
+operators — and when nothing can be aligned at all, containment is reported as
+*unproven* rather than total. Anything else is a human's call, split into
+``review`` (stray words — a glance) and ``merge`` (whole claims).
+
+Two limits are pinned deliberately rather than papered over:
+``test_a_high_cosine_pair_is_never_retired_on_similarity_alone`` fixes that the
+tiers grade evidence and not meaning, and the ``_text_delta`` tests fix that
+containment is a word-level *subsequence* — which cannot rule out a reversal, so
+even ``retire`` is the cheapest tier to check rather than one that skips it.
 """
 
 from __future__ import annotations
@@ -23,7 +49,13 @@ import numpy as np
 import pytest
 
 from hafiz.commands.reconcile import _commands_for, _preview, _shell_quote
-from hafiz.core.annotations import _build_cluster, _similarity_matrix, _single_linkage
+from hafiz.core.annotations import (
+    _build_cluster,
+    _similarity_matrix,
+    _single_linkage,
+    _text_delta,
+    _words,
+)
 
 BASE = datetime(2026, 7, 1, tzinfo=UTC)
 
@@ -91,34 +123,190 @@ def test_rows_below_threshold_stay_singletons():
     assert sorted(sorted(g) for g in _single_linkage(sim, 0.88)) == [[0], [1]]
 
 
+# ── the tokenizer and the delta (where the safety property actually lives) ──
+#
+# Every safety assertion used to go through _build_cluster on well-formed
+# English pairs, and two ways to fake total containment survived that: any
+# non-Latin script tokenized to nothing, and comparison operators were stripped.
+# Both produced a green "nothing only here" and a paste-ready forget. These test
+# the primitive directly.
+
+
+@pytest.mark.parametrize(
+    ("label", "text"),
+    [
+        ("chinese", "日志保留期为三十天"),
+        ("russian", "срок хранения логов тридцать дней"),
+        ("greek", "διατήρηση αρχείων τριάντα ημέρες"),
+        ("arabic", "الاحتفاظ بالسجلات ثلاثين يوما"),
+    ],
+)
+def test_non_latin_scripts_survive_tokenizing(label, text):
+    """``[^a-z0-9]`` erased these wholesale, so the row compared as empty and
+    then as fully contained — the safety check was simply off for those
+    locales."""
+    assert _words(text), f"{label} tokenized to nothing"
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("日志保留期为三十天", "缓存层已切换到新的集群"),
+        ("срок хранения логов тридцать дней", "кеш переключён на новый кластер"),
+        ("✅", "the local run is the gate"),
+        ("!!! --- ???", "the local run is the gate"),
+    ],
+)
+def test_unrelated_content_is_never_reported_as_contained(a, b):
+    """The blocker: two unrelated facts must not report zero unique words. The
+    last two cases tokenize to nothing at all, where the honest answer is "no
+    alignment, so containment is unproven" — not "contained"."""
+    _, _, unique_words = _text_delta(a, b)
+    assert unique_words > 0
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("abort the job if latency >= 500", "abort the job if latency <= 500"),
+        ("skip when status != 202", "skip when status == 202"),
+        ("blocked when score > 0.88", "blocked when score < 0.88"),
+    ],
+)
+def test_reversed_operators_are_not_the_same_words(a, b):
+    """Stripping symbols made a reversed bound identical to its opposite. That
+    is the stage-vs-prod hazard in a store full of thresholds and ports."""
+    _, _, unique_words = _text_delta(a, b)
+    assert unique_words > 0
+
+
+def test_identical_text_is_contained_even_when_unspaced():
+    """The conservative fixes must not make containment unreachable: identical
+    content still has to grade as contained, including in a script the
+    tokenizer treats as one run."""
+    for text in ("日志保留期为三十天", "the local run is the gate"):
+        overlap, fragments, unique_words = _text_delta(text, text)
+        assert (overlap, fragments, unique_words) == (1.0, [], 0)
+
+
+def test_a_subset_is_contained_and_reports_no_unique_words():
+    overlap, fragments, unique_words = _text_delta(
+        "the local run is the gate",
+        "the local run is the gate and the pipeline is not",
+    )
+    assert unique_words == 0
+    assert fragments == []
+    assert 0.0 < overlap < 1.0  # 2M/T: shorter side drags the ratio down
+
+
+def test_fragments_are_every_unmatched_run_longest_first():
+    """No four-word floor here — a caller shown nothing cannot check anything,
+    and the one-word case is the dangerous one. The floor only grades the tier."""
+    _, fragments, unique_words = _text_delta(
+        "alpha beta gamma delta epsilon zulu and one more here", "zulu"
+    )
+    assert unique_words == 9
+    assert fragments  # includes short runs
+    assert [len(f.split()) for f in fragments] == sorted(
+        (len(f.split()) for f in fragments), reverse=True
+    )
+
+
+def test_operator_sentinels_do_not_leak_into_reported_fragments():
+    """The sentinels are an internal encoding; an operator reading "only here"
+    must not see control characters."""
+    _, fragments, _ = _text_delta("fail when latency >= 500 always", "fail when")
+    assert fragments
+    assert not any("\x00" in f for f in fragments)
+
+
 # ── the proposal ─────────────────────────────────────────────────────
 
 
 def test_newest_row_is_the_primary_when_it_loses_nothing():
-    anns = [_ann("old text, quite long here", days=0), _ann("newer text, also long", days=5)]
+    """A restatement that adds a clause: the newer row carries the older whole,
+    so the older is redundant and the newer survives untouched."""
+    anns = [
+        _ann("the local run is the gate", days=0),
+        _ann("the local run is the gate and the pipeline is not", days=5),
+    ]
     cluster = _build_cluster("decision", "p", anns, [0, 1], _sim(2))
     assert cluster.action == "retire"
     assert cluster.primary.id == str(anns[1].id)
     assert [m.id for m in cluster.others] == [str(anns[0].id)]
 
 
-def test_shorter_newest_row_downgrades_the_proposal_to_merge():
-    """The credential/email case: the newer row is a fraction of the older, so
-    keeping only it would drop text. Never propose that."""
-    anns = [_ann("x" * 1000, days=0), _ann("y" * 200, days=5)]
+def test_the_credential_row_wins_even_though_it_is_the_older_one():
+    """The pair this file was written around — one row holding a test account,
+    another holding its password. The old length-and-recency rule could pick
+    either; containment always picks the row that carries both, so the fact
+    survives and the redundant row is the one retired."""
+    anns = [
+        _ann("stage login is claude at noble-wave and the password is Dev1234", days=0),
+        _ann("stage login is claude at noble-wave", days=5),
+    ]
     cluster = _build_cluster("decision", "p", anns, [0, 1], _sim(2))
-    assert cluster.action == "merge"
-    # The primary becomes the *longest* row — the one the merged text supersedes.
-    assert cluster.primary.id == str(anns[0].id)
+    assert cluster.action == "retire"
+    assert cluster.primary.id == str(anns[0].id), "the row with the password must survive"
+    assert "Dev1234" in cluster.primary.content
+    assert [m.id for m in cluster.others] == [str(anns[1].id)]
 
 
-@pytest.mark.parametrize(
-    ("newest_len", "action"),
-    [(800, "retire"), (799, "merge")],
-)
-def test_merge_boundary_is_eighty_percent(newest_len, action):
-    anns = [_ann("x" * 1000, days=0), _ann("y" * newest_len, days=5)]
-    assert _build_cluster("decision", "p", anns, [0, 1], _sim(2)).action == action
+def test_the_superset_wins_even_when_it_is_neither_newest_nor_longest():
+    """Primary selection under containment, on the pair this file was written
+    around: one row carries a test account's password, the other does not. The
+    row that carries it must survive whichever way the dates fall — length and
+    recency each point the wrong way in one of these two arrangements.
+
+    The "one unmatched word refuses a retire" property is pinned separately, in
+    the `_text_delta` tests above."""
+    anns = [
+        _ann("the stage admin account for the portal is claude at noble-wave", days=0),
+        _ann("the stage admin account for the portal is claude at noble-wave Dev1234", days=5),
+    ]
+    # Newest is the superset here, so retiring the older is safe.
+    assert _build_cluster("fact", None, anns, [0, 1], _sim(2)).action == "retire"
+    # Reverse the dates and the superset is now the OLDER row. Length and
+    # recency both point the wrong way; containment does not.
+    flipped = [
+        _ann("the stage admin account for the portal is claude at noble-wave Dev1234", days=0),
+        _ann("the stage admin account for the portal is claude at noble-wave", days=5),
+    ]
+    cluster = _build_cluster("fact", None, flipped, [0, 1], _sim(2))
+    assert cluster.action == "retire"
+    assert cluster.primary.id == str(flipped[0].id), "the superset must win, not the newest"
+
+
+def test_stray_word_differences_are_review_not_merge():
+    """Contractions and spellings are the common case and are cheap to check, so
+    they get their own tier. Collapsing them into `merge` made 70 clusters look
+    like equal work."""
+    anns = [
+        _ann("the local run is the gate and cannot be deferred to the pipeline", days=0),
+        _ann("the local run is the gate and can not be deferred to the pipeline", days=5),
+    ]
+    cluster = _build_cluster("learning", None, anns, [0, 1], _sim(2))
+    assert cluster.action == "review"
+    # Still reports what differs — a tier with nothing to look at is useless.
+    assert any(m.unique_fragments for m in cluster.others)
+
+
+def test_a_high_cosine_pair_is_never_retired_on_similarity_alone():
+    """The stage-vs-prod pipeline pair that nearly got bulk-retired: 0.99 cosine,
+    two different facts. The tier must not be `retire`.
+
+    Deliberately not asserting *which* non-retire tier. The words that differ
+    here are short ("stage" against "prod"), so this grades `review` even though
+    the meaning difference is total — evidence and importance are not the same
+    axis, and the tiers only claim the first. `review` still means "a human
+    looks", which is the property that matters."""
+    anns = [
+        _ann("v2 stage pipeline targetFolder moves from banner to banner slash v2", days=0),
+        _ann("v2 prod pipeline targetFolder moves from empty to v2 not banner slash v2", days=5),
+    ]
+    cluster = _build_cluster("decision", None, anns, [0, 1], _sim(2, 0.99))
+    assert cluster.action != "retire", "0.99 cosine must not imply the same statement"
+    assert any(m.unique_words for m in cluster.others)
 
 
 def test_primary_sorts_first_and_carries_length_and_date():
@@ -152,8 +340,13 @@ def test_member_score_is_best_similarity_to_any_sibling():
 
 
 def test_retire_emits_one_forget_per_redundant_row_and_spares_the_primary():
-    anns = [_ann("old", days=0), _ann("newer text", days=5), _ann("newest text", days=9)]
+    anns = [
+        _ann("the purge guard reconciles JobLog", days=0),
+        _ann("the purge guard reconciles JobLog rows", days=5),
+        _ann("the purge guard reconciles JobLog rows and alerts on drift", days=9),
+    ]
     cluster = _build_cluster("decision", "p", anns, [0, 1, 2], _sim(3))
+    assert cluster.action == "retire"
     cmds = _commands_for(cluster)
     assert len(cmds) == 2
     assert all(c.startswith("hafiz forget ") and c.endswith(" --annotation") for c in cmds)
@@ -164,7 +357,11 @@ def test_merge_emits_exactly_one_observe_then_retires_the_rest():
     """``--supersedes`` takes a single id, so a merge is one new row superseding
     the primary — not one new row per member, which is what a naive
     command-per-member rendering produced and would have tripled the cluster."""
-    anns = [_ann("x" * 1000, days=0), _ann("z" * 900, days=1), _ann("y" * 100, days=5)]
+    anns = [
+        _ann("the purge guard reconciles JobLog rows and alerts on drift", days=0),
+        _ann("the purge guard also writes a staging table for each date", days=1),
+        _ann("the purge guard reconciles JobLog rows", days=5),
+    ]
     cluster = _build_cluster("learning", "proj", anns, [0, 1, 2], _sim(3))
     cmds = _commands_for(cluster)
     assert cluster.action == "merge"
@@ -175,7 +372,10 @@ def test_merge_emits_exactly_one_observe_then_retires_the_rest():
 
 
 def test_merge_command_carries_project_and_source_so_the_new_row_keeps_them():
-    anns = [_ann("x" * 1000, days=0, source="user:anjum"), _ann("y" * 100, days=5)]
+    anns = [
+        _ann("banner blocks scripts before consent on every region", days=0, source="user:anjum"),
+        _ann("banner releases scripts after consent is recorded", days=5),
+    ]
     cmd = _commands_for(_build_cluster("fact", "cookie-notice", anns, [0, 1], _sim(2)))[0]
     assert "--source user:anjum" in cmd
     # Always quoted: real project names have spaces in them ("Admin Portal").
@@ -183,13 +383,19 @@ def test_merge_command_carries_project_and_source_so_the_new_row_keeps_them():
 
 
 def test_project_name_with_a_space_survives_as_one_argument():
-    anns = [_ann("x" * 1000, days=0), _ann("y" * 100, days=5)]
+    anns = [
+        _ann("portal collapses the geolocation section when it is off", days=0),
+        _ann("portal gates the geolocation method radio behind the toggle", days=5),
+    ]
     cmd = _commands_for(_build_cluster("fact", "Admin Portal", anns, [0, 1], _sim(2)))[0]
     assert "--project 'Admin Portal'" in cmd
 
 
 def test_merge_command_omits_project_when_the_rows_have_none():
-    anns = [_ann("x" * 1000, days=0), _ann("y" * 100, days=5)]
+    anns = [
+        _ann("consent mode default fires before the category map arrives", days=0),
+        _ann("consent mode update never reaches the dataLayer for GPC", days=5),
+    ]
     assert "--project" not in _commands_for(_build_cluster("fact", None, anns, [0, 1], _sim(2)))[0]
 
 
@@ -211,14 +417,33 @@ def test_preview_is_truncated_with_an_ellipsis():
     assert len(out) <= 101
 
 
-@pytest.mark.parametrize("action", ["retire", "merge"])
-def test_human_output_renders_both_actions(action, monkeypatch, capsys):
+#: One pair per tier, so the rich path is rendered for each. Kept as data
+#: because the tier is derived from the text — there is no way to ask for a
+#: tier directly, which is the point.
+_TIER_FIXTURES = {
+    "retire": (
+        "the local run is the gate",
+        "the local run is the gate and the pipeline is not",
+    ),
+    "review": (
+        "the local run is the gate and cannot be deferred to the pipeline",
+        "the local run is the gate and can not be deferred to the pipeline",
+    ),
+    "merge": (
+        "the purge guard reconciles JobLog rows and alerts on drift",
+        "the purge guard writes a staging table for each date it processes",
+    ),
+}
+
+
+@pytest.mark.parametrize("action", ["retire", "review", "merge"])
+def test_human_output_renders_every_action(action, monkeypatch, capsys):
     """The rich path is not exercised by the ``--json`` tests, and a rename
     once left an undefined name in it that every JSON test still passed over."""
     from hafiz.commands import reconcile as mod
 
-    short, long_ = ("y" * 100, "x" * 1000) if action == "merge" else ("y" * 900, "x" * 1000)
-    anns = [_ann(long_, days=0), _ann(short, days=5)]
+    older, newer = _TIER_FIXTURES[action]
+    anns = [_ann(older, days=0), _ann(newer, days=5)]
     cluster = _build_cluster("decision", "proj", anns, [0, 1], _sim(2))
     assert cluster.action == action
 
@@ -236,6 +461,6 @@ def test_human_output_renders_both_actions(action, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Scanned 2 of 9 live annotations" in out
     assert "truncated" in out
-    assert ("KEEP" in out) if action == "retire" else ("MERGE" in out)
+    assert {"retire": "KEEP", "review": "CHECK", "merge": "MERGE"}[action] in out
     assert "RETIRE" in out
     assert f"hafiz forget {cluster.others[0].id} --annotation" in out

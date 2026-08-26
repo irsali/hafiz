@@ -136,6 +136,13 @@ class _Server:
         return {"ok": True, "bundle": bundle.to_dict()}
 
     async def _op_query_recall(self, req: dict) -> dict:
+        # NOTE: this forwards a hand-maintained set of keys, so a filter added to
+        # search_annotations and not added here is silently ignored on the warm
+        # path — the caller gets an unfiltered set and no error. `tags` was in
+        # that state until it was noticed in review. When adding a filter,
+        # add it here too; `active_only` is deliberately still absent (the
+        # daemon has always served active-only recall, and changing that is a
+        # behavioural question of its own, not a plumbing fix).
         from hafiz.core.annotations import search_annotations
 
         async with self._embed_lock:
