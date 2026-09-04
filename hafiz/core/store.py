@@ -662,6 +662,39 @@ async def indexed_root_per_project(
     return roots
 
 
+async def project_for_path(path: str | Path) -> str | None:
+    """Which indexed project contains ``path``? The inverse of
+    :func:`indexed_root_per_project`.
+
+    Used by hook-driven transcript capture: an agent harness reports the
+    ``cwd`` a session ran in, and an untagged communication is markedly
+    less useful than one scoped to the project it belongs to (project
+    scoping is how ``recall`` and ``context`` narrow the source layer).
+
+    Resolution is longest-prefix-wins, so a project nested inside another
+    project's tree claims its own sessions. Returns ``None`` when nothing
+    matches — an honest "don't know" beats guessing a project, because a
+    wrong tag is harder to notice than a missing one.
+    """
+    target = Path(path).expanduser().resolve()
+    roots = await indexed_root_per_project()
+
+    best: str | None = None
+    best_len = -1
+    for project, root in roots.items():
+        if project is None or not root:
+            continue
+        try:
+            root_path = Path(root).resolve()
+        except OSError:
+            continue
+        if target == root_path or root_path in target.parents:
+            depth = len(root_path.parts)
+            if depth > best_len:
+                best, best_len = project, depth
+    return best
+
+
 async def reconcile_orphaned_commits(
     project: str | None,
     cwd: Path,

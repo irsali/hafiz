@@ -19,6 +19,7 @@ the caller guess. This module is the shared probe behind ``status`` and the
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -70,6 +71,135 @@ async def index_staleness(
             entry.update(commits_behind_head(indexed_sha, Path(root)))
         out[project] = entry
     return out
+
+
+async def capture_freshness(*, settle_minutes: int = 30) -> dict[str, dict]:
+    """Per-agent: when the source layer last received a transcript, and
+    how many *settled* transcripts are sitting on disk newer than that.
+
+    This exists because the absence of a signal here cost real data.
+    Transcript capture for ``claude-code`` stopped on 2026-06-30 and was
+    not noticed until 2026-09-04 — ``status`` reported
+    ``retention.overdue: 0`` throughout, which looks like health but only
+    ever meant "the sweep is keeping up", and a store receiving nothing
+    is trivially swept. Silence is not health.
+
+    ``pending_on_disk`` counts transcripts whose **session id is not in the
+    store at all**. The id comes from :func:`peek_session_id`, which reads
+    only each file's head — one query plus a few hundred short reads,
+    rather than parsing 38k turns. `status` is on the hot path and must
+    stay cheap. (The filename stem is *not* usable as the id: it matches
+    only a session's first file, and 124 of 200 files disagreed with it.)
+
+    Deliberately *not* "mtime newer than the last capture", which was the
+    first cut and was wrong: ``last_captured_at`` is ``max(started_at)``,
+    i.e. when the newest captured session *began*. Any session that ran for
+    more than a moment therefore has an mtime later than its own start and
+    reported as pending while being fully captured. Never-captured is the
+    signal that has a remedy; "grew since capture" is handled by the hook
+    re-importing, and quantified precisely by ``import --dry-run``.
+
+    ``settle_minutes`` excludes transcripts touched very recently, which is
+    what keeps the *current* session out of the count — it is unknown to
+    the store until it is first captured, and it is being appended to as
+    you read this. Without the window the warning would fire on every
+    ``status`` during any active session, and a warning that is always on
+    is a warning nobody reads — the exact failure mode this signal exists
+    to correct. In-progress sessions are not uncaptured work; they are in
+    progress, and are reported separately as ``active_on_disk``.
+
+    Every field degrades to ``None``/absent rather than raising — same
+    contract as :func:`index_staleness`.
+    """
+    from sqlalchemy import func, select
+
+    from hafiz.core.database import Communication, get_session_factory
+    from hafiz.core.importers.claude_code import (
+        CLAUDE_CODE_AGENT,
+        DEFAULT_PROJECTS_DIR,
+        peek_session_id,
+    )
+
+    out: dict[str, dict] = {}
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = await session.execute(
+                select(
+                    Communication.agent,
+                    func.max(Communication.started_at),
+                    func.count(),
+                    func.count(Communication.valid_until),
+                ).group_by(Communication.agent)
+            )
+            for agent, last_started, total, tombstoned in rows.all():
+                last = last_started
+                out[agent] = {
+                    "last_captured_at": last.isoformat() if last else None,
+                    "days_since": (
+                        (datetime.now(UTC) - last).days
+                        if last is not None and last.tzinfo
+                        else None
+                    ),
+                    "communications": total,
+                    "live": total - tombstoned,
+                    "tombstoned": tombstoned,
+                }
+    except Exception:
+        return {}
+
+    # Only claude-code has a discoverable on-disk store today. As the
+    # cursor / chatgpt / codex importers land, each contributes its own
+    # root here rather than this growing a special case per agent.
+    entry = out.setdefault(CLAUDE_CODE_AGENT, {"last_captured_at": None, "days_since": None})
+    try:
+        async with factory() as session:
+            rows = await session.execute(
+                select(Communication.external_id).where(
+                    Communication.agent == CLAUDE_CODE_AGENT,
+                    Communication.external_id.is_not(None),
+                )
+            )
+            known = {e for (e,) in rows.all()}
+
+        settled_before = datetime.now(UTC) - timedelta(minutes=settle_minutes)
+        pending = 0
+        active = 0
+        if DEFAULT_PROJECTS_DIR.exists():
+            for path in DEFAULT_PROJECTS_DIR.rglob("*.jsonl"):
+                session_id = peek_session_id(path)
+                if session_id is None or session_id in known:
+                    continue
+                try:
+                    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+                except OSError:
+                    continue
+                if mtime > settled_before:
+                    active += 1  # still being written — not yet a failure
+                    continue
+                pending += 1
+        entry["pending_on_disk"] = pending
+        entry["active_on_disk"] = active
+    except Exception:
+        entry["pending_on_disk"] = None
+
+    return out
+
+
+def stale_captures(capture: dict[str, dict]) -> dict[str, dict]:
+    """Just the agents a caller should be warned about: those with
+    transcripts waiting on disk.
+
+    Deliberately *only* that condition, because it is the only one with a
+    remedy — ``hafiz import <agent>`` fixes it. A long-quiet agent with
+    nothing pending is either one you stopped using or one whose files
+    already rotated away; warning about it every ``status`` teaches the
+    operator to ignore the block, which is how the original signal gap
+    got expensive in the first place.
+    """
+    return {
+        agent: entry for agent, entry in capture.items() if (entry.get("pending_on_disk") or 0) > 0
+    }
 
 
 def stale_projects(staleness: dict[str, dict]) -> dict[str, dict]:

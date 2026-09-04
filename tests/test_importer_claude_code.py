@@ -252,14 +252,60 @@ async def test_import_is_idempotent(jsonl_session: Path):
 
 @pytest.mark.asyncio
 async def test_import_dry_run_writes_nothing(jsonl_session: Path):
-    summary = await import_claude_code(
-        root=jsonl_session,
-        project=f"hafiz-test-{uuid.uuid4().hex[:6]}",
-        dry_run=True,
-    )
+    """A dry run must persist nothing — but still *report* what it would do.
+
+    This test previously asserted ``communications_created == 0``, which
+    encoded a bug rather than the intent: the importer returned zeros for
+    every dry run because it skipped the file before touching a counter.
+    "Writes nothing" is a claim about the database, so assert that
+    against the database, and assert the preview separately.
+    """
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    summary = await import_claude_code(root=jsonl_session, project=project, dry_run=True)
+
     assert summary.files_seen == 1
-    assert summary.communications_created == 0
-    assert summary.messages_written == 0
+    # Nothing persisted.
+    factory = get_session_factory()
+    async with factory() as s:
+        stored = (
+            await s.execute(
+                select(Communication).where(Communication.scope_value == project),
+            )
+        ).all()
+    assert stored == []
+    # But the preview is truthful.
+    assert summary.communications_created == 1
+    assert summary.messages_written == 5
+
+
+@pytest.mark.asyncio
+async def test_dry_run_preview_matches_the_real_import(jsonl_session: Path):
+    """The preview's whole purpose is to predict the real run."""
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    preview = await import_claude_code(root=jsonl_session, project=project, dry_run=True)
+    real = await import_claude_code(root=jsonl_session, project=project)
+
+    assert preview.communications_created == real.communications_created
+    assert preview.messages_written == real.messages_written
+    assert preview.messages_embedded == real.messages_embedded
+    assert preview.sessions_created == real.sessions_created
+
+
+@pytest.mark.asyncio
+async def test_dry_run_reports_pending_turns_for_a_known_session(jsonl_session: Path):
+    """A session imported mid-flight is 'existing' yet still has work.
+
+    Hook-driven capture hits this constantly: compaction imports a live
+    session, then more turns arrive. Reporting "already seen, nothing to
+    do" would make the preview useless exactly where it is used most.
+    """
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    await import_claude_code(root=jsonl_session, project=project)
+
+    again = await import_claude_code(root=jsonl_session, project=project, dry_run=True)
+    assert again.communications_existing == 1
+    assert again.communications_created == 0
+    assert again.messages_written == 0  # fully caught up
 
 
 @pytest.mark.asyncio
@@ -294,6 +340,112 @@ async def test_imported_message_content_is_canonical(jsonl_session: Path):
     # Tool use is preserved.
     tool_use_rows = [r for r in rows if r.tool_calls]
     assert tool_use_rows
+
+
+@pytest.mark.asyncio
+async def test_import_survives_null_bytes_in_tool_output(tmp_path: Path):
+    """A single U+0000 must not cost the whole session.
+
+    Postgres rejects null bytes in both text and jsonb, and the message
+    batch shares one commit — so before sanitization, one binary-ish
+    tool_result took every turn in the session down with it.
+    """
+    sid = str(uuid.uuid4())
+    base = datetime(2026, 5, 1, 9, 0, 0, tzinfo=UTC)
+    u1, a1 = str(uuid.uuid4()), str(uuid.uuid4())
+    path = tmp_path / f"{sid}.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _record(
+                    record_type="user",
+                    session_id=sid,
+                    rec_uuid=u1,
+                    role="user",
+                    text="read the binary fixture and tell me what changed in it",
+                    timestamp=base,
+                ),
+                _record(
+                    record_type="assistant",
+                    session_id=sid,
+                    rec_uuid=a1,
+                    parent_uuid=u1,
+                    role="assistant",
+                    text="Here is the payload I read back:\x00\x00 truncated binary \x00",
+                    timestamp=base + timedelta(seconds=2),
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    summary = await import_claude_code(root=path, project=project)
+
+    assert summary.errors == []
+    assert summary.messages_written == 2
+
+    factory = get_session_factory()
+    async with factory() as s:
+        comm = (
+            await s.execute(
+                select(Communication).where(Communication.scope_value == project),
+            )
+        ).scalar_one()
+    rows = await list_messages(comm.id)
+    assert len(rows) == 2
+    assert all("\x00" not in r.content for r in rows)
+    # The surrounding text is preserved — only the null byte is dropped.
+    assert any("truncated binary" in r.content for r in rows)
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Known bug: Claude Code reuses one sessionId across multiple JSONL "
+        "files, but parse_jsonl_file restarts seq at 0 per file while "
+        "append_messages dedupes on (communication_id, seq) — so a sibling "
+        "file's turns are silently dropped. Measured at 29.3% of turns "
+        "(11,214 of 38,249) on a real ~/.claude/projects. Fix requires "
+        "keying idempotency on the source's own message id."
+    ),
+    strict=True,
+)
+@pytest.mark.asyncio
+async def test_same_session_across_two_files_keeps_all_turns(tmp_path: Path):
+    sid = str(uuid.uuid4())
+    base = datetime(2026, 5, 2, 9, 0, 0, tzinfo=UTC)
+
+    def _file(name: str, texts: list[str], offset: int) -> Path:
+        lines = []
+        prev = None
+        for i, text in enumerate(texts):
+            rid = str(uuid.uuid4())
+            lines.append(
+                _record(
+                    record_type="user" if i % 2 == 0 else "assistant",
+                    session_id=sid,
+                    rec_uuid=rid,
+                    parent_uuid=prev,
+                    role="user" if i % 2 == 0 else "assistant",
+                    text=text,
+                    timestamp=base + timedelta(seconds=offset + i),
+                )
+            )
+            prev = rid
+        p = tmp_path / name
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return p
+
+    _file("a.jsonl", [f"first file turn number {i} about the migration" for i in range(4)], 0)
+    _file("b.jsonl", [f"second file turn number {i} about the rollback" for i in range(4)], 100)
+
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    summary = await import_claude_code(root=tmp_path, project=project)
+
+    # Both files belong to one session, so one communication holding all 8.
+    assert summary.communications_created == 1
+    assert summary.messages_written == 8
 
 
 # ---------------------------------------------------------------------------
@@ -335,4 +487,93 @@ def test_import_claude_code_cli_dry_run(jsonl_session: Path, tmp_path: Path):
     payload = json.loads(result.output)
     assert payload["dry_run"] is True
     assert payload["summary"]["files_seen"] >= 1
-    assert payload["summary"]["communications_created"] == 0
+    # Previews the session it found rather than reporting a flat zero.
+    assert payload["summary"]["communications_created"] == 1
+    assert payload["summary"]["messages_written"] > 0
+
+
+# ---------------------------------------------------------------------------
+# peek_session_id — cheap identity, for the capture-freshness probe
+# ---------------------------------------------------------------------------
+
+
+def test_peek_session_id_reads_the_id_from_the_head(tmp_path: Path):
+    from hafiz.core.importers.claude_code import peek_session_id
+
+    sid = str(uuid.uuid4())
+    path = tmp_path / "whatever.jsonl"
+    path.write_text(
+        _record(record_type="user", session_id=sid, rec_uuid=str(uuid.uuid4()), text="hi") + "\n",
+        encoding="utf-8",
+    )
+    assert peek_session_id(path) == sid
+
+
+def test_peek_session_id_does_not_trust_the_filename(tmp_path: Path):
+    """The property that invalidated using the stem as the id.
+
+    Claude Code reuses one sessionId across resumed/forked files with
+    different names — 124 of 200 files disagreed with their stem on a real
+    store, so a freshness probe keyed on the stem reported 124 false
+    "uncaptured" sessions.
+    """
+    from hafiz.core.importers.claude_code import peek_session_id
+
+    real_sid = str(uuid.uuid4())
+    path = tmp_path / f"{uuid.uuid4()}.jsonl"  # stem deliberately != sessionId
+    path.write_text(
+        _record(record_type="user", session_id=real_sid, rec_uuid=str(uuid.uuid4()), text="x")
+        + "\n",
+        encoding="utf-8",
+    )
+    assert peek_session_id(path) == real_sid
+    assert peek_session_id(path) != path.stem
+
+
+def test_peek_session_id_skips_leading_junk(tmp_path: Path):
+    from hafiz.core.importers.claude_code import peek_session_id
+
+    sid = str(uuid.uuid4())
+    path = tmp_path / "s.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                "",
+                "not json",
+                json.dumps({"type": "queue-operation"}),  # valid JSON, no sessionId
+                _record(record_type="user", session_id=sid, rec_uuid=str(uuid.uuid4()), text="x"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert peek_session_id(path) == sid
+
+
+def test_peek_session_id_gives_up_rather_than_reading_the_whole_file(tmp_path: Path):
+    """Bounded by design — this runs a few hundred times per `status`."""
+    from hafiz.core.importers.claude_code import peek_session_id
+
+    sid = str(uuid.uuid4())
+    path = tmp_path / "s.jsonl"
+    filler = [json.dumps({"type": "queue-operation"})] * 50
+    tail = _record(record_type="user", session_id=sid, rec_uuid=str(uuid.uuid4()), text="x")
+    path.write_text("\n".join(filler + [tail]) + "\n", encoding="utf-8")
+
+    assert peek_session_id(path) is None  # past the default max_lines
+    assert peek_session_id(path, max_lines=100) == sid
+
+
+@pytest.mark.parametrize("content", ["", "   \n\n", "not json\nstill not json\n"])
+def test_peek_session_id_returns_none_for_unusable_files(tmp_path: Path, content: str):
+    from hafiz.core.importers.claude_code import peek_session_id
+
+    path = tmp_path / "s.jsonl"
+    path.write_text(content, encoding="utf-8")
+    assert peek_session_id(path) is None
+
+
+def test_peek_session_id_tolerates_a_missing_file(tmp_path: Path):
+    from hafiz.core.importers.claude_code import peek_session_id
+
+    assert peek_session_id(tmp_path / "absent.jsonl") is None

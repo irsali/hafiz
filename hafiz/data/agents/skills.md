@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 14 -->
-# Hafiz — Workspace Intelligence (v14)
+<!-- SKILLS_VERSION: 15 -->
+# Hafiz — Workspace Intelligence (v15)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -510,6 +510,31 @@ as `retention.overdue` in `hafiz status --json` and as a `doctor` check.
 **If you see a non-zero overdue count, tell the user** — it's a stated
 retention guarantee that isn't currently being met, not a cosmetic nit.
 
+**Automatic capture — and why `overdue: 0` is not proof of health.**
+`retention.overdue` answers "is the sweep keeping up", which a store
+receiving *nothing* passes trivially. The separate `capture` block on
+`hafiz status --json` answers "is anything still arriving?":
+
+```json
+"capture": {"claude-code": {"days_since": 66, "pending_on_disk": 201, "live": 0}}
+```
+
+**If `pending_on_disk` is non-zero, tell the user immediately.** Unlike
+every other staleness signal in hafiz, this one is not recoverable by
+re-running a command later — agent harnesses rotate their own
+transcripts, so uncaptured sessions are lost permanently. The remedy:
+
+```bash
+hafiz import claude-code                      # rescue what's still on disk
+hafiz agent install claude-code --hooks       # stop the drift for good
+```
+
+`--hooks` wires capture into the harness on `PreCompact` + `SessionEnd`,
+preserving the user's own hooks. Under the hood each fires
+`hafiz import claude-code --from-hook`, which reads the harness payload
+on stdin, imports only that session, and always exits 0 — never use it
+by hand; it's the hook's entry point.
+
 The user's explicit redaction commands:
 
 ```bash
@@ -763,7 +788,7 @@ workstation is a no-op, not a hazard.
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
 | `hafiz ingest <path>` | Parse + embed + store. Diff-driven on re-runs. | `--project`, `--git-hook`, `--json` |
-| `hafiz status` | Counts across all tables; per-project index freshness (`staleness.commits_behind`) and `retention.overdue` | `--json`, `--diagnose` |
+| `hafiz status` | Counts across all tables; per-project index freshness (`staleness.commits_behind`), `retention.overdue`, and transcript-capture freshness (`capture[agent].pending_on_disk`) | `--json`, `--diagnose` |
 | `hafiz init` | Create schema + pgvector extension | — |
 | `hafiz hooks install <repo>` | Write post-commit / post-merge / post-rewrite hooks. `--project` defaults to the repo directory name and is always pinned into the hook — an untagged hook builds a duplicate untagged index. Refuses if the project is indexed elsewhere. | `--project`, `--force` |
 | `hafiz agent install` | Splice this skills.md into an agent config | — |

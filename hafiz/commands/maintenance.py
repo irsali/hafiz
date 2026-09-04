@@ -208,6 +208,14 @@ def run_status(*, output_json: bool = False) -> None:
             overdue_retr = await count_overdue_retrievals()
             overdue = overdue_comms + overdue_retr
 
+            # Retention overdue answers "is the sweep keeping up", which a
+            # store receiving nothing passes trivially. Capture freshness
+            # answers the question that actually went unasked for two
+            # months: "is anything still arriving?"
+            from hafiz.core.freshness import capture_freshness
+
+            capture = await capture_freshness()
+
             stats = {
                 "files": files_count,
                 "units": units_count,
@@ -230,6 +238,7 @@ def run_status(*, output_json: bool = False) -> None:
                     "communications": overdue_comms,
                     "retrievals": overdue_retr,
                 },
+                "capture": capture,
                 # A project-less ingest can't update a project's rows — `files`
                 # is unique on (project, path) — so it writes a parallel
                 # untagged copy that search then returns alongside the real one.
@@ -286,6 +295,21 @@ def run_status(*, output_json: bool = False) -> None:
         console.print(
             f"  [yellow]{overdue} communication(s) past their retention window.[/yellow]\n"
             f"  [dim]Sweep them with: hafiz forget --all-expired[/dim]"
+        )
+
+    from hafiz.core.freshness import stale_captures
+
+    for agent, entry in stale_captures(stats["capture"]).items():
+        pending = entry["pending_on_disk"]
+        age = entry.get("days_since")
+        when = f"last captured {age}d ago" if age is not None else "never captured"
+        console.print(
+            f"  [red]{pending} {agent} transcript(s) on disk are newer than your"
+            f" last capture[/red] — {when}.\n"
+            f"  [dim]Agent harnesses rotate their own transcripts, so uncaptured"
+            f" sessions are lost permanently.\n"
+            f"  Import now:      hafiz import {agent}\n"
+            f"  Stop the drift:  hafiz agent install {agent} --hooks[/dim]"
         )
 
     if stats["by_project"]:

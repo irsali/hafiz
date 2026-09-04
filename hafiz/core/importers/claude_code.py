@@ -29,6 +29,8 @@ from typing import Any
 from hafiz.core.communications import (
     MessageInput,
     append_messages,
+    preview_pending_messages,
+    should_embed_message,
     upsert_communication,
 )
 from hafiz.core.sessions import (
@@ -302,6 +304,49 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
 # ---------------------------------------------------------------------------
 
 
+def peek_session_id(path: Path, *, max_lines: int = 8) -> str | None:
+    """The session uuid a JSONL file belongs to, read from its head.
+
+    Cheap counterpart to :func:`parse_jsonl_file` for callers that only
+    need the identity — notably the capture-freshness probe on
+    ``hafiz status``, which must answer "is this session in the store?"
+    for a few hundred files without reading tens of thousands of turns.
+
+    Do **not** substitute the filename stem for this. The stem matches the
+    session uuid only for a session's *first* file; Claude Code reuses one
+    ``sessionId`` across resumed/forked files with different names, and on
+    a real store 124 of 200 files disagreed with their stem.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for _ in range(max_lines):
+                line = fh.readline()
+                if not line:
+                    return None
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict) and rec.get("sessionId"):
+                    return str(rec["sessionId"])
+    except OSError:
+        return None
+    return None
+
+
+def _session_slug(external_id: str) -> str:
+    """The session slug a given JSONL session uuid maps to.
+
+    One definition, used by both the real import and the ``--dry-run``
+    preview — a slug that disagreed between the two would make the
+    preview's ``sessions_created`` count quietly wrong.
+    """
+    return f"claude-code-{external_id[:12]}"
+
+
 def discover_jsonl_files(root: Path) -> list[Path]:
     """Find all session JSONL files under ``root`` (the projects dir)."""
     if not root.exists():
@@ -333,6 +378,14 @@ async def import_claude_code(
     if limit is not None:
         files = files[:limit]
 
+    # Claude Code reuses one sessionId across several JSONL files (resumed
+    # sessions, sidechains) — measured here at 200 files over 77 session
+    # ids. Those files all resolve to the *same* communication, so a
+    # per-file preview that only consults the DB would count the same new
+    # communication once per file. Track what this run has already
+    # accounted for so `--dry-run` totals match what a real run does.
+    previewed: dict[str, set[int]] = {}
+
     for path in files:
         try:
             parsed = parse_jsonl_file(path)
@@ -347,11 +400,62 @@ async def import_claude_code(
             summary.files_skipped += 1
             continue
         if dry_run:
+            # A preview has to preview something. Previously this
+            # `continue` fired before any counter moved, so every dry
+            # run reported communications_created: 0 / messages_written: 0
+            # regardless of what a real run would do — which is how two
+            # months of uncaptured sessions stayed invisible.
+            #
+            # Resolve the same idempotency keys a real run would, so the
+            # counts split correctly between "new" and "already stored"
+            # and a mid-flight session still reports its pending turns.
+            seen = previewed.get(parsed.external_id)
+            file_seqs = [m.seq for m in parsed.messages]
+            if seen is None:
+                exists, pending = await preview_pending_messages(
+                    agent=CLAUDE_CODE_AGENT,
+                    external_id=parsed.external_id,
+                    seqs=file_seqs,
+                )
+                if exists:
+                    summary.communications_existing += 1
+                else:
+                    summary.communications_created += 1
+                    if await get_session_by_slug(_session_slug(parsed.external_id)) is None:
+                        summary.sessions_created += 1
+                previewed[parsed.external_id] = set(file_seqs)
+            else:
+                # A sibling file for this same session was already
+                # previewed. Only seqs it did not claim can still land —
+                # which is also exactly why the real import path drops
+                # cross-file turns (see the seq-collision note below).
+                pending = sum(1 for s in file_seqs if s not in seen)
+                seen.update(file_seqs)
+            summary.messages_written += pending
+            if embed and pending:
+                # Which specific seqs are pending isn't resolved here, so
+                # scale the policy's verdict over the whole file by the
+                # pending fraction. Exact for a new session (the common
+                # case); an estimate only for a partial re-import.
+                would_embed = sum(
+                    1
+                    for m in parsed.messages
+                    if should_embed_message(
+                        role=m.role,
+                        content=m.content,
+                        marked_salient=m.marked_salient,
+                    )
+                )
+                summary.messages_embedded += (
+                    would_embed
+                    if pending == len(parsed.messages)
+                    else round(would_embed * pending / max(1, len(parsed.messages)))
+                )
             continue
 
         # Wire a session row keyed by the JSONL session uuid so
         # subsequent annotations / recalls bind to the same session.
-        session_slug = f"claude-code-{parsed.external_id[:12]}"
+        session_slug = _session_slug(parsed.external_id)
         session_row = await get_session_by_slug(session_slug)
         if session_row is None:
             stored = await create_session(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from hafiz.core.importers.claude_code import (
     DEFAULT_PROJECTS_DIR,
     import_claude_code,
 )
+from hafiz.core.store import project_for_path
 
 console = Console()
 
@@ -35,6 +37,83 @@ def _resolve_since(since: str | None) -> datetime | None:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
     return datetime.now(UTC) - delta
+
+
+def run_import_from_hook(*, output_json: bool = False) -> None:
+    """Import exactly the transcript an agent-harness hook is reporting.
+
+    Reads the harness's hook payload as JSON on **stdin** — the same
+    channel Claude Code already uses — and imports only that session's
+    file. Parsing the payload here rather than in the hook body is what
+    keeps the installed hook a portable one-liner: no ``jq`` dependency,
+    no shell JSON handling, and the logic is unit-testable.
+
+    Two invariants, both load-bearing for anything wired into a hook:
+
+    * **This never fails the turn.** Every failure path exits 0 and stays
+      quiet. A memory layer that can break the conversation gets removed
+      by the user, and then it captures nothing at all.
+    * **It imports one file, not the whole store.** ``transcript_path``
+      names the session, so capture cost stays proportional to the
+      session that just ended rather than to every session ever had.
+    """
+    try:
+        raw = sys.stdin.read()
+    except Exception:
+        raise SystemExit(0) from None
+    if not raw or not raw.strip():
+        raise SystemExit(0)
+
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        raise SystemExit(0) from None
+    if not isinstance(payload, dict):
+        raise SystemExit(0)
+
+    transcript = payload.get("transcript_path")
+    if not transcript:
+        # Nothing to capture — e.g. a hook event fired before the harness
+        # had written a transcript. Not an error.
+        raise SystemExit(0)
+
+    target = Path(str(transcript)).expanduser()
+    if not target.is_file():
+        raise SystemExit(0)
+
+    hook_cwd = payload.get("cwd")
+
+    async def _run():
+        try:
+            project = await project_for_path(hook_cwd) if hook_cwd else None
+            result = await import_claude_code(
+                root=target,
+                project=project,
+                embed=True,
+            )
+            return result, project
+        finally:
+            await close_engine()
+
+    try:
+        summary, project = asyncio.run(_run())
+    except Exception as exc:  # noqa: BLE001 — hook safety: never fail the turn
+        if output_json:
+            console.print_json(json.dumps({"ok": False, "error": str(exc)}))
+        raise SystemExit(0) from None
+
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "ok": True,
+                    "action": "import_from_hook",
+                    "transcript_path": str(target),
+                    "project": project,
+                    "summary": summary.to_dict(),
+                }
+            )
+        )
 
 
 def run_import_claude_code(

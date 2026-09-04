@@ -235,6 +235,34 @@ cat conversation.md | hafiz capture --title "JWT design meeting"
 
 Every observation auto-captures git context (commit hash, branch, dirty state) so you can later ask "what did I decide on `main` at commit `abc123`?".
 
+#### Automatic transcript capture
+
+Agent harnesses rotate their own transcripts, so a session you don't capture is
+gone for good. Wire capture into the harness once and stop thinking about it:
+
+```bash
+hafiz agent install claude-code --hooks
+```
+
+This adds two entries to `~/.claude/settings.json` — on `PreCompact` (where
+context actually dies, mid-session) and `SessionEnd` — each running a bounded,
+silent, always-exit-0 import of just that session. Your own hooks and every
+other setting are preserved; re-running updates in place instead of stacking
+duplicates; and `hafiz agent uninstall claude-code --hooks` restores the file
+byte-for-byte. A settings file hafiz can't parse is refused, never overwritten.
+
+Captured transcripts are scoped to the project the session ran in, stay on your
+machine, and are retained for 90 days. `hafiz forget <session>` redacts;
+`hafiz export --include-transcripts` ejects.
+
+`hafiz status` now reports capture freshness, so an outage can't go unnoticed:
+
+```
+201 claude-code transcript(s) on disk are newer than your last capture — last captured 66d ago.
+  Import now:      hafiz import claude-code
+  Stop the drift:  hafiz agent install claude-code --hooks
+```
+
 ### Review
 
 See what you recorded, grouped by day — observations and captures together:
@@ -354,7 +382,9 @@ Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` wi
 | `hafiz extract export` | Export chunks grouped by file as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
 | `hafiz extract import` | Import extraction results from JSON (file or stdin) | `--file/-f`, `--project/-p` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
-| `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file` |
+| `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file`, `--hooks` |
+| `hafiz agent install <name> --hooks` | Wire automatic transcript capture into the agent (`PreCompact` + `SessionEnd`). `claude-code` only. | `--local` |
+| `hafiz import claude-code [path]` | Import session transcripts. Accepts a directory or a single `.jsonl`. | `--project`, `--since`, `--dry-run`, `--no-embed`, `--from-hook` |
 
 **Language support.** Hafiz ships AST parsers for **Python** (stdlib) and **Markdown/prose**; everything else is indexed whole-file. **JavaScript & TypeScript** (`.js .jsx .mjs .cjs .ts .tsx .mts .cts`) get full AST parsing — functions, classes, methods, imports, calls — when you install the optional `hafiz[js]` extra (tree-sitter). Without it, JS/TS files still index as whole-file units; no error. Run `hafiz parsers list` to see what's active. More languages (Go, Rust, …) plug in the same way — see [docs/roadmap.md](docs/roadmap.md).
 

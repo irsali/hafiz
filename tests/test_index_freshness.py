@@ -406,3 +406,39 @@ def test_status_counts_untagged_files():
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert isinstance(payload["untagged"]["files"], int)
+
+
+# ---------------------------------------------------------------------------
+# Capture freshness — "is anything still arriving?"
+# ---------------------------------------------------------------------------
+#
+# Retention-overdue answers "is the sweep keeping up", which a store
+# receiving nothing passes trivially. That gap let transcript capture die
+# on 2026-06-30 and go unnoticed until 2026-09-04, with `status` reporting
+# `retention.overdue: 0` — healthy-looking — the whole time.
+
+
+def test_stale_captures_flags_agents_with_transcripts_waiting():
+    from hafiz.core.freshness import stale_captures
+
+    flagged = stale_captures(
+        {
+            "claude-code": {"days_since": 66, "pending_on_disk": 201},
+            "cursor": {"days_since": 1, "pending_on_disk": 0},
+        }
+    )
+    assert set(flagged) == {"claude-code"}
+
+
+def test_stale_captures_ignores_a_quiet_agent_with_nothing_pending():
+    """There is no remedy for "you stopped using this agent".
+
+    Warning on every `status` about an agent whose files already rotated
+    away teaches the operator to skim past the block — which is exactly
+    how the original missing signal became expensive.
+    """
+    from hafiz.core.freshness import stale_captures
+
+    assert stale_captures({"test-agent": {"days_since": 131, "pending_on_disk": 0}}) == {}
+    assert stale_captures({"hermes": {"days_since": 11}}) == {}  # no on-disk store
+    assert stale_captures({"never": {"days_since": None, "pending_on_disk": None}}) == {}

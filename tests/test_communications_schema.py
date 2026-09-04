@@ -444,3 +444,44 @@ async def test_forget_communication_soft_then_hard():
     async with factory() as s:
         result = await s.execute(select(Communication).where(Communication.id == comm.id))
         assert result.scalar_one_or_none() is None
+
+
+# ---------------------------------------------------------------------------
+# Null-byte sanitization
+# ---------------------------------------------------------------------------
+#
+# Postgres rejects U+0000 in both `text` and `jsonb`. Agent transcripts
+# carry them routinely (a tool_result echoing a binary file), and because
+# a message batch shares one commit, one stray byte used to lose an
+# entire session. Sanitizing in `append_messages` means every importer
+# inherits the fix rather than rediscovering it.
+
+
+def test_strip_nulls_removes_null_bytes_from_strings():
+    from hafiz.core.communications import _strip_nulls
+
+    assert _strip_nulls("a\x00b") == "ab"
+    assert _strip_nulls("clean") == "clean"
+    assert _strip_nulls("") == ""
+
+
+def test_strip_nulls_walks_nested_payloads_including_keys():
+    from hafiz.core.communications import _strip_nulls
+
+    payload = {
+        "k\x00ey": "va\x00lue",
+        "nested": [{"content_preview": "x\x00y"}, "z\x00"],
+    }
+    assert _strip_nulls(payload) == {
+        "key": "value",
+        "nested": [{"content_preview": "xy"}, "z"],
+    }
+
+
+def test_strip_nulls_passes_non_string_scalars_through():
+    from hafiz.core.communications import _strip_nulls
+
+    assert _strip_nulls(None) is None
+    assert _strip_nulls(7) == 7
+    assert _strip_nulls(True) is True
+    assert _strip_nulls(1.5) == 1.5

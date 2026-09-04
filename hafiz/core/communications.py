@@ -25,6 +25,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 
@@ -97,6 +98,39 @@ def should_embed_message(
     if _is_pure_tool_result_echo(role, content):
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Payload sanitization
+# ---------------------------------------------------------------------------
+
+# Postgres `text` and `jsonb` both reject U+0000 outright — asyncpg
+# surfaces it as UntranslatableCharacterError. Agent transcripts carry
+# them routinely (a tool_result that echoed a binary file, a truncated
+# read), and because the whole message batch shares one commit, a
+# single stray null byte used to lose an entire session's turns.
+#
+# Sanitizing here rather than in any one importer is deliberate: every
+# source-layer writer funnels through `append_messages`, so the
+# claude-code / cursor / chatgpt / codex importers all inherit the fix
+# instead of each rediscovering it.
+_NULL_BYTE = "\x00"
+
+
+def _strip_nulls(value: Any) -> Any:
+    """Recursively drop U+0000 from strings inside a JSON-ish payload.
+
+    Strings are stripped; dicts and lists are walked (keys included —
+    jsonb rejects a null byte in a key just as readily); every other
+    scalar passes through untouched.
+    """
+    if isinstance(value, str):
+        return value.replace(_NULL_BYTE, "") if _NULL_BYTE in value else value
+    if isinstance(value, dict):
+        return {_strip_nulls(k): _strip_nulls(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_nulls(v) for v in value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -188,18 +222,60 @@ async def upsert_communication(
             external_id=external_id,
             agent=agent,
             channel=channel,
-            participants=participants or [],
+            participants=_strip_nulls(participants or []),
             scope_kind=scope_kind,
             scope_value=scope_value,
             started_at=started_at,
             ended_at=ended_at,
             retention_until=retention,
-            metadata_=metadata or {},
+            metadata_=_strip_nulls(metadata or {}),
         )
         session.add(row)
         await session.commit()
         await session.refresh(row)
         return row, True
+
+
+async def preview_pending_messages(
+    *,
+    agent: str,
+    external_id: str,
+    seqs: Sequence[int],
+) -> tuple[bool, int]:
+    """Answer, without writing anything: does this communication already
+    exist, and how many of ``seqs`` are not yet stored?
+
+    Returns ``(exists, pending_count)``. This is the read-only twin of
+    the idempotency logic in :func:`upsert_communication` +
+    :func:`append_messages`, and exists so ``--dry-run`` can report a
+    truthful count.
+
+    The distinction matters for hook-driven capture: a session imported
+    mid-flight (on compaction) is *existing* on the next run but has
+    genuinely new turns to append, so "already seen" is not the same
+    answer as "nothing to do".
+    """
+    factory = get_session_factory()
+    async with factory() as session:
+        row = await session.execute(
+            select(Communication.id).where(
+                Communication.agent == agent,
+                Communication.external_id == external_id,
+            )
+        )
+        comm_id = row.scalar_one_or_none()
+        if comm_id is None:
+            return False, len(seqs)
+        if not seqs:
+            return True, 0
+        result = await session.execute(
+            select(CommunicationMessage.seq).where(
+                CommunicationMessage.communication_id == comm_id,
+                CommunicationMessage.seq.in_(list(seqs)),
+            )
+        )
+        existing = {s for (s,) in result.all()}
+    return True, sum(1 for s in seqs if s not in existing)
 
 
 async def append_messages(
@@ -247,13 +323,21 @@ async def append_messages(
                 if msg.id is not None:
                     skipped_ids.add(msg.id)
                 continue
+
+            # Sanitize before the embed decision, not after: the policy
+            # thresholds on content length, and we want the stored bytes
+            # and the embedded bytes to be the same bytes.
+            content = _strip_nulls(msg.content or "")
+            tool_calls = _strip_nulls(msg.tool_calls) if msg.tool_calls is not None else None
+            metadata = _strip_nulls(msg.metadata or {})
+
             embedding = None
             if embed and should_embed_message(
                 role=msg.role,
-                content=msg.content,
+                content=content,
                 marked_salient=msg.marked_salient,
             ):
-                embedding = await embed_query(msg.content)
+                embedding = await embed_query(content)
                 embedded += 1
 
             parent_id = msg.parent_message_id
@@ -267,14 +351,14 @@ async def append_messages(
                     seq=msg.seq,
                     role=msg.role,
                     author=msg.author,
-                    content=msg.content,
+                    content=content,
                     content_type=msg.content_type,
-                    tool_calls=msg.tool_calls,
+                    tool_calls=tool_calls,
                     parent_message_id=parent_id,
                     ts=msg.ts,
                     embedding=embedding,
                     marked_salient=msg.marked_salient,
-                    metadata_=msg.metadata or {},
+                    metadata_=metadata,
                 )
             )
             written += 1

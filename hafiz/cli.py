@@ -1531,8 +1531,22 @@ def agent_install(
     ),
     path: str | None = typer.Option(None, "--path", help="Override destination directory."),
     file: str | None = typer.Option(None, "--file", "-f", help="Override destination filename."),
+    hooks: bool = typer.Option(
+        False,
+        "--hooks",
+        help=(
+            "Install automatic transcript-capture hooks instead of the skills file. "
+            "Captures each session before compaction and at session end."
+        ),
+    ),
 ) -> None:
     """Install hafiz skills for an AI coding agent."""
+    if hooks:
+        from hafiz.commands.agent import run_agent_install_hooks
+
+        run_agent_install_hooks(name, local=local)
+        return
+
     from hafiz.commands.agent import run_agent_install
 
     run_agent_install(name, local=local, path_override=path, file_override=file)
@@ -1545,8 +1559,19 @@ def agent_uninstall(
     path: str | None = typer.Option(None, "--path", help="Override destination directory."),
     file: str | None = typer.Option(None, "--file", "-f", help="Override destination filename."),
     force: bool = typer.Option(False, "--force", help="Remove even if not installed by hafiz."),
+    hooks: bool = typer.Option(
+        False,
+        "--hooks",
+        help="Remove the automatic transcript-capture hooks instead of the skills file.",
+    ),
 ) -> None:
     """Remove hafiz skills for an AI coding agent."""
+    if hooks:
+        from hafiz.commands.agent import run_agent_uninstall_hooks
+
+        run_agent_uninstall_hooks(name, local=local)
+        return
+
     from hafiz.commands.agent import run_agent_uninstall
 
     run_agent_uninstall(name, local=local, path_override=path, file_override=file, force=force)
@@ -1747,6 +1772,15 @@ def import_claude_code_cmd(
     no_embed: bool = typer.Option(
         False, "--no-embed", help="Skip embedding (text only). Useful for fast imports."
     ),
+    from_hook: bool = typer.Option(
+        False,
+        "--from-hook",
+        help=(
+            "Read an agent-harness hook payload as JSON on stdin and import only "
+            "the session it names. Always exits 0. Used by "
+            "`hafiz agent install claude-code --hooks`."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Import Claude Code session JSONL files into the source layer.
@@ -1756,6 +1790,12 @@ def import_claude_code_cmd(
     `hafiz context`; surface them with `hafiz recall <session>` or the
     `--include-transcripts` flag.
     """
+    if from_hook:
+        from hafiz.commands.import_cmd import run_import_from_hook
+
+        run_import_from_hook(output_json=json_output)
+        return
+
     from hafiz.commands.import_cmd import run_import_claude_code
 
     run_import_claude_code(
