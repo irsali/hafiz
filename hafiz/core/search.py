@@ -20,6 +20,7 @@ from hafiz.core.database import (
     UnitRevision,
     get_session_factory,
 )
+from hafiz.core.dialect import cosine_distance, similarity
 from hafiz.core.embeddings import embed_query
 
 
@@ -170,11 +171,11 @@ async def vector_search(
     _validate_domain_filters(inc, exc)
     query_embedding = await embed_query(query)
 
-    similarity_expr = 1 - Embedding.embedding.cosine_distance(query_embedding)
-    similarity = similarity_expr.label("similarity")
+    similarity_expr = similarity(Embedding.embedding, query_embedding)
+    similarity_label = similarity_expr.label("similarity")
 
     stmt = (
-        select(Embedding, UnitRevision, Unit, File, similarity)
+        select(Embedding, UnitRevision, Unit, File, similarity_label)
         .join(UnitRevision, UnitRevision.id == Embedding.unit_revision_id)
         .join(Unit, Unit.id == UnitRevision.unit_id)
         .join(File, File.id == Unit.file_id)
@@ -182,7 +183,7 @@ async def vector_search(
         .where(UnitRevision.superseded_at.is_(None))
         .where(Unit.valid_until.is_(None))
         .where(File.valid_until.is_(None))
-        .order_by(Embedding.embedding.cosine_distance(query_embedding))
+        .order_by(cosine_distance(Embedding.embedding, query_embedding))
         # Over-fetch so dedup happens *before* the cap, not after — trimming
         # first would spend the caller's limit on copies and then delete them.
         .limit(limit * _DEDUP_OVERFETCH if dedup else limit)

@@ -38,6 +38,7 @@ from hafiz.core.database import (
 from hafiz.core.database import (
     Session as SessionRow,
 )
+from hafiz.core.dialect import cosine_distance, similarity, tags_overlap
 from hafiz.core.embeddings import embed_query
 from hafiz.core.git_context import current_git_context
 
@@ -241,14 +242,14 @@ async def find_near_duplicates(
     now = datetime.now(UTC)
     session_factory = get_session_factory()
     async with session_factory() as session:
-        similarity = (1 - Annotation.embedding.cosine_distance(embedding)).label("similarity")
+        similarity_label = similarity(Annotation.embedding, embedding).label("similarity")
         stmt = (
-            select(Annotation, similarity)
+            select(Annotation, similarity_label)
             .where(Annotation.embedding.isnot(None))
             .where(Annotation.kind == kind)
             .where(Annotation.valid_from <= now)
             .where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
-            .order_by(Annotation.embedding.cosine_distance(embedding))
+            .order_by(cosine_distance(Annotation.embedding, embedding))
             .limit(limit)
         )
         if project:
@@ -1077,10 +1078,10 @@ async def search_annotations(
         stmt = (
             select(
                 Annotation,
-                (1 - Annotation.embedding.cosine_distance(query_embedding)).label("similarity"),
+                similarity(Annotation.embedding, query_embedding).label("similarity"),
             )
             .where(Annotation.embedding.isnot(None))
-            .order_by(Annotation.embedding.cosine_distance(query_embedding))
+            .order_by(cosine_distance(Annotation.embedding, query_embedding))
             .limit(fetch_limit)
         )
 
@@ -1094,7 +1095,7 @@ async def search_annotations(
             stmt = stmt.where(Annotation.source == source)
         if tags:
             # Overlap (&&), not containment: any one matching tag qualifies.
-            stmt = stmt.where(Annotation.tags.overlap(tags))
+            stmt = stmt.where(tags_overlap(Annotation.tags, tags))
         if active_only:
             now = datetime.now(UTC)
             stmt = stmt.where(Annotation.valid_from <= now)
@@ -1116,9 +1117,9 @@ async def search_annotations(
             valid_until=ann.valid_until,
             unit_id=str(ann.unit_id) if ann.unit_id else None,
             metadata=ann.metadata_ or {},
-            score=round(float(similarity), 4),
+            score=round(float(score), 4),
         )
-        for ann, similarity in rows
+        for ann, score in rows
     ]
 
     if do_rerank and len(candidates) > 1:

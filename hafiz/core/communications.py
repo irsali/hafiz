@@ -34,6 +34,7 @@ from hafiz.core.database import (
     CommunicationMessage,
     get_session_factory,
 )
+from hafiz.core.dialect import cosine_distance, similarity
 from hafiz.core.embeddings import embed_query
 
 # Tunables — kept module-level for now; promote to the tunable registry
@@ -565,16 +566,16 @@ async def search_messages(
     primary by default.
     """
     query_embedding = await embed_query(query)
-    similarity = (1 - CommunicationMessage.embedding.cosine_distance(query_embedding)).label(
+    similarity_label = similarity(CommunicationMessage.embedding, query_embedding).label(
         "similarity"
     )
 
     factory = get_session_factory()
     async with factory() as session:
         stmt = (
-            select(CommunicationMessage, similarity)
+            select(CommunicationMessage, similarity_label)
             .where(CommunicationMessage.embedding.isnot(None))
-            .order_by(CommunicationMessage.embedding.cosine_distance(query_embedding))
+            .order_by(cosine_distance(CommunicationMessage.embedding, query_embedding))
             .limit(limit)
         )
         if communication_id is not None:

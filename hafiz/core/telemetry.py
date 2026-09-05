@@ -138,6 +138,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
     from sqlalchemy import Integer, and_, cast, desc, func, literal_column, select, text
 
     from hafiz.core.database import Annotation, Retrieval, get_session_factory
+    from hafiz.core.dialect import backend_of, most_recalled_sql, unnest_ids
 
     since = datetime.now(UTC) - timedelta(days=since_days)
     factory = get_session_factory()
@@ -149,7 +150,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
             )
         ).scalar() or 0
 
-        recalled = select(func.unnest(Retrieval.result_ids).label("id")).subquery()
+        recalled = select(unnest_ids(Retrieval.result_ids).label("id")).subquery()
         never = (
             await session.execute(
                 select(func.count())
@@ -184,12 +185,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
 
         top = (
             await session.execute(
-                text(
-                    "SELECT a.id::text, a.kind, left(a.content, 120) AS preview, count(*) AS hits "
-                    "FROM retrievals r, unnest(r.result_ids) AS rid "
-                    "JOIN annotations a ON a.id = rid "
-                    "WHERE r.at >= :since GROUP BY 1,2,3 ORDER BY hits DESC LIMIT :limit"
-                ),
+                text(most_recalled_sql(backend_of(session))),
                 {"since": since, "limit": limit},
             )
         ).all()

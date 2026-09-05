@@ -52,7 +52,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -64,11 +63,19 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from hafiz.core.config import get_settings
+from hafiz.core.dialect import (
+    json_col,
+    partial_index,
+    string_array_col,
+    ts_col,
+    uuid_array_col,
+    uuid_col,
+    vector_col,
+)
 
 
 class Base(DeclarativeBase):
@@ -86,11 +93,11 @@ class Commit(Base):
     hash: Mapped[str] = mapped_column(Text, primary_key=True)
     project: Mapped[str | None] = mapped_column(Text, nullable=True)
     author: Mapped[str | None] = mapped_column(Text, nullable=True)
-    committed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    committed_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rewritten_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    rewritten_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
     rewritten_to: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     __table_args__ = (
         Index("idx_commits_project", "project"),
@@ -107,18 +114,18 @@ class Commit(Base):
 class File(Base):
     __tablename__ = "files"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     project: Mapped[str | None] = mapped_column(Text, nullable=True)
     path: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
     first_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
-    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     units: Mapped[list[Unit]] = relationship(
         "Unit", back_populates="file", cascade="all, delete-orphan"
@@ -140,9 +147,9 @@ class File(Base):
 class Unit(Base):
     __tablename__ = "units"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     file_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("files.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -152,9 +159,9 @@ class Unit(Base):
     identity_key: Mapped[str] = mapped_column(Text, nullable=False)
     first_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_seen_commit: Mapped[str | None] = mapped_column(Text, nullable=True)
-    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
 
@@ -180,9 +187,9 @@ class Unit(Base):
 class UnitRevision(Base):
     __tablename__ = "unit_revisions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     unit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("units.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -193,16 +200,16 @@ class UnitRevision(Base):
     commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
-    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("unit_revisions.id", ondelete="SET NULL"),
         nullable=True,
     )
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     unit: Mapped[Unit] = relationship("Unit", back_populates="revisions")
     embeddings: Mapped[list[Embedding]] = relationship(
@@ -217,11 +224,11 @@ class UnitRevision(Base):
         Index("idx_unit_revisions_unit_id", "unit_id"),
         Index("idx_unit_revisions_content_hash", "content_hash"),
         Index("idx_unit_revisions_commit_hash", "commit_hash"),
-        Index(
+        partial_index(
             "uq_unit_revisions_current",
             "unit_id",
             unique=True,
-            postgresql_where=text("superseded_at IS NULL"),
+            where=text("superseded_at IS NULL"),
         ),
     )
 
@@ -234,20 +241,20 @@ class UnitRevision(Base):
 class Embedding(Base):
     __tablename__ = "embeddings"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     unit_revision_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("unit_revisions.id", ondelete="CASCADE"),
         nullable=False,
     )
     part_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding = mapped_column(Vector(768), nullable=True)
+    embedding = mapped_column(vector_col(), nullable=True)
     token_span_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     token_span_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
 
@@ -268,14 +275,14 @@ class Embedding(Base):
 class Edge(Base):
     __tablename__ = "edges"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     source_unit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("units.id", ondelete="CASCADE"),
         nullable=False,
     )
     target_unit_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("units.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -286,11 +293,11 @@ class Edge(Base):
     weight: Mapped[float] = mapped_column(Float, default=1.0)
     commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
-    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    superseded_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     source_unit: Mapped[Unit] = relationship("Unit", foreign_keys=[source_unit_id])
     target_unit: Mapped[Unit | None] = relationship("Unit", foreign_keys=[target_unit_id])
@@ -316,16 +323,16 @@ class Edge(Base):
 class Annotation(Base):
     __tablename__ = "annotations"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding = mapped_column(Vector(768), nullable=True)
+    embedding = mapped_column(vector_col(), nullable=True)
     kind: Mapped[str] = mapped_column(Text, default="fact")
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     project: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(string_array_col(), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
     unit_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("units.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -334,23 +341,23 @@ class Annotation(Base):
     # New writes from Phase 2+ populate ``session_id`` (uuid FK) instead.
     legacy_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("sessions.id", ondelete="SET NULL"),
         nullable=True,
     )
     task: Mapped[str | None] = mapped_column(Text, nullable=True)
     commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     valid_from: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
-    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("annotations.id", ondelete="SET NULL"),
         nullable=True,
     )
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     unit: Mapped[Unit | None] = relationship("Unit", foreign_keys=[unit_id])
 
@@ -384,7 +391,7 @@ class Session(Base):
 
     __tablename__ = "sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     agent: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -393,12 +400,12 @@ class Session(Base):
     task: Mapped[str | None] = mapped_column(Text, nullable=True)
     tty: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
-    ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    ended_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     __table_args__ = (
         UniqueConstraint("slug", name="uq_sessions_slug"),
@@ -425,28 +432,26 @@ class Communication(Base):
 
     __tablename__ = "communications"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("sessions.id", ondelete="SET NULL"),
         nullable=True,
     )
     external_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     agent: Mapped[str] = mapped_column(Text, nullable=False)
     channel: Mapped[str | None] = mapped_column(Text, nullable=True)
-    participants: Mapped[list] = mapped_column(JSONB, default=list)
+    participants: Mapped[list] = mapped_column(json_col(), default=list)
     scope_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     scope_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
-    ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    retention_until: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    ended_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    retention_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     messages: Mapped[list[CommunicationMessage]] = relationship(
         "CommunicationMessage",
@@ -455,12 +460,12 @@ class Communication(Base):
     )
 
     __table_args__ = (
-        Index(
+        partial_index(
             "uq_communications_agent_external",
             "agent",
             "external_id",
             unique=True,
-            postgresql_where=text("external_id IS NOT NULL"),
+            where=text("external_id IS NOT NULL"),
         ),
         Index("idx_communications_session", "session_id"),
         Index("idx_communications_agent", "agent"),
@@ -483,9 +488,9 @@ class CommunicationMessage(Base):
 
     __tablename__ = "communication_messages"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     communication_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("communications.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -494,15 +499,15 @@ class CommunicationMessage(Base):
     author: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, default="text/markdown")
-    tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    tool_calls: Mapped[list | None] = mapped_column(json_col(), nullable=True)
     parent_message_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("communication_messages.id", ondelete="SET NULL"),
         nullable=True,
     )
-    ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    embedding = mapped_column(Vector(768), nullable=True)
-    chunk_window: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ts: Mapped[datetime] = mapped_column(ts_col(), nullable=False)
+    embedding = mapped_column(vector_col(), nullable=True)
+    chunk_window: Mapped[dict | None] = mapped_column(json_col(), nullable=True)
     marked_salient: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     #: The turn's identity **in the source system** (e.g. Claude Code's
     #: per-record ``uuid``). This is what makes re-import idempotent.
@@ -516,7 +521,7 @@ class CommunicationMessage(Base):
     #: source-native id (``hafiz capture``, hand-built rows) still dedupe
     #: positionally.
     source_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
 
     communication: Mapped[Communication] = relationship("Communication", back_populates="messages")
 
@@ -524,12 +529,12 @@ class CommunicationMessage(Base):
         UniqueConstraint("communication_id", "seq", name="uq_messages_comm_seq"),
         # Partial: rows without a source-native id fall back to the seq
         # constraint above, and must not collide with each other on NULL.
-        Index(
+        partial_index(
             "uq_messages_comm_source_id",
             "communication_id",
             "source_message_id",
             unique=True,
-            postgresql_where=text("source_message_id IS NOT NULL"),
+            where=text("source_message_id IS NOT NULL"),
         ),
         CheckConstraint(
             "role IN ('user', 'assistant', 'tool', 'system')",
@@ -539,10 +544,10 @@ class CommunicationMessage(Base):
         Index("idx_messages_ts", "ts"),
         Index("idx_messages_role", "role"),
         Index("idx_messages_parent", "parent_message_id"),
-        Index(
+        partial_index(
             "idx_messages_salient",
             "marked_salient",
-            postgresql_where=text("marked_salient = true"),
+            where=text("marked_salient = true"),
         ),
     )
 
@@ -559,18 +564,18 @@ class AnnotationTarget(Base):
 
     __tablename__ = "annotation_targets"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     annotation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("annotations.id", ondelete="CASCADE"),
         nullable=False,
     )
     target_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(uuid_col(), nullable=False)
     relation: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
     observed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
 
@@ -605,33 +610,35 @@ class Retrieval(Base):
 
     __tablename__ = "retrievals"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
     at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        ts_col(),
         default=lambda: datetime.now(UTC),
     )
     command: Mapped[str] = mapped_column(Text, nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
-    filters: Mapped[dict] = mapped_column(JSONB, default=dict)
-    result_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
+    filters: Mapped[dict] = mapped_column(json_col(), default=dict)
+    result_ids: Mapped[list[uuid.UUID]] = mapped_column(uuid_array_col(), default=list)
     n_results: Mapped[int] = mapped_column(Integer, default=0)
     top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     reranked: Mapped[bool] = mapped_column(Boolean, default=False)
     session_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
+        uuid_col(),
         ForeignKey("sessions.id", ondelete="SET NULL"),
         nullable=True,
     )
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    retention_until: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    valid_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    retention_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
 
     __table_args__ = (
         Index("idx_retrievals_at", "at"),
         Index("idx_retrievals_command", "command"),
         Index("idx_retrievals_retention", "retention_until"),
+        # GIN has no SQLite counterpart. The kwarg is dialect-namespaced, so
+        # SQLite ignores it and builds a plain index over the JSON text —
+        # useless for containment but harmless, and the table is
+        # retention-bounded. Phase 2 decides whether to drop it there.
         Index("idx_retrievals_result_ids", "result_ids", postgresql_using="gin"),
     )
 
