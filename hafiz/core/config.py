@@ -58,6 +58,72 @@ def load_toml(path: Path) -> dict:
         return tomllib.load(f)
 
 
+def user_config_path() -> Path:
+    """Where ``init`` writes a config when the user has none."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "hafiz" / CONFIG_FILENAME
+    return Path.home() / ".config" / "hafiz" / CONFIG_FILENAME
+
+
+DEFAULT_CONFIG_TEMPLATE = """\
+# Hafiz configuration — written by `hafiz init`.
+# Every value here is also settable via env (HAFIZ_DATABASE__URL, …)
+# and via `hafiz config set <key> <value>`.
+
+[database]
+url = "{database_url}"
+
+[embedding]
+model = "{embedding_model}"
+provider = "fastembed"
+dimensions = {dimensions}
+# device = "auto"   # "cpu" never touches the GPU; "gpu" requires CUDA
+
+[workspace]
+# The directory containing the projects you want indexed.
+root = "{workspace_root}"
+projects = []
+ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+"""
+
+
+def write_default_config(
+    path: Path | None = None,
+    *,
+    workspace_root: Path | None = None,
+) -> Path:
+    """Write a working config, and refuse to clobber an existing one.
+
+    First-run friction was the largest drop-off in the install path, and
+    the advice it replaced (`cp hafiz.toml.example hafiz.toml`) assumed a
+    cloned repo — which a `pipx install hafiz` user does not have. The
+    defaults here are the ones the code already uses, so the file is a
+    starting point to edit rather than a set of decisions to make before
+    anything works.
+    """
+    path = path or user_config_path()
+    if path.exists():
+        raise FileExistsError(path)
+
+    # Built from the sub-models' own field defaults, NOT from
+    # ``HafizSettings()`` — that merges environment overrides, so a
+    # throwaway `HAFIZ_DATABASE__URL=…` in the current shell would be
+    # frozen into the user's config file permanently.
+    database = DatabaseSettings()
+    embedding = EmbeddingSettings()
+    content = DEFAULT_CONFIG_TEMPLATE.format(
+        database_url=database.url,
+        embedding_model=embedding.model,
+        dimensions=embedding.dimensions,
+        workspace_root=(workspace_root or Path.cwd()).as_posix(),
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
 class DatabaseSettings(BaseModel):
     url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
 
@@ -282,13 +348,49 @@ class HafizSettings(BaseSettings):
     graph: GraphSettings = Field(default_factory=GraphSettings)
 
 
+def env_overridden_keys(environ: dict[str, str] | None = None) -> set[tuple[str, str]]:
+    """``(section, key)`` pairs that a ``HAFIZ_<SECTION>__<KEY>`` env var sets.
+
+    Only two-level names are recognised, which is the whole shape of this
+    config (``[database] url`` → ``HAFIZ_DATABASE__URL``).
+    """
+    environ = environ if environ is not None else dict(os.environ)
+    out: set[tuple[str, str]] = set()
+    for name in environ:
+        if not name.startswith("HAFIZ_"):
+            continue
+        remainder = name[len("HAFIZ_") :]
+        if "__" not in remainder:
+            continue
+        section, _, key = remainder.partition("__")
+        if section and key and "__" not in key:
+            out.add((section.lower(), key.lower()))
+    return out
+
+
 def load_settings() -> HafizSettings:
-    """Load settings from hafiz.toml (if found), with env var overrides."""
+    """Load settings from hafiz.toml (if found), with env var overrides.
+
+    TOML values are passed as init kwargs, and in pydantic-settings init
+    arguments outrank environment variables. Left alone, that inverts the
+    documented resolution order — ``env → hafiz.toml → sticky → default``
+    — and an override like ``HAFIZ_EMBEDDING__DEVICE=cpu hafiz ingest .``
+    is silently ignored for any key the config file happens to set.
+
+    So any key an env var addresses is dropped from the init kwargs,
+    leaving pydantic-settings' env source to supply it. That restores the
+    documented precedence exactly, without a custom settings source.
+    """
     config_path = find_config_file()
-    if config_path:
-        toml_data = load_toml(config_path)
-        return HafizSettings(**toml_data)
-    return HafizSettings()
+    if not config_path:
+        return HafizSettings()
+
+    toml_data = load_toml(config_path)
+    for section, key in env_overridden_keys():
+        values = toml_data.get(section)
+        if isinstance(values, dict):
+            values.pop(key, None)
+    return HafizSettings(**toml_data)
 
 
 # Singleton for convenience

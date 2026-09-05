@@ -6,11 +6,14 @@ A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your
 
 ```bash
 pipx install "hafiz[gpu] @ git+https://github.com/irsali/hafiz.git"  # or without [gpu]
-# Start Postgres + write hafiz.toml first — see Setup §1–§2 below
-hafiz init
-hafiz ingest ./src/ --project my-project
+hafiz init                    # writes a starter config, creates the schema
+hafiz ingest . --project my-project
 hafiz query "how does authentication work?"
 ```
+
+`hafiz init` writes `~/.config/hafiz/hafiz.toml` for you if you don't have one,
+and if it can't reach a database it prints the exact `docker run` line to start
+one — so the happy path is install, `init`, ingest.
 
 See the full setup guide below. Doing a cross-machine or cross-agent test? See [docs/testing-cross-machine.md](docs/testing-cross-machine.md).
 
@@ -135,12 +138,11 @@ psql -d hafiz -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 ### 2. Create the config file
 
-```bash
-mkdir -p ~/.config/hafiz                                            # Linux / macOS
-# Windows (PowerShell):  New-Item -ItemType Directory -Force "$env:APPDATA\hafiz" | Out-Null
-```
+**You can skip this step** — `hafiz init` writes a working config for you if
+none exists, at `~/.config/hafiz/hafiz.toml` (Linux/macOS) or
+`%APPDATA%\hafiz\hafiz.toml` (Windows). It never overwrites an existing one.
 
-Create the config file at `~/.config/hafiz/hafiz.toml` (Linux/macOS) or `%APPDATA%\hafiz\hafiz.toml` (Windows):
+Write it by hand only if you want different values up front:
 
 ```toml
 [database]

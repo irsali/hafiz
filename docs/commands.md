@@ -18,7 +18,7 @@
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `init` | Create the seven tables + pgvector extension | — | same | same |
+| `init` | Write a starter `hafiz.toml` if none exists, then create the seven tables + pgvector extension. Never overwrites an existing config; an unreachable database exits 1 with the `docker run` line to fix it. | — | `--json` → `{ok, config_path, config_created, database_url}` | rich output |
 | `status` | Count files / units / unit_revisions / embeddings / edges / annotations / commits, broken down by project and kind, plus **index freshness per project**, the **retention-overdue count**, and **transcript-capture freshness** | — | `--json` | rich output |
 | `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
 | `doctor` | Install health + host capabilities (RAM, CPU, GPU, onnxruntime) + tunable registry. Stable `--json` shape with `checks` / `host` / `tuning` keys. | — | `--json` | rich tables |
@@ -43,6 +43,23 @@
 | `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage. `tree_sitter_js` (JS/TS) appears only when the optional `hafiz[js]` extra is installed. | — | `--json` | rich table |
 | `embedding status` | Show current embedding device + provenance (config / sticky cache / probe) | — | `--json` | rich table |
 | `embedding retry` | Clear sticky device cache and re-probe | Embed | `--json` | rich output |
+
+**First run is two commands, not a checklist.** `hafiz init` used to assume a
+config already existed and told you to `cp hafiz.toml.example hafiz.toml` — a
+file a `pipx install hafiz` user does not have — and an unreachable database
+surfaced as a traceback. It now writes the config itself and turns a failed
+connection into the exact remedy. The written file carries the *built-in*
+defaults, never the current environment: a throwaway `HAFIZ_DATABASE__URL` in
+your shell must not be frozen into your config permanently.
+
+**Resolution order is `env → hafiz.toml → sticky → default`, and now actually
+is.** TOML values are passed to pydantic-settings as *init* arguments, which
+outrank environment variables — so `HAFIZ_EMBEDDING__DEVICE=cpu hafiz ingest .`
+(advertised in the README) was silently ignored for any key the config file also
+set. `load_settings` now drops keys that a `HAFIZ_<SECTION>__<KEY>` variable
+addresses before handing the rest over, letting the env source supply them. The
+defect was known: the test harness had been working around it with a patched
+`load_settings`, and its docstring named the cause.
 
 **Agent hooks are managed structurally, not by markers.** Instruction files are
 Markdown and use paired sentinel comments; an agent's `settings.json` is JSON, so

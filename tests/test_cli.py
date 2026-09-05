@@ -47,7 +47,11 @@ def test_help():
 def test_init_help():
     result = runner.invoke(app, ["init", "--help"])
     assert result.exit_code == 0
-    assert "Initialize" in result.output
+    # `init` now does two things, and the help should say so: write a
+    # starter config when there isn't one, then create the schema.
+    assert "config" in result.output.lower()
+    assert "schema" in result.output.lower()
+    assert "--json" in result.output
 
 
 def test_ingest_help():

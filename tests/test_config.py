@@ -3,6 +3,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from hafiz.core.config import (
     DatabaseSettings,
     EmbeddingSettings,
@@ -58,3 +60,92 @@ def test_settings_serialization():
     assert "embedding" in data
     assert "llm" in data
     assert "workspace" in data
+
+
+# ---------------------------------------------------------------------------
+# First-run config bootstrap + resolution order
+# ---------------------------------------------------------------------------
+
+
+def test_write_default_config_creates_a_usable_file(tmp_path):
+    """`cp hafiz.toml.example hafiz.toml` assumed a cloned repo, which a
+    `pipx install hafiz` user does not have. init writes one instead."""
+    import tomllib
+
+    from hafiz.core.config import write_default_config
+
+    target = tmp_path / "cfg" / "hafiz.toml"
+    written = write_default_config(target, workspace_root=tmp_path / "work")
+
+    assert written == target
+    data = tomllib.loads(target.read_text(encoding="utf-8"))
+    assert data["database"]["url"].startswith("postgresql+asyncpg://")
+    assert data["embedding"]["dimensions"] == 768
+    assert data["workspace"]["root"] == (tmp_path / "work").as_posix()
+
+
+def test_write_default_config_refuses_to_clobber(tmp_path):
+    from hafiz.core.config import write_default_config
+
+    target = tmp_path / "hafiz.toml"
+    target.write_text("# mine\n", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        write_default_config(target)
+    assert target.read_text(encoding="utf-8") == "# mine\n"
+
+
+def test_write_default_config_ignores_env_overrides(tmp_path, monkeypatch):
+    """A throwaway env var must not be frozen into the user's config."""
+    import tomllib
+
+    from hafiz.core.config import write_default_config
+
+    monkeypatch.setenv("HAFIZ_DATABASE__URL", "postgresql+asyncpg://tmp@localhost:59999/scratch")
+    target = tmp_path / "hafiz.toml"
+    write_default_config(target)
+
+    data = tomllib.loads(target.read_text(encoding="utf-8"))
+    assert "59999" not in data["database"]["url"]
+    assert data["database"]["url"].endswith(":5432/hafiz")
+
+
+def test_env_overridden_keys_parses_two_level_names():
+    from hafiz.core.config import env_overridden_keys
+
+    assert env_overridden_keys(
+        {
+            "HAFIZ_DATABASE__URL": "x",
+            "HAFIZ_EMBEDDING__DEVICE": "cpu",
+            "HAFIZ_SESSION_KEY": "not-a-setting",  # single level
+            "PATH": "/usr/bin",
+            "HAFIZ_A__B__C": "too deep",
+        }
+    ) == {("database", "url"), ("embedding", "device")}
+
+
+def test_env_beats_toml_as_documented(tmp_path, monkeypatch):
+    """The documented order is env -> hafiz.toml -> sticky -> default.
+
+    TOML values are passed as init kwargs, and pydantic-settings ranks init
+    above env — so without the fix, `HAFIZ_EMBEDDING__DEVICE=cpu hafiz
+    ingest .` (advertised in the README) was silently ignored whenever the
+    config file set that key.
+    """
+    from hafiz.core.config import load_settings
+
+    cfg = tmp_path / "hafiz.toml"
+    cfg.write_text(
+        '[embedding]\ndevice = "gpu"\nmax_part_chars = 1234\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HAFIZ_EMBEDDING__DEVICE", "cpu")
+
+    settings = load_settings()
+    assert settings.embedding.device == "cpu", "env must win over the config file"
+    # A key the env does not address still comes from the file. Asserted on
+    # `embedding`, not `database`: conftest patches `load_settings` to force
+    # the test-DB url — a workaround whose own docstring names this very bug
+    # ("toml values arrive as pydantic-settings init args, which beat env
+    # vars"), so `database.url` cannot measure anything here.
+    assert settings.embedding.max_part_chars == 1234

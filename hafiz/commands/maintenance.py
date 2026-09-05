@@ -18,40 +18,96 @@ from hafiz.core.database import close_engine, create_tables, get_session_factory
 console = Console()
 
 
-def run_init() -> None:
-    """Initialize the Hafiz database — create pgvector extension and all tables."""
+DOCKER_ONE_LINER = (
+    "docker run -d --name hafiz-db "
+    "-e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=hafiz "
+    "-p 5432:5432 --restart unless-stopped "
+    "-v hafiz-pgdata:/var/lib/postgresql/data pgvector/pgvector:pg17"
+)
 
-    async def _init():
+
+def _ensure_config() -> tuple[Path, bool]:
+    """Return ``(config_path, created)``, writing a default if none exists."""
+    from hafiz.core.config import reset_settings, write_default_config
+
+    existing = find_config_file()
+    if existing is not None:
+        return existing, False
+    path = write_default_config()
+    # The settings singleton was populated from defaults before the file
+    # existed; drop it so everything after this reads the real config.
+    reset_settings()
+    return path, True
+
+
+def run_init(*, output_json: bool = False) -> None:
+    """Initialize Hafiz: ensure a config exists, then create the schema."""
+    result: dict[str, Any] = {"ok": False, "action": "init"}
+
+    try:
+        config_path, created = _ensure_config()
+    except OSError as exc:
+        message = f"could not write a config file: {exc}"
+        if output_json:
+            console.print_json(json.dumps({"ok": False, "error": message}))
+        else:
+            console.print(f"[red]Error:[/red] {message}")
+        raise SystemExit(1) from None
+
+    result["config_path"] = str(config_path)
+    result["config_created"] = created
+
+    settings = get_settings()
+    result["database_url"] = settings.database.url
+
+    async def _init() -> str | None:
         try:
-            settings = get_settings()
-            console.print(f"Connecting to [bold]{settings.database.url}[/bold]")
             await create_tables()
-            console.print("[green]Database initialized successfully.[/green]")
-            console.print("  - pgvector extension enabled")
-            console.print(
-                "  - Tables created: files, units, unit_revisions, "
-                "embeddings, edges, annotations, commits"
-            )
-            console.print(
-                "  [yellow]Note: migration 0005 replaces the old schema. "
-                "Re-ingest is required after upgrade from an older Hafiz.[/yellow]"
-            )
-
-            # Check for config file
-            config_path = find_config_file()
-            if config_path:
-                console.print(f"  - Config loaded from: {config_path}")
-            else:
-                console.print(
-                    f"  [yellow]No {CONFIG_FILENAME} found. Using defaults + env vars.[/yellow]"
-                )
-                console.print(
-                    f"  Run [bold]cp hafiz.toml.example {CONFIG_FILENAME}[/bold] to create one."
-                )
+            return None
+        except Exception as exc:  # noqa: BLE001 — turned into guidance below
+            return str(exc)
         finally:
             await close_engine()
 
-    asyncio.run(_init())
+    error = asyncio.run(_init())
+
+    if error is not None:
+        result["error"] = error
+        if output_json:
+            console.print_json(json.dumps({**result, "ok": False, "next_step": DOCKER_ONE_LINER}))
+            raise SystemExit(1)
+
+        console.print(f"[red]Could not reach the database.[/red]\n  [dim]{error}[/dim]\n")
+        console.print(f"Hafiz is configured to use:\n  [bold]{settings.database.url}[/bold]\n")
+        console.print("Start one with Docker:")
+        console.print(f"  [bold]{DOCKER_ONE_LINER}[/bold]\n")
+        console.print(
+            "[dim]…then run `hafiz init` again. Already have Postgres? Point hafiz at it:\n"
+            "  hafiz config set database.url "
+            "postgresql+asyncpg://user:pass@host:5432/hafiz[/dim]"
+        )
+        raise SystemExit(1)
+
+    result["ok"] = True
+    if output_json:
+        console.print_json(json.dumps(result))
+        return
+
+    if created:
+        console.print(f"[green]+[/green] Wrote a starter config to [bold]{config_path}[/bold]")
+    else:
+        console.print(f"  [dim]Config loaded from {config_path}[/dim]")
+    console.print(f"[green]Database initialized.[/green] [dim]{settings.database.url}[/dim]")
+    console.print("  - pgvector extension enabled")
+    console.print(
+        "  - Tables created: files, units, unit_revisions, embeddings, edges, annotations, commits"
+    )
+    console.print(
+        "\nNext:\n"
+        "  [bold]hafiz ingest . --project <name>[/bold]   index a project\n"
+        "  [bold]hafiz status --diagnose[/bold]           check everything is wired\n"
+        "  [bold]hafiz agent install claude-code[/bold]   teach your agent to use hafiz"
+    )
 
 
 def _embedding_device_summary() -> dict:

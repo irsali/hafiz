@@ -86,11 +86,13 @@ def _top_level_callback(
 
 
 @app.command()
-def init() -> None:
-    """Initialize the Hafiz database (create tables + pgvector extension)."""
+def init(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Set up Hafiz: write a starter config if needed, then create the schema."""
     from hafiz.commands.maintenance import run_init
 
-    run_init()
+    run_init(output_json=json_output)
 
 
 # ─── INGEST ─────────────────────────────────────────────────────────────
