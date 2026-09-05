@@ -1809,6 +1809,132 @@ def import_claude_code_cmd(
     )
 
 
+@import_app.command("cursor")
+def import_cursor_cmd(
+    path: str | None = typer.Argument(
+        None,
+        help=(
+            "Path to Cursor's state.vscdb or its User/ directory. "
+            "Defaults to this platform's Cursor storage."
+        ),
+    ),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Tag stored communications with this project (default: infer from each workspace).",
+    ),
+    limit: int | None = typer.Option(None, "--limit", "-l", help="Stop after N conversations."),
+    since: str | None = typer.Option(
+        None, "--since", help="Only import conversations updated within this duration (e.g. 7d)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Parse and report counts without writing."
+    ),
+    no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding (text only)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Import Cursor chat conversations into the source layer.
+
+    Cursor's database is opened read-only. Conversations are scoped to the
+    indexed project containing the folder their workspace was opened on.
+    """
+    from hafiz.commands.import_cmd import run_import
+
+    run_import(
+        "cursor",
+        path,
+        project=project,
+        limit=limit,
+        since=since,
+        dry_run=dry_run,
+        no_embed=no_embed,
+        output_json=json_output,
+    )
+
+
+@import_app.command("chatgpt")
+def import_chatgpt_cmd(
+    path: str = typer.Argument(
+        ...,
+        help="The export .zip, its unzipped directory, or conversations.json.",
+    ),
+    project: str | None = typer.Option(
+        None, "--project", "-p", help="Tag stored communications with this project."
+    ),
+    limit: int | None = typer.Option(None, "--limit", "-l", help="Stop after N conversations."),
+    since: str | None = typer.Option(
+        None, "--since", help="Only import conversations updated within this duration (e.g. 30d)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Parse and report counts without writing."
+    ),
+    no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding (text only)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Import a ChatGPT data export (Settings -> Data controls -> Export data).
+
+    Each conversation is imported as the linear thread you actually had —
+    the path back from `current_node` — not every regenerated branch.
+    """
+    from hafiz.commands.import_cmd import run_import
+
+    run_import(
+        "chatgpt",
+        path,
+        project=project,
+        limit=limit,
+        since=since,
+        dry_run=dry_run,
+        no_embed=no_embed,
+        output_json=json_output,
+    )
+
+
+@import_app.command("codex")
+def import_codex_cmd(
+    path: str | None = typer.Argument(
+        None,
+        help=(
+            "A rollout .jsonl or a directory of them. "
+            "Defaults to $CODEX_HOME/sessions plus archived_sessions."
+        ),
+    ),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Tag stored communications with this project (default: infer from each session cwd).",
+    ),
+    limit: int | None = typer.Option(None, "--limit", "-l", help="Stop after N rollout files."),
+    since: str | None = typer.Option(
+        None, "--since", help="Only import sessions ending within this duration (e.g. 7d)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Parse and report counts without writing."
+    ),
+    no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding (text only)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Import Codex CLI session rollouts into the source layer.
+
+    Written from the documented rollout format and not yet verified
+    against a real Codex install — run with --dry-run first.
+    """
+    from hafiz.commands.import_cmd import run_import
+
+    run_import(
+        "codex",
+        path,
+        project=project,
+        limit=limit,
+        since=since,
+        dry_run=dry_run,
+        no_embed=no_embed,
+        output_json=json_output,
+    )
+
+
 # ─── ERRORS ───────────────────────────────────────────────────────────
 
 errors_app = typer.Typer(

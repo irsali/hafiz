@@ -30,21 +30,16 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from hafiz.core.communications import (
-    MessageInput,
-    append_messages,
-    communication_state,
-    should_embed_message,
-    upsert_communication,
-)
-from hafiz.core.sessions import (
-    create_session,
-    get_session_by_slug,
+from hafiz.core.communications import MessageInput
+from hafiz.core.importers.base import (
+    ImportSummary,
+    ParsedConversation,
+    store_conversation,
 )
 
 CLAUDE_CODE_AGENT = "claude-code"
@@ -54,32 +49,6 @@ DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # get dropped during parse. The remaining rows are user / assistant
 # (and sometimes tool, modeled below by inspecting content blocks).
 _NON_MESSAGE_TYPES = {"queue-operation", "attachment", "file-history-snapshot"}
-
-
-@dataclass
-class ImportSummary:
-    """High-level outcome of one ``hafiz import claude-code`` run."""
-
-    files_seen: int = 0
-    files_skipped: int = 0
-    communications_created: int = 0
-    communications_existing: int = 0
-    messages_written: int = 0
-    messages_embedded: int = 0
-    sessions_created: int = 0
-    errors: list[dict] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return {
-            "files_seen": self.files_seen,
-            "files_skipped": self.files_skipped,
-            "communications_created": self.communications_created,
-            "communications_existing": self.communications_existing,
-            "messages_written": self.messages_written,
-            "messages_embedded": self.messages_embedded,
-            "sessions_created": self.sessions_created,
-            "errors": self.errors,
-        }
 
 
 @dataclass
@@ -351,16 +320,6 @@ def peek_session_id(path: Path, *, max_lines: int = 8) -> str | None:
     return None
 
 
-def _session_slug(external_id: str) -> str:
-    """The session slug a given JSONL session uuid maps to.
-
-    One definition, used by both the real import and the ``--dry-run``
-    preview — a slug that disagreed between the two would make the
-    preview's ``sessions_created`` count quietly wrong.
-    """
-    return f"claude-code-{external_id[:12]}"
-
-
 def discover_jsonl_files(root: Path) -> list[Path]:
     """Find all session JSONL files under ``root`` (the projects dir)."""
     if not root.exists():
@@ -378,6 +337,7 @@ async def import_claude_code(
     since: datetime | None = None,
     dry_run: bool = False,
     embed: bool = True,
+    resolve_project: bool = True,
 ) -> ImportSummary:
     """Import every session JSONL under ``root`` (defaults to
     ``~/.claude/projects``) into ``communications`` + messages.
@@ -393,14 +353,18 @@ async def import_claude_code(
         files = files[:limit]
 
     # Claude Code reuses one sessionId across several JSONL files (resumed
-    # sessions, sidechains) — measured here at 200 files over 77 session
-    # ids. Those files all resolve to the *same* communication, so a
-    # per-file preview that only consults the DB would count the same new
-    # communication once per file. Track the turn identities this run has
-    # already accounted for so `--dry-run` totals match a real run — and
-    # note these are identities, not seqs: a resumed file replays earlier
-    # turns under their original ids, which a real import collapses.
+    # sessions, sidechains) — measured at 200 files over 77 session ids.
+    # They all resolve to the *same* communication, so the run-level
+    # accumulator below is what keeps a `--dry-run` from counting one new
+    # communication per file, and from counting a replayed turn twice.
     previewed: dict[str, set[str]] = {}
+    # Hoisted once: resolving per file would re-query every project's
+    # indexed root for each of ~200 files.
+    roots = None
+    if project is None and resolve_project:
+        from hafiz.core.store import indexed_root_per_project
+
+        roots = await indexed_root_per_project()
 
     for path in files:
         try:
@@ -415,117 +379,38 @@ async def import_claude_code(
         if since is not None and parsed.ended_at and parsed.ended_at < since:
             summary.files_skipped += 1
             continue
-        if dry_run:
-            # A preview has to preview something. Previously this
-            # `continue` fired before any counter moved, so every dry
-            # run reported communications_created: 0 / messages_written: 0
-            # regardless of what a real run would do — which is how two
-            # months of uncaptured sessions stayed invisible.
-            #
-            # Resolve the same idempotency keys a real run would, so the
-            # counts split correctly between "new" and "already stored"
-            # and a mid-flight session still reports its pending turns.
-            seen = previewed.get(parsed.external_id)
-            if seen is None:
-                # First file for this session: seed the accumulator with
-                # what the store already holds, so sibling files below are
-                # measured against the database and not just against each
-                # other.
-                exists, seen = await communication_state(
-                    agent=CLAUDE_CODE_AGENT,
-                    external_id=parsed.external_id,
-                )
-                previewed[parsed.external_id] = seen
-                if exists:
-                    summary.communications_existing += 1
-                else:
-                    summary.communications_created += 1
-                    if await get_session_by_slug(_session_slug(parsed.external_id)) is None:
-                        summary.sessions_created += 1
 
-            # Count each identity once, whether it repeats within this file
-            # or across sibling files — a real import collapses both.
-            pending = 0
-            for m in parsed.messages:
-                sid = m.source_message_id
-                if not sid or sid in seen:
-                    continue
-                seen.add(sid)
-                pending += 1
-            summary.messages_written += pending
-            if embed and pending:
-                # Which specific seqs are pending isn't resolved here, so
-                # scale the policy's verdict over the whole file by the
-                # pending fraction. Exact for a new session (the common
-                # case); an estimate only for a partial re-import.
-                would_embed = sum(
-                    1
-                    for m in parsed.messages
-                    if should_embed_message(
-                        role=m.role,
-                        content=m.content,
-                        marked_salient=m.marked_salient,
-                    )
-                )
-                summary.messages_embedded += (
-                    would_embed
-                    if pending == len(parsed.messages)
-                    else round(would_embed * pending / max(1, len(parsed.messages)))
-                )
-            continue
+        # Scope to the project the session actually ran in. `--from-hook`
+        # has always done this; bulk import did not, which left every
+        # backfilled session untagged and invisible to project-scoped
+        # recall. An unindexed cwd yields None rather than a guess.
+        scope = project
+        if scope is None and roots is not None and parsed.cwd:
+            from hafiz.core.store import project_for_path
 
-        # Wire a session row keyed by the JSONL session uuid so
-        # subsequent annotations / recalls bind to the same session.
-        session_slug = _session_slug(parsed.external_id)
-        session_row = await get_session_by_slug(session_slug)
-        if session_row is None:
-            stored = await create_session(
-                slug=session_slug,
-                name=f"Claude Code session {parsed.external_id[:8]}",
-                agent=CLAUDE_CODE_AGENT,
-                scope_kind="project" if project else None,
-                scope_value=project,
+            scope = await project_for_path(parsed.cwd, roots=roots)
+
+        await store_conversation(
+            agent=CLAUDE_CODE_AGENT,
+            parsed=ParsedConversation(
+                external_id=parsed.external_id,
+                title=f"Claude Code session {parsed.external_id[:8]}",
                 started_at=parsed.started_at,
+                ended_at=parsed.ended_at,
+                cwd=parsed.cwd,
+                source_path=str(path),
+                messages=parsed.messages,
                 metadata={
-                    "external_id": parsed.external_id,
-                    "cwd": parsed.cwd,
                     "git_branch": parsed.git_branch,
                     "claude_code_version": parsed.version,
                 },
-            )
-            session_id = stored.id
-            summary.sessions_created += 1
-        else:
-            session_id = session_row.id
-
-        comm, created = await upsert_communication(
-            agent=CLAUDE_CODE_AGENT,
-            external_id=parsed.external_id,
-            session_id=session_id,
-            channel="cli",
-            participants=[
-                {"role": "user", "identity": "user:host"},
-                {"role": "assistant", "identity": "agent:claude-code"},
-            ],
-            scope_kind="project" if project else None,
-            scope_value=project,
-            started_at=parsed.started_at,
-            ended_at=parsed.ended_at,
-            metadata={
-                "source_file": str(path),
-                "cwd": parsed.cwd,
-                "git_branch": parsed.git_branch,
-                "claude_code_version": parsed.version,
-            },
+            ),
+            summary=summary,
+            project=scope,
+            embed=embed,
+            dry_run=dry_run,
+            previewed=previewed,
         )
-        if created:
-            summary.communications_created += 1
-        else:
-            summary.communications_existing += 1
-
-        written, embedded = await append_messages(comm.id, parsed.messages, embed=embed)
-        summary.messages_written += written
-        summary.messages_embedded += embedded
 
     return summary
 
@@ -539,3 +424,28 @@ __all__ = [
     "parse_jsonl_file",
     "import_claude_code",
 ]
+
+
+def pending_on_disk(known: set[str], settle_before: datetime) -> tuple[int, int]:
+    """(uncaptured, still-being-written) session counts under the default root.
+
+    Reads each file's head for its ``sessionId`` rather than parsing it —
+    see :func:`peek_session_id` for why the filename stem will not do.
+    """
+    pending = 0
+    active = 0
+    if not DEFAULT_PROJECTS_DIR.exists():
+        return 0, 0
+    for path in DEFAULT_PROJECTS_DIR.rglob("*.jsonl"):
+        session_id = peek_session_id(path)
+        if session_id is None or session_id in known:
+            continue
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        except OSError:
+            continue
+        if mtime > settle_before:
+            active += 1
+        else:
+            pending += 1
+    return pending, active

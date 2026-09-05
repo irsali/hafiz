@@ -575,6 +575,9 @@ Hafiz can ingest agent-harness transcripts into a dedicated source layer (see [a
 |---------|---------|:-----:|-----------|-------------|
 | `import claude-code [PATH]` | Idempotent post-hoc import of Claude Code session JSONL into `communications` + messages | — | `--json` | rich table |
 | `import claude-code --from-hook` | Import only the session an agent-harness hook names, reading the hook payload as JSON on **stdin**. Always exits 0. | — | `--json` → `{ok, action, transcript_path, project, summary}` | silent |
+| `import cursor [PATH]` | Import Cursor chat conversations from its SQLite store (**read-only**). Defaults to this platform's Cursor storage. | — | `--json` | rich table |
+| `import chatgpt <PATH>` | Import a ChatGPT data export. Accepts the `.zip`, its unzipped directory, or `conversations.json`. Path is required. | — | `--json` | rich table |
+| `import codex [PATH]` | Import Codex CLI session rollouts. Defaults to `$CODEX_HOME/sessions` **and** `archived_sessions`. | — | `--json` | rich table |
 | `recall <target>` | Ordered messages for a session (slug or uuid) or communication; or vector search via `--query` | — | `--json` | rich table |
 | `query --include-transcripts` | Add matching source-layer turns to results, tagged `layer="source"` | — | `--json` | rich panel (separate transcript section) |
 | `context --include-transcripts` | Append matching transcript turns under a `transcripts` field | — | `--json` | rich panel |
@@ -632,7 +635,42 @@ Consequences worth knowing:
   have no source-native id and keep deduping positionally, so
   `uq_messages_comm_seq` is retained as their guarantee.
 - Importers **must** set `MessageInput.source_message_id` whenever the source
-  has one. An importer that omits it silently inherits the positional bug.
+  has one. An importer that omits it silently inherits the positional bug, so
+  the shared writer appends a warning to `summary.errors` when a parser hands
+  over turns with no identity at all.
+
+#### Per-importer notes
+
+All four share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
+`--no-embed`, `--json`) and one summary shape, because they share one writer
+(`hafiz/core/importers/base.py`); only parsing differs.
+
+| Importer | Source | Turn identity | Project scoping |
+|---|---|---|---|
+| `claude-code` | `~/.claude/projects/**/*.jsonl` | record `uuid` | session `cwd` |
+| `cursor` | `state.vscdb` (SQLite, read-only) | `bubbleId` | workspace folder |
+| `chatgpt` | export `conversations.json` | node `id` | `--project` only |
+| `codex` | `$CODEX_HOME/sessions/**/*.jsonl` | record `id`, else `<session>:<line>` | session `cwd` |
+
+- **Cursor** is opened **read-only** (`file:…?mode=ro`) — it is a running
+  application's database. Conversations are Cursor *composers*; turns are
+  *bubbles*, ordered by `composerData.fullConversationHeadersOnly` rather than
+  key order, since bubbles are independent rows. `workspaceStorage/<id>/workspace.json`
+  maps a workspace to its folder, so conversations land project-scoped. Drafts
+  and composers with no bubbles are skipped (on a real store, 70 headers yielded
+  26 conversations).
+- **ChatGPT** exports are a message **tree**, not a list: regenerated answers and
+  edited prompts create branches. The importer walks parent pointers back from
+  `current_node`, so it imports the conversation you actually had rather than
+  every abandoned draft. There is no default path — an export is a file you
+  download, so `PATH` is required and its absence is a clean exit 1.
+- **Codex** appends to one rollout file when a session resumes, so unlike
+  claude-code there are no sibling files and a record's line number is a stable
+  identity where no native `id` exists. `CODEX_HOME` is honoured. Reasoning
+  records and `event_msg` telemetry are skipped; unknown record types are
+  ignored rather than treated as errors, because Codex is explicitly tolerant of
+  its own schema drift. **This parser is written from the documented format and
+  has not been verified against a real Codex install — run `--dry-run` first.**
 
 **Retention enforcement.** `import` runs the expiry sweep automatically and
 reports it (`retention_sweep: {matched, tombstoned, dry_run}` in `--json`; a row

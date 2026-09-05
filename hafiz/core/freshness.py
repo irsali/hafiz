@@ -84,12 +84,14 @@ async def capture_freshness(*, settle_minutes: int = 30) -> dict[str, dict]:
     ever meant "the sweep is keeping up", and a store receiving nothing
     is trivially swept. Silence is not health.
 
-    ``pending_on_disk`` counts transcripts whose **session id is not in the
-    store at all**. The id comes from :func:`peek_session_id`, which reads
-    only each file's head — one query plus a few hundred short reads,
-    rather than parsing 38k turns. `status` is on the hot path and must
-    stay cheap. (The filename stem is *not* usable as the id: it matches
-    only a session's first file, and 124 of 200 files disagreed with it.)
+    ``pending_on_disk`` counts sessions whose **id is not in the store at
+    all**, per agent, via that agent's own ``pending_on_disk`` probe —
+    only an importer knows where its harness keeps sessions. Probes read
+    just enough to identify a session (a JSONL head, a SQLite id column)
+    rather than parsing it: `status` is on the hot path and must stay
+    cheap. For claude-code specifically, the filename stem is *not* usable
+    as the id — it matches only a session's first file, and 124 of 200
+    files disagreed with it.
 
     Deliberately *not* "mtime newer than the last capture", which was the
     first cut and was wrong: ``last_captured_at`` is ``max(started_at)``,
@@ -114,11 +116,6 @@ async def capture_freshness(*, settle_minutes: int = 30) -> dict[str, dict]:
     from sqlalchemy import func, select
 
     from hafiz.core.database import Communication, get_session_factory
-    from hafiz.core.importers.claude_code import (
-        CLAUDE_CODE_AGENT,
-        DEFAULT_PROJECTS_DIR,
-        peek_session_id,
-    )
 
     out: dict[str, dict] = {}
     try:
@@ -148,40 +145,34 @@ async def capture_freshness(*, settle_minutes: int = 30) -> dict[str, dict]:
     except Exception:
         return {}
 
-    # Only claude-code has a discoverable on-disk store today. As the
-    # cursor / chatgpt / codex importers land, each contributes its own
-    # root here rather than this growing a special case per agent.
-    entry = out.setdefault(CLAUDE_CODE_AGENT, {"last_captured_at": None, "days_since": None})
-    try:
-        async with factory() as session:
-            rows = await session.execute(
-                select(Communication.external_id).where(
-                    Communication.agent == CLAUDE_CODE_AGENT,
-                    Communication.external_id.is_not(None),
-                )
-            )
-            known = {e for (e,) in rows.all()}
+    # Each agent's own importer knows where its harness keeps sessions and
+    # how to recognise one; freshness just asks. ChatGPT has no probe on
+    # purpose — an export is a file the user downloads, not a store that
+    # can fall behind.
+    from hafiz.core.importers import PENDING_PROBES, pending_probe
 
-        settled_before = datetime.now(UTC) - timedelta(minutes=settle_minutes)
-        pending = 0
-        active = 0
-        if DEFAULT_PROJECTS_DIR.exists():
-            for path in DEFAULT_PROJECTS_DIR.rglob("*.jsonl"):
-                session_id = peek_session_id(path)
-                if session_id is None or session_id in known:
-                    continue
-                try:
-                    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-                except OSError:
-                    continue
-                if mtime > settled_before:
-                    active += 1  # still being written — not yet a failure
-                    continue
-                pending += 1
-        entry["pending_on_disk"] = pending
-        entry["active_on_disk"] = active
-    except Exception:
-        entry["pending_on_disk"] = None
+    settled_before = datetime.now(UTC) - timedelta(minutes=settle_minutes)
+    for agent in PENDING_PROBES:
+        probe = pending_probe(agent)
+        if probe is None:
+            continue
+        entry = out.setdefault(agent, {"last_captured_at": None, "days_since": None})
+        try:
+            async with factory() as session:
+                rows = await session.execute(
+                    select(Communication.external_id).where(
+                        Communication.agent == agent,
+                        Communication.external_id.is_not(None),
+                    )
+                )
+                known = {e for (e,) in rows.all()}
+            pending, active = probe(known, settled_before)
+            entry["pending_on_disk"] = pending
+            entry["active_on_disk"] = active
+        except Exception:
+            # An unreadable store is not a reason to fail `status`; the
+            # operator reaches for it when something is already wrong.
+            entry["pending_on_disk"] = None
 
     return out
 

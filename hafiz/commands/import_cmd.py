@@ -116,7 +116,51 @@ def run_import_from_hook(*, output_json: bool = False) -> None:
         )
 
 
-def run_import_claude_code(
+# Every importer takes the same options and produces the same summary, so
+# the command layer is one runner plus a per-agent binding rather than four
+# near-identical copies.
+IMPORTERS: dict[str, dict] = {
+    "claude-code": {
+        "label": "Claude Code",
+        "default_root": lambda: DEFAULT_PROJECTS_DIR,
+    },
+    "cursor": {
+        "label": "Cursor",
+        "default_root": None,  # the importer resolves its own platform path
+    },
+    "chatgpt": {
+        "label": "ChatGPT export",
+        "default_root": None,
+        "requires_path": True,
+    },
+    "codex": {
+        "label": "Codex CLI",
+        "default_root": None,
+    },
+}
+
+
+def _importer_fn(agent: str):
+    """Import lazily — each importer pulls in its own deps (sqlite3, zipfile)."""
+    if agent == "claude-code":
+        return import_claude_code
+    if agent == "cursor":
+        from hafiz.core.importers.cursor import import_cursor
+
+        return import_cursor
+    if agent == "chatgpt":
+        from hafiz.core.importers.chatgpt import import_chatgpt
+
+        return import_chatgpt
+    if agent == "codex":
+        from hafiz.core.importers.codex import import_codex
+
+        return import_codex
+    raise ValueError(f"unknown importer: {agent}")
+
+
+def run_import(
+    agent: str,
     path: str | None = None,
     *,
     project: str | None = None,
@@ -126,24 +170,47 @@ def run_import_claude_code(
     no_embed: bool = False,
     output_json: bool = False,
 ) -> None:
-    root = Path(path).expanduser().resolve() if path else DEFAULT_PROJECTS_DIR
+    """Run one source-layer importer and report what it did."""
+    spec = IMPORTERS[agent]
     cutoff = _resolve_since(since)
+
+    root: Path | None = None
+    if path:
+        root = Path(path).expanduser().resolve()
+    elif spec.get("default_root"):
+        root = spec["default_root"]()
+
+    if root is None and spec.get("requires_path"):
+        message = (
+            f"{spec['label']} has no well-known location — it is a file you download. "
+            "Pass the export .zip, its unzipped directory, or conversations.json."
+        )
+        if output_json:
+            console.print_json(json.dumps({"ok": False, "error": message}))
+        else:
+            console.print(f"[red]Error:[/red] {message}")
+        raise SystemExit(1)
+
+    importer = _importer_fn(agent)
 
     async def _run():
         try:
-            result = await import_claude_code(
-                root=root,
-                project=project,
-                limit=limit,
-                since=cutoff,
-                dry_run=dry_run,
-                embed=not no_embed,
-            )
-            # Enforce bounded retention opportunistically: this is the command
-            # that grows the source layer, so it's the honest place to prune it.
-            # Deliberately NOT on `ingest` — that's the code/doc subsystem, it
-            # fires per-commit from a hook, and its output goes to /dev/null, so
-            # a sweep there would be unattributable and unobservable.
+            kwargs = {
+                "project": project,
+                "limit": limit,
+                "since": cutoff,
+                "dry_run": dry_run,
+                "embed": not no_embed,
+            }
+            if root is not None:
+                kwargs["root"] = root
+            result = await importer(**kwargs)
+            # Enforce bounded retention opportunistically: import is the
+            # command that grows the source layer, so it's the honest place
+            # to prune it. Deliberately NOT on `ingest` — that's the code/doc
+            # subsystem, it fires per-commit from a git hook, and its output
+            # goes to /dev/null, so a sweep there would be unattributable and
+            # unobservable.
             from hafiz.core.communications import tombstone_expired_communications
             from hafiz.core.telemetry import tombstone_expired_retrievals
 
@@ -165,8 +232,8 @@ def run_import_claude_code(
         console.print_json(
             json.dumps(
                 {
-                    "action": "import_claude_code",
-                    "root": str(root),
+                    "action": f"import_{agent.replace('-', '_')}",
+                    "root": str(root) if root is not None else None,
                     "project": project,
                     "since": cutoff.isoformat() if cutoff else None,
                     "dry_run": dry_run,
@@ -178,12 +245,15 @@ def run_import_claude_code(
         )
         return
 
-    table = Table(title=f"Claude Code import — {root}", border_style="cyan")
+    where = f" — {root}" if root is not None else ""
+    table = Table(title=f"{spec['label']} import{where}", border_style="cyan")
     table.add_column("Metric", style="bold")
     table.add_column("Count", justify="right")
     s = summary
-    table.add_row("Files seen", str(s.files_seen))
-    table.add_row("Files skipped", str(s.files_skipped))
+    # "Files" is the wrong noun for a source that isn't file-shaped.
+    unit = "Conversations" if agent in ("cursor", "chatgpt") else "Files"
+    table.add_row(f"{unit} seen", str(s.files_seen))
+    table.add_row(f"{unit} skipped", str(s.files_skipped))
     table.add_row("Communications created", str(s.communications_created))
     table.add_row("Communications already present", str(s.communications_existing))
     table.add_row("Sessions created", str(s.sessions_created))
@@ -208,3 +278,25 @@ def run_import_claude_code(
             border_style="red",
         )
         console.print(err_panel)
+
+
+def run_import_claude_code(
+    path: str | None = None,
+    *,
+    project: str | None = None,
+    limit: int | None = None,
+    since: str | None = None,
+    dry_run: bool = False,
+    no_embed: bool = False,
+    output_json: bool = False,
+) -> None:
+    run_import(
+        "claude-code",
+        path,
+        project=project,
+        limit=limit,
+        since=since,
+        dry_run=dry_run,
+        no_embed=no_embed,
+        output_json=output_json,
+    )

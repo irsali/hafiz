@@ -662,9 +662,17 @@ async def indexed_root_per_project(
     return roots
 
 
-async def project_for_path(path: str | Path) -> str | None:
+async def project_for_path(
+    path: str | Path,
+    *,
+    roots: dict[str | None, str] | None = None,
+) -> str | None:
     """Which indexed project contains ``path``? The inverse of
     :func:`indexed_root_per_project`.
+
+    Pass ``roots`` when resolving many paths in one pass — an importer
+    walking 200 session files would otherwise re-query every project's
+    root 200 times.
 
     Used by hook-driven transcript capture: an agent harness reports the
     ``cwd`` a session ran in, and an untagged communication is markedly
@@ -677,7 +685,8 @@ async def project_for_path(path: str | Path) -> str | None:
     wrong tag is harder to notice than a missing one.
     """
     target = Path(path).expanduser().resolve()
-    roots = await indexed_root_per_project()
+    if roots is None:
+        roots = await indexed_root_per_project()
 
     best: str | None = None
     best_len = -1
