@@ -6,8 +6,17 @@ Reads the per-session JSONL files Claude Code stores under
 ``communications`` + ``communication_messages`` tables.
 
 Idempotent by ``(agent='claude-code', external_id=<jsonl session uuid>)``
-— re-importing the same file is a no-op at the communication level,
-and append_messages also dedupes per-(communication_id, seq).
+— re-importing the same file is a no-op at the communication level, and
+``append_messages`` dedupes turns on Claude Code's own per-record
+``uuid`` (stored as ``source_message_id``).
+
+That identity, not position, is what makes this safe. One ``sessionId``
+spans many files — resumed sessions and sidechains — and each file
+restarts its positional ``seq`` at 0, so deduping on ``(communication_id,
+seq)`` made every file after the first collide with the first and lose
+its turns (29.3% of all turns on a real store). Identity also collapses
+the reverse case: a resumed file replays earlier turns under their
+original ids, which must not duplicate.
 
 Selective embedding policy (from
 :mod:`hafiz.core.communications`) is enforced at write time: short
@@ -29,7 +38,7 @@ from typing import Any
 from hafiz.core.communications import (
     MessageInput,
     append_messages,
-    preview_pending_messages,
+    communication_state,
     should_embed_message,
     upsert_communication,
 )
@@ -273,6 +282,11 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
                     author=message.get("model") if role == "assistant" else None,
                     tool_calls=tools,
                     parent_message_id=parent_msg_id,
+                    # Claude Code's own per-record uuid is this turn's
+                    # stable identity: unique per turn and preserved when a
+                    # session resumes into a new file. Positional `seq` is
+                    # not — it restarts at 0 in every file.
+                    source_message_id=claude_uuid,
                     metadata={k: v for k, v in metadata.items() if v is not None},
                 )
             )
@@ -382,9 +396,11 @@ async def import_claude_code(
     # sessions, sidechains) — measured here at 200 files over 77 session
     # ids. Those files all resolve to the *same* communication, so a
     # per-file preview that only consults the DB would count the same new
-    # communication once per file. Track what this run has already
-    # accounted for so `--dry-run` totals match what a real run does.
-    previewed: dict[str, set[int]] = {}
+    # communication once per file. Track the turn identities this run has
+    # already accounted for so `--dry-run` totals match a real run — and
+    # note these are identities, not seqs: a resumed file replays earlier
+    # turns under their original ids, which a real import collapses.
+    previewed: dict[str, set[str]] = {}
 
     for path in files:
         try:
@@ -410,27 +426,32 @@ async def import_claude_code(
             # counts split correctly between "new" and "already stored"
             # and a mid-flight session still reports its pending turns.
             seen = previewed.get(parsed.external_id)
-            file_seqs = [m.seq for m in parsed.messages]
             if seen is None:
-                exists, pending = await preview_pending_messages(
+                # First file for this session: seed the accumulator with
+                # what the store already holds, so sibling files below are
+                # measured against the database and not just against each
+                # other.
+                exists, seen = await communication_state(
                     agent=CLAUDE_CODE_AGENT,
                     external_id=parsed.external_id,
-                    seqs=file_seqs,
                 )
+                previewed[parsed.external_id] = seen
                 if exists:
                     summary.communications_existing += 1
                 else:
                     summary.communications_created += 1
                     if await get_session_by_slug(_session_slug(parsed.external_id)) is None:
                         summary.sessions_created += 1
-                previewed[parsed.external_id] = set(file_seqs)
-            else:
-                # A sibling file for this same session was already
-                # previewed. Only seqs it did not claim can still land —
-                # which is also exactly why the real import path drops
-                # cross-file turns (see the seq-collision note below).
-                pending = sum(1 for s in file_seqs if s not in seen)
-                seen.update(file_seqs)
+
+            # Count each identity once, whether it repeats within this file
+            # or across sibling files — a real import collapses both.
+            pending = 0
+            for m in parsed.messages:
+                sid = m.source_message_id
+                if not sid or sid in seen:
+                    continue
+                seen.add(sid)
+                pending += 1
             summary.messages_written += pending
             if embed and pending:
                 # Which specific seqs are pending isn't resolved here, so

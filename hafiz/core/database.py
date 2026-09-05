@@ -504,12 +504,33 @@ class CommunicationMessage(Base):
     embedding = mapped_column(Vector(768), nullable=True)
     chunk_window: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     marked_salient: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: The turn's identity **in the source system** (e.g. Claude Code's
+    #: per-record ``uuid``). This is what makes re-import idempotent.
+    #:
+    #: ``seq`` cannot serve that role: it is positional within one source
+    #: *file*, and a harness may spread a single session across many files
+    #: that each restart at 0. Deduping on ``(communication_id, seq)``
+    #: therefore discarded a sibling file's turns as "already present" —
+    #: measured at 11,214 of 38,249 turns (29.3%) on a real store, with one
+    #: session spanning 25 files. Nullable because callers that have no
+    #: source-native id (``hafiz capture``, hand-built rows) still dedupe
+    #: positionally.
+    source_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
     communication: Mapped[Communication] = relationship("Communication", back_populates="messages")
 
     __table_args__ = (
         UniqueConstraint("communication_id", "seq", name="uq_messages_comm_seq"),
+        # Partial: rows without a source-native id fall back to the seq
+        # constraint above, and must not collide with each other on NULL.
+        Index(
+            "uq_messages_comm_source_id",
+            "communication_id",
+            "source_message_id",
+            unique=True,
+            postgresql_where=text("source_message_id IS NOT NULL"),
+        ),
         CheckConstraint(
             "role IN ('user', 'assistant', 'tool', 'system')",
             name="ck_messages_role",

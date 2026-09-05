@@ -583,7 +583,7 @@ Hafiz can ingest agent-harness transcripts into a dedicated source layer (see [a
 | `forget --all-expired` | Sweep mode — tombstone every communication past its `retention_until` | — | `--json` | rich table |
 
 Defaults:
-- `import claude-code` source path: `~/.claude/projects/`. Idempotent by `(agent='claude-code', external_id=<jsonl session uuid>)`.
+- `import claude-code` source path: `~/.claude/projects/`. Idempotent by `(agent='claude-code', external_id=<jsonl session uuid>)` at the communication level, and by **`source_message_id`** (Claude Code's own per-record `uuid`) at the turn level.
 - `import claude-code` flags: `--project`, `--limit`, `--since 7d`, `--dry-run`, `--no-embed`, `--from-hook`.
 - `import claude-code [PATH]` accepts **either** a directory of session JSONL **or** a single `.jsonl` file — the latter is what `--from-hook` uses, so capture cost is proportional to the session that just ended rather than to every session ever had.
 
@@ -608,6 +608,31 @@ captured transcripts land project-scoped rather than untagged; no match yields
 - `forget` flags: `--hard`, `--all-expired`, `--dry-run`.
 - Retention: 90 days from `started_at` unless explicitly overridden at insert time.
 - Selective embedding: skip messages under ~30 tokens; skip pure tool-result echoes; embed when `marked_salient=true` regardless of length.
+
+**Turn identity is the source's, not ours** (schema `0008`). A harness spreads
+one session across several files — resumed sessions, sidechains — and each file
+restarts its positional `seq` at 0. Deduping turns on `(communication_id, seq)`
+therefore made every file after the first collide with the first and lose its
+turns: **11,214 of 38,249 (29.3%)** on a real store, one session spanning 25
+files. It also caused the opposite fault, writing the same turn twice under
+different seqs when a resumed file shifted positions.
+
+`communication_messages.source_message_id` holds the id the source assigns each
+turn, under a partial unique index over `(communication_id, source_message_id)`.
+Consequences worth knowing:
+
+- **`seq` is now an append-only ordering key** within a communication, allocated
+  from the current maximum, not taken from the file. `ts` remains the time axis.
+- **Re-import heals.** Turns lost to the old collision are recognised as absent
+  and finally land. Migration `0008` backfills `source_message_id` from the
+  `metadata->>'claude_uuid'` the importer had been storing all along, which is
+  what makes an existing store recoverable rather than merely fixed going
+  forward.
+- **The column is nullable on purpose.** `hafiz capture` and hand-built rows
+  have no source-native id and keep deduping positionally, so
+  `uq_messages_comm_seq` is retained as their guarantee.
+- Importers **must** set `MessageInput.source_message_id` whenever the source
+  has one. An importer that omits it silently inherits the positional bug.
 
 **Retention enforcement.** `import` runs the expiry sweep automatically and
 reports it (`retention_sweep: {matched, tombstoned, dry_run}` in `--json`; a row

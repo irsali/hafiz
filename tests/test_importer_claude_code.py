@@ -18,7 +18,12 @@ from typer.testing import CliRunner
 
 from hafiz.cli import app
 from hafiz.core.communications import list_messages
-from hafiz.core.database import Communication, close_engine, get_session_factory
+from hafiz.core.database import (
+    Communication,
+    CommunicationMessage,
+    close_engine,
+    get_session_factory,
+)
 from hafiz.core.importers.claude_code import (
     discover_jsonl_files,
     import_claude_code,
@@ -400,19 +405,17 @@ async def test_import_survives_null_bytes_in_tool_output(tmp_path: Path):
     assert any("truncated binary" in r.content for r in rows)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Known bug: Claude Code reuses one sessionId across multiple JSONL "
-        "files, but parse_jsonl_file restarts seq at 0 per file while "
-        "append_messages dedupes on (communication_id, seq) — so a sibling "
-        "file's turns are silently dropped. Measured at 29.3% of turns "
-        "(11,214 of 38,249) on a real ~/.claude/projects. Fix requires "
-        "keying idempotency on the source's own message id."
-    ),
-    strict=True,
-)
 @pytest.mark.asyncio
 async def test_same_session_across_two_files_keeps_all_turns(tmp_path: Path):
+    """Regression: sibling files must not cannibalise each other's turns.
+
+    Claude Code reuses one sessionId across resumed/forked JSONL files, and
+    each file restarts ``seq`` at 0. While idempotency keyed on
+    ``(communication_id, seq)``, every file after the first collided with
+    the first and had its turns dropped as "already present" — 11,214 of
+    38,249 turns (29.3%) on a real store, one session spanning 25 files.
+    Fixed by deduping on the source's own message id.
+    """
     sid = str(uuid.uuid4())
     base = datetime(2026, 5, 2, 9, 0, 0, tzinfo=UTC)
 
@@ -577,3 +580,130 @@ def test_peek_session_id_tolerates_a_missing_file(tmp_path: Path):
     from hafiz.core.importers.claude_code import peek_session_id
 
     assert peek_session_id(tmp_path / "absent.jsonl") is None
+
+
+# ---------------------------------------------------------------------------
+# Identity-based idempotency (source_message_id)
+# ---------------------------------------------------------------------------
+
+
+def _session_file(tmp_path: Path, name: str, sid: str, records: list[tuple[str, str]]) -> Path:
+    """Write a JSONL file for session ``sid`` from (record_uuid, text) pairs."""
+    base = datetime(2026, 6, 1, 9, 0, 0, tzinfo=UTC)
+    lines = []
+    prev = None
+    for i, (rid, text) in enumerate(records):
+        lines.append(
+            _record(
+                record_type="user" if i % 2 == 0 else "assistant",
+                session_id=sid,
+                rec_uuid=rid,
+                parent_uuid=prev,
+                role="user" if i % 2 == 0 else "assistant",
+                text=text,
+                timestamp=base + timedelta(seconds=i),
+            )
+        )
+        prev = rid
+    path = tmp_path / name
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_resumed_session_replay_is_collapsed_not_duplicated(tmp_path: Path):
+    """A resumed file re-emits earlier turns under their original ids.
+
+    Those must dedupe, or every resume inflates the transcript. This is the
+    same mechanism as the cross-file fix, seen from the other side: identity
+    both *keeps* genuinely new turns and *collapses* genuine repeats, which
+    positional seq could do neither of.
+    """
+    sid = str(uuid.uuid4())
+    shared = [(str(uuid.uuid4()), f"shared turn {i} about the schema change") for i in range(3)]
+    fresh = [(str(uuid.uuid4()), f"new turn {i} about the rollback plan") for i in range(2)]
+
+    _session_file(tmp_path, "a.jsonl", sid, shared)
+    _session_file(tmp_path, "b.jsonl", sid, shared + fresh)  # replays a.jsonl
+
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    summary = await import_claude_code(root=tmp_path, project=project)
+
+    assert summary.communications_created == 1
+    assert summary.messages_written == 5  # 3 shared + 2 new, not 8
+
+    factory = get_session_factory()
+    async with factory() as s:
+        comm = (
+            await s.execute(
+                select(Communication).where(Communication.scope_value == project),
+            )
+        ).scalar_one()
+    rows = await list_messages(comm.id)
+    assert len(rows) == 5
+    assert len({r.seq for r in rows}) == 5  # seq stayed unique per communication
+
+
+@pytest.mark.asyncio
+async def test_reimport_after_growth_appends_only_the_new_turns(tmp_path: Path):
+    """The hook case: capture mid-flight, session continues, capture again."""
+    sid = str(uuid.uuid4())
+    first = [(str(uuid.uuid4()), f"turn {i} of the first pass over the code") for i in range(3)]
+
+    path = _session_file(tmp_path, "s.jsonl", sid, first)
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    one = await import_claude_code(root=path, project=project)
+    assert one.messages_written == 3
+
+    grown = first + [(str(uuid.uuid4()), f"later turn {i} once tests went green") for i in range(2)]
+    _session_file(tmp_path, "s.jsonl", sid, grown)
+
+    two = await import_claude_code(root=path, project=project)
+    assert two.communications_created == 0
+    assert two.communications_existing == 1
+    assert two.messages_written == 2
+
+    three = await import_claude_code(root=path, project=project)
+    assert three.messages_written == 0  # fully idempotent
+
+
+@pytest.mark.asyncio
+async def test_dry_run_matches_the_real_run_for_a_multi_file_session(tmp_path: Path):
+    """The preview must model identity dedup, not positional dedup."""
+    sid = str(uuid.uuid4())
+    shared = [(str(uuid.uuid4()), f"shared turn {i} about indexes") for i in range(3)]
+    fresh = [(str(uuid.uuid4()), f"new turn {i} about the backfill") for i in range(4)]
+    _session_file(tmp_path, "a.jsonl", sid, shared)
+    _session_file(tmp_path, "b.jsonl", sid, shared + fresh)
+
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    preview = await import_claude_code(root=tmp_path, project=project, dry_run=True)
+    real = await import_claude_code(root=tmp_path, project=project)
+
+    assert preview.messages_written == real.messages_written == 7
+    assert preview.communications_created == real.communications_created == 1
+
+
+@pytest.mark.asyncio
+async def test_source_message_id_is_stored_for_every_imported_turn(jsonl_session: Path):
+    project = f"hafiz-test-{uuid.uuid4().hex[:6]}"
+    await import_claude_code(root=jsonl_session, project=project)
+
+    factory = get_session_factory()
+    async with factory() as s:
+        comm = (
+            await s.execute(
+                select(Communication).where(Communication.scope_value == project),
+            )
+        ).scalar_one()
+        ids = (
+            await s.execute(
+                select(CommunicationMessage.source_message_id).where(
+                    CommunicationMessage.communication_id == comm.id
+                )
+            )
+        ).all()
+
+    values = [v for (v,) in ids]
+    assert all(v for v in values), "every claude-code turn carries its source uuid"
+    assert len(set(values)) == len(values), "and they are distinct"

@@ -160,6 +160,11 @@ class MessageInput:
     parent_message_id: uuid.UUID | None = None
     marked_salient: bool = False
     metadata: dict | None = None
+    #: Identity of this turn in the source system. Supply it whenever the
+    #: source has one — it is what makes re-import idempotent across files
+    #: that restart ``seq`` at 0. When set, ``seq`` is treated as a hint
+    #: and the stored value is assigned append-only per communication.
+    source_message_id: str | None = None
 
 
 @dataclass
@@ -236,46 +241,51 @@ async def upsert_communication(
         return row, True
 
 
-async def preview_pending_messages(
+async def communication_state(
     *,
     agent: str,
     external_id: str,
-    seqs: Sequence[int],
-) -> tuple[bool, int]:
-    """Answer, without writing anything: does this communication already
-    exist, and how many of ``seqs`` are not yet stored?
+) -> tuple[bool, set[str]]:
+    """Read-only: does this communication exist, and which turn identities
+    does it already hold?
 
-    Returns ``(exists, pending_count)``. This is the read-only twin of
-    the idempotency logic in :func:`upsert_communication` +
-    :func:`append_messages`, and exists so ``--dry-run`` can report a
-    truthful count.
+    Returns ``(exists, stored_source_ids)``. This is the read side of the
+    idempotency logic in :func:`upsert_communication` +
+    :func:`append_messages`, and exists so ``--dry-run`` can report a count
+    that matches what a real run would write.
 
-    The distinction matters for hook-driven capture: a session imported
-    mid-flight (on compaction) is *existing* on the next run but has
-    genuinely new turns to append, so "already seen" is not the same
+    Returning the *set* rather than a pending count is deliberate. A
+    session can span several source files, so the caller has to accumulate
+    across them: a per-file "how many are pending?" answer double-counts a
+    turn that appears in two files, and — the bug this replaced — a
+    sibling-file check that consults only the previous file's ids reports
+    turns as pending that are already stored.
+
+    The exists flag matters separately for hook-driven capture: a session
+    imported mid-flight (on compaction) is *existing* on the next run but
+    still has new turns to append, so "already seen" is not the same
     answer as "nothing to do".
     """
     factory = get_session_factory()
     async with factory() as session:
-        row = await session.execute(
-            select(Communication.id).where(
-                Communication.agent == agent,
-                Communication.external_id == external_id,
+        comm_id = (
+            await session.execute(
+                select(Communication.id).where(
+                    Communication.agent == agent,
+                    Communication.external_id == external_id,
+                )
             )
-        )
-        comm_id = row.scalar_one_or_none()
+        ).scalar_one_or_none()
         if comm_id is None:
-            return False, len(seqs)
-        if not seqs:
-            return True, 0
-        result = await session.execute(
-            select(CommunicationMessage.seq).where(
+            return False, set()
+
+        rows = await session.execute(
+            select(CommunicationMessage.source_message_id).where(
                 CommunicationMessage.communication_id == comm_id,
-                CommunicationMessage.seq.in_(list(seqs)),
+                CommunicationMessage.source_message_id.is_not(None),
             )
         )
-        existing = {s for (s,) in result.all()}
-    return True, sum(1 for s in seqs if s not in existing)
+        return True, {s for (s,) in rows.all()}
 
 
 async def append_messages(
@@ -284,11 +294,27 @@ async def append_messages(
     *,
     embed: bool = True,
 ) -> tuple[int, int]:
-    """Append ``messages`` to ``communication_id`` in seq order.
+    """Append ``messages`` to ``communication_id`` in order.
 
-    Applies the selective-embed policy when ``embed`` is True. Skips
-    rows whose ``(communication_id, seq)`` already exist (idempotent
-    re-import). Returns ``(written, embedded)``.
+    Applies the selective-embed policy when ``embed`` is True. Returns
+    ``(written, embedded)``.
+
+    **Idempotency has two modes, chosen per message.** A message carrying
+    ``source_message_id`` is deduped on that; one without falls back to
+    ``(communication_id, seq)``.
+
+    The identity mode exists because the positional one is wrong whenever
+    a harness spreads one session across several files: each file's
+    ``seq`` restarts at 0, so a sibling file's turns collided with the
+    first file's and were dropped as "already present" — 29.3% of turns on
+    a real store. It also handles the *replay* case correctly: a resumed
+    session re-emits earlier turns with their original ids, and those
+    should dedupe rather than duplicate.
+
+    When identity is supplied, the stored ``seq`` is assigned **append-only
+    per communication** (continuing from the current maximum) rather than
+    taken from the message, since the incoming value is only positional
+    within its own file. ``ts`` remains the true time axis.
     """
     if not messages:
         return 0, 0
@@ -298,17 +324,41 @@ async def append_messages(
     embedded = 0
 
     async with factory() as session:
-        # Find which seqs are already present so re-import is idempotent.
-        existing_seqs = set()
-        if messages:
-            seqs = [m.seq for m in messages]
+        # Existing identities, for the two dedup modes.
+        incoming_source_ids = [m.source_message_id for m in messages if m.source_message_id]
+        existing_source_ids: set[str] = set()
+        if incoming_source_ids:
             result = await session.execute(
-                select(CommunicationMessage.seq).where(
+                select(CommunicationMessage.source_message_id).where(
                     CommunicationMessage.communication_id == communication_id,
-                    CommunicationMessage.seq.in_(seqs),
+                    CommunicationMessage.source_message_id.in_(incoming_source_ids),
                 )
             )
-            existing_seqs = {row for (row,) in result.all()}
+            existing_source_ids = {row for (row,) in result.all()}
+
+        result = await session.execute(
+            select(CommunicationMessage.seq).where(
+                CommunicationMessage.communication_id == communication_id,
+                CommunicationMessage.seq.in_([m.seq for m in messages]),
+            )
+        )
+        existing_seqs = {row for (row,) in result.all()}
+
+        # Append-only seq allocation. One query rather than trusting the
+        # caller's positional value, which is file-local.
+        max_seq = (
+            await session.execute(
+                select(func.max(CommunicationMessage.seq)).where(
+                    CommunicationMessage.communication_id == communication_id,
+                )
+            )
+        ).scalar()
+        next_seq = 0 if max_seq is None else max_seq + 1
+        # Seqs claimed by this batch. Allocation starts past every stored
+        # row, so it can only ever collide with a legacy (positional)
+        # message written alongside it in a mixed batch — rare, but the
+        # unique constraint makes it a hard failure rather than a skip.
+        batch_seqs: set[int] = set()
 
         # Track in-memory ids that we *won't* write (existing-seq skip).
         # If a later message uses one of these as its
@@ -319,7 +369,16 @@ async def append_messages(
         skipped_ids: set[uuid.UUID] = set()
 
         for msg in messages:
-            if msg.seq in existing_seqs:
+            if msg.source_message_id is not None:
+                # Identity mode. The in-batch add below also collapses a
+                # resumed session's replayed turns, which arrive more than
+                # once within a single import.
+                if msg.source_message_id in existing_source_ids:
+                    if msg.id is not None:
+                        skipped_ids.add(msg.id)
+                    continue
+                existing_source_ids.add(msg.source_message_id)
+            elif msg.seq in existing_seqs:
                 if msg.id is not None:
                     skipped_ids.add(msg.id)
                 continue
@@ -344,11 +403,23 @@ async def append_messages(
             if parent_id is not None and parent_id in skipped_ids:
                 parent_id = None
 
+            # Identity-mode callers get an append-only seq; legacy callers
+            # keep the positional one they asked for, so their seq-based
+            # dedup keeps matching on re-import.
+            if msg.source_message_id is not None:
+                while next_seq in batch_seqs:
+                    next_seq += 1
+                write_seq = next_seq
+                next_seq += 1
+            else:
+                write_seq = msg.seq
+            batch_seqs.add(write_seq)
+
             session.add(
                 CommunicationMessage(
                     id=msg.id or uuid.uuid4(),
                     communication_id=communication_id,
-                    seq=msg.seq,
+                    seq=write_seq,
                     role=msg.role,
                     author=msg.author,
                     content=content,
@@ -358,6 +429,7 @@ async def append_messages(
                     ts=msg.ts,
                     embedding=embedding,
                     marked_salient=msg.marked_salient,
+                    source_message_id=msg.source_message_id,
                     metadata_=metadata,
                 )
             )
