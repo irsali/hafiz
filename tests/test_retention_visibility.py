@@ -89,17 +89,28 @@ async def _seed(*, retention_offset_days: int | None, tombstoned: bool = False) 
 
 
 async def _overdue_for_agent() -> int:
-    """Count only this test's rows, so a shared DB can't skew the assertion."""
+    """Count only this test's rows, so a shared DB can't skew the assertion.
+
+    Expressed through the ORM rather than raw SQL because this now runs on
+    both backends. SQL ``now()`` is Postgres-only, and binding a Python
+    ``datetime`` into raw text hands it to sqlite3's default datetime
+    adapter — deprecated since Python 3.12, and it writes a format the
+    column's own type never agreed to.
+    """
+    from sqlalchemy import func, select
+
+    from hafiz.core.database import Communication
+
     factory = get_session_factory()
     async with factory() as s:
         return (
             await s.execute(
-                text(
-                    "SELECT count(*) FROM communications WHERE agent = :a "
-                    "AND retention_until IS NOT NULL AND retention_until <= now() "
-                    "AND valid_until IS NULL"
-                ),
-                {"a": AGENT},
+                select(func.count())
+                .select_from(Communication)
+                .where(Communication.agent == AGENT)
+                .where(Communication.retention_until.is_not(None))
+                .where(Communication.retention_until <= datetime.now(UTC))
+                .where(Communication.valid_until.is_(None))
             )
         ).scalar()
 

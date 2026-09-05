@@ -151,7 +151,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
         ).scalar() or 0
 
         backend = backend_of(session)
-        recalled = select(unnest_ids(Retrieval.result_ids, backend).label("id")).subquery()
+        recalled = unnest_ids(Retrieval.result_ids, Retrieval, backend)
         never = (
             await session.execute(
                 select(func.count())

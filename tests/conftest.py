@@ -29,8 +29,26 @@ Two responsibilities:
                                    macOS CI leg uses this; Postgres isn't
                                    provisioned there). DB-dependent test
                                    modules are dropped at collection.
+     ``HAFIZ_TEST_BACKEND``      — ``postgresql`` (default) or ``sqlite``.
+                                   Runs the whole DB-touching suite against
+                                   that backend. See "Dual-backend matrix".
 
 Remove an entry from ``collect_ignore`` when its module is rewired.
+
+Dual-backend matrix
+-------------------
+
+Hafiz serves one ``--json`` contract from two backends, so both have to be
+exercised by the same tests rather than by a separate SQLite-only module.
+``HAFIZ_TEST_BACKEND=sqlite pytest`` points the whole session at a
+throwaway SQLite file; CI runs both legs.
+
+**A skipped backend fails the run.** When a backend is named explicitly,
+any test that skips for a database reason marks the session failed — see
+:func:`pytest_sessionfinish`. This is not pedantry: this suite has twice
+reported green while silently skipping DB-backed tests (once from a closed
+event loop, once from an unreachable Postgres), and a matrix that skips
+itself manufactures confidence about a backend nobody exercised.
 """
 
 from __future__ import annotations
@@ -296,7 +314,128 @@ def _setup_test_db_once() -> str:
 _ = shlex
 
 
+# ---------------------------------------------------------------------------
+# Backend selection
+# ---------------------------------------------------------------------------
+
+#: Which backend this session runs against. Read from the environment rather
+#: than a pytest CLI option because the redirection below happens at module
+#: load — before pytest hands anyone a parsed config object.
+_BACKEND = (os.environ.get("HAFIZ_TEST_BACKEND") or "postgresql").strip().lower()
+_BACKEND_WAS_NAMED = bool(os.environ.get("HAFIZ_TEST_BACKEND"))
+
+if _BACKEND not in {"postgresql", "sqlite"}:
+    raise RuntimeError(
+        f"HAFIZ_TEST_BACKEND={_BACKEND!r} is not a backend. Use 'postgresql' or 'sqlite'."
+    )
+
+
+def _setup_sqlite_test_db_once() -> str:
+    """Point the session at a throwaway SQLite file and build the schema.
+
+    Redirected the same two ways as the Postgres path — env var for
+    subprocesses, patched ``load_settings`` for in-process readers — because
+    ``hafiz.toml`` values arrive as pydantic-settings *init args* and beat env
+    vars. Patching only the env var would leave every in-process test writing
+    to the developer's real Postgres store while the run claimed to be
+    exercising SQLite.
+
+    Deliberately allowed to raise. A backend that cannot be set up must stop
+    the session, not degrade into a run full of skips.
+    """
+    import asyncio
+    import tempfile
+
+    path = Path(tempfile.mkdtemp(prefix="hafiz-test-sqlite-")) / "hafiz.db"
+    url = f"sqlite:///{path}"
+
+    os.environ["HAFIZ_DATABASE__URL"] = url
+
+    from hafiz.core import config as _config
+
+    settings = _config.load_settings()
+    settings.database.url = url
+    _config._settings = settings  # type: ignore[attr-defined]
+
+    _real_load_settings = _config.load_settings
+
+    def _patched_load_settings():
+        s = _real_load_settings()
+        s.database.url = url
+        return s
+
+    _config.load_settings = _patched_load_settings  # type: ignore[assignment]
+
+    from hafiz.core.database import close_engine, create_tables
+
+    async def _run():
+        try:
+            await create_tables(url)
+        finally:
+            await close_engine()
+
+    asyncio.run(_run())
+    return url
+
+
+def _setup_backend() -> str | None:
+    if os.environ.get("HAFIZ_TEST_NO_DB") == "1":
+        return None
+    if _BACKEND == "sqlite":
+        return _setup_sqlite_test_db_once()
+    return _setup_test_db_once()
+
+
 # Eagerly evaluated at module load — establishes the test DB before
 # any test's imports resolve hafiz.core.config. Skipped in NO_DB mode,
 # where the DB-dependent modules have already been pruned from collection.
-_TEST_DB_URL = None if os.environ.get("HAFIZ_TEST_NO_DB") == "1" else _setup_test_db_once()
+_TEST_DB_URL = _setup_backend()
+
+
+# ---------------------------------------------------------------------------
+# "A skipped backend is a failed run"
+# ---------------------------------------------------------------------------
+
+#: Substrings that mark a skip as "the database wasn't there". Matched against
+#: the skip reason, because the skips themselves live in ~15 test modules and
+#: rewriting each one would be a far larger change than gating them centrally.
+_DB_SKIP_MARKERS = (
+    "postgres",
+    "not reachable",
+    "no live db",
+    "no live postgres",
+    "database",
+    "migration 0007",
+    "pgvector",
+)
+
+_db_skips: list[str] = []
+
+
+def pytest_runtest_logreport(report) -> None:
+    """Record any test that skipped because a database was missing."""
+    if not (_BACKEND_WAS_NAMED and report.skipped):
+        return
+    reason = ""
+    if isinstance(report.longrepr, tuple) and len(report.longrepr) == 3:
+        reason = str(report.longrepr[2])
+    if any(marker in reason.lower() for marker in _DB_SKIP_MARKERS):
+        _db_skips.append(f"{report.nodeid} — {reason}")
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ARG001
+    """Fail the session if the named backend quietly skipped its own tests.
+
+    The whole point of naming a backend is to assert it works. Letting the
+    run go green while its tests skipped is the exact failure this matrix
+    exists to prevent.
+    """
+    if not _db_skips:
+        return
+    session.exitstatus = 1
+    print(f"\n\nERROR: {len(_db_skips)} test(s) skipped for a database reason, but")
+    print(f"HAFIZ_TEST_BACKEND={_BACKEND!r} was named explicitly — so they had to run.\n")
+    for entry in _db_skips[:20]:
+        print(f"  - {entry}")
+    if len(_db_skips) > 20:
+        print(f"  … and {len(_db_skips) - 20} more")

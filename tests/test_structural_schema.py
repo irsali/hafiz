@@ -12,6 +12,8 @@ Integration tests — skip gracefully when no DB is reachable.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -178,11 +180,13 @@ async def test_supersession_then_new_current():
         s.add(r1)
         await s.commit()
 
-        # Mark r1 superseded.
-        await s.execute(
-            text("UPDATE unit_revisions SET superseded_at = now() WHERE id = :id"),
-            {"id": r1.id},
-        )
+        # Mark r1 superseded. Via the ORM rather than raw SQL: this test now
+        # runs on both backends, and raw SQL over a uuid column does not
+        # travel. Postgres stores a native uuid that asyncpg binds directly;
+        # SQLite stores CHAR(32) (hex, no dashes), so a bound ``uuid.UUID``
+        # raises "type 'UUID' is not supported" and ``str(id)`` would not
+        # match the stored form. The ORM knows the per-dialect encoding.
+        r1.superseded_at = datetime.now(UTC)
         await s.commit()
 
         r2 = UnitRevision(unit_id=u.id, content="v2", content_hash="h2", source="ast")

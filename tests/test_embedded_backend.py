@@ -161,6 +161,61 @@ def test_uuid_array_tolerates_a_junk_id():
     assert SqliteUuidArray().process_result_value(["not-a-uuid"], None) == []
 
 
+def test_timestamps_come_back_timezone_aware():
+    """SQLAlchemy's SQLite ``DATETIME`` silently ignores ``timezone=True``.
+
+    Postgres returns ``tzinfo=UTC``; unadjusted SQLite returns naive. That is
+    a contract divergence, not a storage detail — it surfaced as "can't
+    subtract offset-naive and offset-aware datetimes" on one backend only,
+    and as a retention window that compared wrong.
+    """
+    from hafiz.core.dialect import SqliteUtcDateTime
+
+    t = SqliteUtcDateTime()
+    aware = datetime(2026, 9, 5, 12, 30, tzinfo=UTC)
+    stored = t.process_bind_param(aware, None)
+    assert stored.tzinfo is None, "stored naive, in UTC"
+    assert t.process_result_value(stored, None) == aware
+
+
+def test_a_naive_timestamp_is_read_as_utc_not_local():
+    """Guessing local time would shift every pre-existing row by the
+    developer's offset."""
+    from hafiz.core.dialect import SqliteUtcDateTime
+
+    naive = datetime(2026, 9, 5, 12, 30)
+    out = SqliteUtcDateTime().process_result_value(naive, None)
+    assert out.tzinfo is UTC
+    assert out.replace(tzinfo=None) == naive
+
+
+def test_unnest_ids_needs_a_different_shape_per_backend():
+    """Not a different spelling — a different shape. ``unnest`` goes in the
+    select list; ``json_each`` is table-valued and must sit in FROM beside
+    its source row, or it compiles to ``no such column: retrievals.result_ids``."""
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    from hafiz.core.database import Retrieval
+    from hafiz.core.dialect import unnest_ids
+
+    pg = str(
+        unnest_ids(Retrieval.result_ids, Retrieval, "postgresql")
+        .select()
+        .compile(dialect=postgresql.dialect())
+    )
+    lite = str(
+        unnest_ids(Retrieval.result_ids, Retrieval, SQLITE)
+        .select()
+        .compile(dialect=sqlite_dialect.dialect())
+    )
+    assert "unnest(" in pg
+    assert "json_each(" in lite
+    # The source table must be in the SQLite FROM clause, else the column
+    # reference inside json_each() has nothing to resolve against.
+    assert "retrievals" in lite.split("FROM", 1)[1]
+
+
 # ---------------------------------------------------------------------------
 # Dialect-specific SQL
 # ---------------------------------------------------------------------------
@@ -291,6 +346,24 @@ async def test_vector_search_ranks_correctly_on_sqlite_vec(embedded_session):
     assert [c.split(":")[1] for c, _ in rows] == ["near", "mid", "far"]
     scores = [float(s) for _, s in rows]
     assert scores == sorted(scores, reverse=True)
+
+
+async def test_timestamps_survive_a_real_round_trip_aware(embedded_session):
+    """The end-to-end form of the timezone test: through the column type,
+    the driver, and back."""
+    from hafiz.core.database import Annotation
+
+    row = Annotation(content="tz round-trip", kind="fact")
+    embedded_session.add(row)
+    await embedded_session.commit()
+    embedded_session.expunge_all()
+
+    got = (
+        await embedded_session.execute(select(Annotation).where(Annotation.id == row.id))
+    ).scalar_one()
+    assert got.valid_from.tzinfo is not None, "read back naive — Postgres would be aware"
+    # Must be comparable with an aware datetime without raising.
+    assert (datetime.now(UTC) - got.valid_from).total_seconds() < 120
 
 
 async def test_self_distance_is_zero(embedded_session):

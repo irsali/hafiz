@@ -646,34 +646,29 @@ def test_graph_stats_top_central_respects_limit():
 # ── DB-dependent integration tests (skipped without Postgres) ───────────────
 
 
-async def _db_available() -> bool:
-    """Return True iff a live Postgres with our schema is reachable."""
-    try:
-        from sqlalchemy import text
-
-        from hafiz.core.database import close_engine, get_session_factory
-
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            await session.execute(text("SELECT 1 FROM entities LIMIT 1"))
-        return True
-    except Exception:
-        return False
-    finally:
-        try:
-            from hafiz.core.database import close_engine
-
-            await close_engine()
-        except Exception:
-            pass
+#: These two tests target ``entities`` / ``relations`` — tables **dropped by
+#: migration 0005** — and import ``Entity`` / ``Relation``, which are now
+#: ``_RemovedInV5`` stubs that raise on any ORM query. They cannot pass on any
+#: backend.
+#:
+#: They previously guarded themselves with a live-DB probe (``SELECT 1 FROM
+#: entities``) and skipped with "No live Postgres with hafiz schema
+#: available". That reason was false: Postgres was reachable, the table was
+#: gone. The misdirection cost real time — the dual-backend matrix flagged
+#: them as a SQLite gap before the true cause surfaced.
+#:
+#: Rewiring ``graph_analysis`` onto units/edges belongs to Phase 3 of
+#: workitems/active/structural-grounding.md, not here.
+_PRE_0005_SCHEMA = pytest.mark.skip(
+    reason="graph_analysis still targets the pre-0005 entities/relations tables; "
+    "rewire tracked in workitems/active/structural-grounding.md"
+)
 
 
+@_PRE_0005_SCHEMA
 @pytest.mark.asyncio
 async def test_load_graph_live_db_returns_multidigraph():
     """Against a live DB, load_graph returns a MultiDiGraph whose counts match the signature."""
-    if not await _db_available():
-        pytest.skip("No live Postgres with hafiz schema available")
-
     from hafiz.core.database import close_engine
 
     try:
@@ -688,12 +683,10 @@ async def test_load_graph_live_db_returns_multidigraph():
         await close_engine()
 
 
+@_PRE_0005_SCHEMA
 @pytest.mark.asyncio
 async def test_current_signature_live_db_matches_counts():
     """Signature's counts must match direct SELECT COUNT(*) on the same tables."""
-    if not await _db_available():
-        pytest.skip("No live Postgres with hafiz schema available")
-
     from sqlalchemy import func, select
 
     from hafiz.core.database import Entity, Relation, close_engine, get_session_factory

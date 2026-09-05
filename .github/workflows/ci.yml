@@ -57,6 +57,28 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  test-embedded:
+    name: Test (Linux, full suite + embedded SQLite)
+    runs-on: ubuntu-latest
+    # No `services:` block — that is the point. Hafiz's default backend needs
+    # no server, so this leg proves a `pip install` alone reaches a working
+    # suite. If this job ever needs Postgres to pass, the embedded backend has
+    # regressed into a second-class citizen.
+    env:
+      HAFIZ_TEST_BACKEND: sqlite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (CPU; no GPU extras)
+        run: pip install -e ".[dev]"
+      - name: Run tests against the embedded backend
+        # Naming the backend makes a database-reason skip fail the run — see
+        # "Dual-backend matrix" in tests/conftest.py. A leg that silently
+        # skips its own tests is worse than no leg at all.
+        run: pytest -q
+
   test-macos:
     name: Test (macOS, DB-free portability subset)
     runs-on: macos-14  # Apple Silicon (arm64)

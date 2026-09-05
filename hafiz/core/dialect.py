@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import struct
 import uuid as _uuid
+from datetime import UTC as _UTC
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -113,6 +114,39 @@ class SqliteVector(TypeDecorator):
         return list(struct.unpack(f"<{len(value) // 4}f", value))
 
 
+class SqliteUtcDateTime(TypeDecorator):
+    """A timezone-aware timestamp, stored as naive UTC and read back aware.
+
+    SQLite has no timestamp type and SQLAlchemy's SQLite ``DATETIME``
+    **silently ignores** ``timezone=True`` — values go in aware and come back
+    naive. That is a behavioural divergence, not a storage detail: Postgres
+    returns ``tzinfo=UTC``, so without this the same row compares differently,
+    serialises differently, and raises "can't subtract offset-naive and
+    offset-aware datetimes" on one backend and not the other. Hafiz promises
+    one ``--json`` contract from both.
+
+    Hafiz writes ``datetime.now(UTC)`` everywhere, so normalising to UTC on
+    the way in loses nothing. A naive value is assumed to be UTC already —
+    the alternative, guessing local time, would shift timestamps by the
+    developer's offset.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
+        if value is None or getattr(value, "tzinfo", None) is None:
+            return value
+        return value.astimezone(_UTC).replace(tzinfo=None)
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=_UTC)
+        return value.astimezone(_UTC)
+
+
 class SqliteUuidArray(TypeDecorator):
     """A list of uuids, stored as a JSON array of strings.
 
@@ -168,7 +202,7 @@ def ts_col() -> Any:
     SQLite has no native timestamp type; SQLAlchemy's ``DateTime`` stores
     ISO-8601 strings and reattaches tzinfo on the way out.
     """
-    return TIMESTAMP(timezone=True).with_variant(DateTime(timezone=True), SQLITE)
+    return TIMESTAMP(timezone=True).with_variant(SqliteUtcDateTime(), SQLITE)
 
 
 def string_array_col() -> Any:
@@ -365,21 +399,36 @@ def backend_of(bindable: Any) -> str:
     return dialect.name
 
 
-def unnest_ids(column: Any, backend: str = POSTGRESQL) -> Any:
-    """A one-column selectable of the uuids inside an array column.
+def unnest_ids(column: Any, entity: Any, backend: str) -> Any:
+    """A one-column subquery (``id``) of every uuid inside an array column.
 
-    ``unnest()`` is a set-returning function in the FROM clause; SQLite's
-    equivalent is ``json_each``, which is a different construct rather than
-    a different spelling, so this dispatches at runtime off ``backend``
-    rather than compiling.
+    Returns the whole subquery rather than an expression to splice into one,
+    because the backends need different *shapes*, not different spellings:
+
+    * Postgres — ``unnest()`` is a set-returning function usable directly in
+      the select list: ``SELECT unnest(result_ids) FROM retrievals``.
+    * SQLite — ``json_each()`` is table-valued and must sit in the FROM
+      clause beside its source row:
+      ``SELECT je.value FROM retrievals, json_each(retrievals.result_ids) je``.
+
+    An earlier version returned only the column expression. On SQLite that
+    compiled to a select over ``json_each(...)`` with no ``retrievals`` in
+    the FROM clause — ``no such column: retrievals.result_ids`` at runtime,
+    in five tests the SQLite-only module never reached.
     """
-    from sqlalchemy import func
+    from sqlalchemy import func, select, true
 
-    if backend == SQLITE:
-        # json_each() yields a `value` column; the caller labels it.
-        return func.json_each(column).table_valued("value").c.value
     if backend == POSTGRESQL:
-        return func.unnest(column)
+        return select(func.unnest(column).label("id")).subquery()
+    if backend == SQLITE:
+        each = func.json_each(column).table_valued("value")
+        # An explicit ``JOIN ... ON 1=1`` rather than a comma cross-join. The
+        # two compile to the same plan, but SQLAlchemy's from-linter cannot
+        # tell that a table-valued function is correlated to the table it
+        # reads, so the comma form emits a cartesian-product SAWarning on
+        # every execution. Nineteen spurious warnings per run is how a suite
+        # teaches people to stop reading warnings.
+        return select(each.c.value.label("id")).select_from(entity).join(each, true()).subquery()
     raise _unsupported("unnest_ids", backend, "no phase")
 
 
