@@ -1,6 +1,12 @@
 """Alembic environment configuration for Hafiz.
 
-Supports async PostgreSQL migrations via asyncpg.
+Async migrations via asyncpg (Postgres) or aiosqlite (embedded).
+
+The URL is passed through ``normalize_url`` because users write
+``sqlite:///path`` in ``hafiz.toml`` — the sync spelling — while
+``async_engine_from_config`` requires an async driver. Without this,
+Alembic fails on an embedded install with "the asyncio extension requires
+an async driver", which reads as a Hafiz bug rather than a URL to fix.
 """
 
 import asyncio
@@ -18,8 +24,9 @@ config = context.config
 # Override alembic.ini URL with hafiz config (hafiz.toml / env vars)
 try:
     from hafiz.core.config import load_settings
+    from hafiz.core.dialect import normalize_url
 
-    config.set_main_option("sqlalchemy.url", load_settings().database.url)
+    config.set_main_option("sqlalchemy.url", normalize_url(load_settings().database.url))
 except Exception:
     pass  # Fall back to alembic.ini value
 

@@ -34,7 +34,7 @@ from hafiz.core.database import (
     CommunicationMessage,
     get_session_factory,
 )
-from hafiz.core.dialect import cosine_distance, similarity
+from hafiz.core.dialect import cosine_distance, reclaim_free_pages, similarity
 from hafiz.core.embeddings import embed_query
 
 # Tunables — kept module-level for now; promote to the tunable registry
@@ -688,6 +688,14 @@ async def forget_communication(comm_id: uuid.UUID, *, hard: bool = False) -> dic
     rows survive for audit). ``hard=True``: delete the communication
     and cascade-delete all messages.
 
+    On the embedded backend ``hard=True`` also VACUUMs. SQLite does not
+    return freed pages to the filesystem — the deleted transcript text stays
+    plainly readable in the file's free list, and `strings hafiz.db` finds
+    it. Hard delete is a stated redaction guarantee, so without this it
+    would silently weaken to "hidden, still on disk" on exactly the backend
+    aimed at solo users holding their own data. Postgres needs no
+    equivalent; autovacuum reclaims.
+
     Returns ``{"id": ..., "deleted_messages": N, "hard": bool}``.
     """
     factory = get_session_factory()
@@ -702,11 +710,13 @@ async def forget_communication(comm_id: uuid.UUID, *, hard: bool = False) -> dic
             count = (await session.execute(count_stmt)).scalar() or 0
             await session.delete(row)
             await session.commit()
+            reclaimed = await reclaim_free_pages(session)
             return {
                 "id": str(comm_id),
                 "deleted_messages": int(count),
                 "hard": True,
                 "found": True,
+                "vacuumed": reclaimed,
             }
         row.valid_until = datetime.now(UTC)
         await session.commit()

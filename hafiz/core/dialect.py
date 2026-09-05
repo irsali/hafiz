@@ -35,6 +35,8 @@ owns it, and none of them fall back to "close enough".
 
 from __future__ import annotations
 
+import struct
+import uuid as _uuid
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -43,7 +45,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
 from sqlalchemy.engine import Dialect
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import ColumnElement
-from sqlalchemy.types import Boolean, Float, Text
+from sqlalchemy.types import Boolean, Float, Text, TypeDecorator
 
 #: Dimensionality of ``nomic-embed-text-v1.5``. Declared once here because
 #: the embedded backend needs it at column-create time exactly as pgvector
@@ -71,6 +73,73 @@ def _unsupported(construct: str, dialect: str, phase: str) -> UnsupportedOnBacke
         "Refusing to emit approximate SQL: a wrong ranking is harder to "
         "detect than a hard failure."
     )
+
+
+# ---------------------------------------------------------------------------
+# 0. Type decorators — the Python<->SQLite value conversions
+# ---------------------------------------------------------------------------
+# Postgres has native types for everything Hafiz stores. SQLite has none of
+# them, so the conversion has to happen in Python on the way in and out.
+# These are the only places where a value changes shape between backends.
+
+
+class SqliteVector(TypeDecorator):
+    """A 768-d embedding as sqlite-vec's on-disk representation.
+
+    sqlite-vec reads vectors as a ``BLOB`` of **little-endian float32**,
+    contiguous, no header. ``vec_distance_cosine(blob, blob)`` operates on
+    exactly this, with no ``vec0`` virtual table required — which is what the
+    Phase 0 benchmark measured.
+
+    The byte order is explicit (``<``) rather than native. ``struct.pack("f")``
+    without a prefix uses native order *and* native alignment; on a big-endian
+    host that silently produces vectors sqlite-vec reads as garbage. Distances
+    would still come back — plausible, ordered, and wrong. Hafiz has no
+    big-endian users today, which is exactly why this would go unnoticed.
+    """
+
+    impl = LargeBinary
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> bytes | None:
+        if value is None or isinstance(value, bytes):
+            return value
+        vec = list(value)
+        return struct.pack(f"<{len(vec)}f", *(float(x) for x in vec))
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> list[float] | None:
+        if value is None:
+            return None
+        return list(struct.unpack(f"<{len(value) // 4}f", value))
+
+
+class SqliteUuidArray(TypeDecorator):
+    """A list of uuids, stored as a JSON array of strings.
+
+    ``retrievals.result_ids`` is ``uuid[]`` on Postgres. JSON has no uuid, so
+    the conversion is explicit in both directions — without the result half,
+    callers get ``str`` where they had ``uuid.UUID`` and comparisons silently
+    stop matching.
+    """
+
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> list[str] | None:
+        if value is None:
+            return None
+        return [str(v) for v in value]
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> list[_uuid.UUID] | None:
+        if value is None:
+            return None
+        out: list[_uuid.UUID] = []
+        for raw in value:
+            try:
+                out.append(raw if isinstance(raw, _uuid.UUID) else _uuid.UUID(str(raw)))
+            except (ValueError, AttributeError, TypeError):
+                continue  # mirrors telemetry's own tolerance for a junk id
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -115,26 +184,20 @@ def string_array_col() -> Any:
 def uuid_array_col() -> Any:
     """A list of uuids — ``retrievals.result_ids``.
 
-    .. warning::
-       On SQLite this stores a JSON array, and JSON cannot carry a
-       ``uuid.UUID`` natively. Phase 2 owns the bind/result processing
-       that converts to and from ``str``; until then this variant is
-       declared (so the DDL is right) but unexercised, because Phase 1
-       runs on Postgres only. Do not assume round-tripping works.
+    ``uuid[]`` on PG; a JSON array of strings on SQLite, round-tripped by
+    :class:`SqliteUuidArray`.
     """
-    return ARRAY(UUID(as_uuid=True)).with_variant(JSON(), SQLITE)
+    return ARRAY(UUID(as_uuid=True)).with_variant(SqliteUuidArray(), SQLITE)
 
 
 def vector_col(dim: int = EMBEDDING_DIM) -> Any:
     """An embedding.
 
-    ``vector(n)`` on PG. On SQLite, sqlite-vec reads float32 vectors from
-    ordinary ``BLOB`` columns — ``vec_distance_cosine(blob, blob)`` works
-    without a ``vec0`` virtual table, which is what the Phase 0 benchmark
-    measured (87.5 ms p50 at 152,247 x 768d). Phase 2 confirms the
-    packing.
+    ``vector(n)`` on PG; a little-endian float32 ``BLOB`` on SQLite, packed
+    by :class:`SqliteVector`. Phase 0 measured 87.5 ms p50 at 152,247 x 768d
+    against exactly this representation.
     """
-    return Vector(dim).with_variant(LargeBinary(), SQLITE)
+    return Vector(dim).with_variant(SqliteVector(), SQLITE)
 
 
 def partial_index(name: str, *columns: str, where: Any, unique: bool = False) -> Index:
@@ -189,7 +252,27 @@ def _cosine_distance_pg(element: _CosineDistance, compiler: Any, **kw: Any) -> s
 
 @compiles(_CosineDistance, SQLITE)
 def _cosine_distance_sqlite(element: _CosineDistance, compiler: Any, **kw: Any) -> str:
-    raise _unsupported("cosine_distance", SQLITE, "Phase 3 (backend-aware vector search)")
+    """sqlite-vec's ``vec_distance_cosine``, over two float32 blobs.
+
+    Returns cosine *distance* on the same 0..2 scale as pgvector's ``<=>``,
+    so ``similarity()`` composes identically and callers need no branch.
+
+    The query vector is packed here rather than relying on the column's
+    :class:`SqliteVector` decorator: that decorator applies to *column*
+    binds, and this side of the comparison is a free-standing parameter
+    that never passes through it.
+    """
+    from sqlalchemy import literal
+
+    column_sql = compiler.process(element.column, **kw)
+    vector = element.vector
+    packed = (
+        vector
+        if isinstance(vector, bytes)
+        else struct.pack(f"<{len(vector)}f", *(float(x) for x in vector))
+    )
+    param_sql = compiler.process(literal(packed, LargeBinary()), **kw)
+    return f"vec_distance_cosine({column_sql}, {param_sql})"
 
 
 @compiles(_CosineDistance)
@@ -282,18 +365,215 @@ def backend_of(bindable: Any) -> str:
     return dialect.name
 
 
-def unnest_ids(column: Any) -> Any:
+def unnest_ids(column: Any, backend: str = POSTGRESQL) -> Any:
     """A one-column selectable of the uuids inside an array column.
 
-    Postgres-only for now: ``unnest()`` is a set-returning function with
-    no SQLAlchemy-portable equivalent, and the SQLite shape
-    (``json_each``) is a different FROM-clause construct rather than a
-    different spelling of the same one. Phase 2 replaces this with a
-    dispatching helper once there is a SQLite engine to test against.
+    ``unnest()`` is a set-returning function in the FROM clause; SQLite's
+    equivalent is ``json_each``, which is a different construct rather than
+    a different spelling, so this dispatches at runtime off ``backend``
+    rather than compiling.
     """
     from sqlalchemy import func
 
-    return func.unnest(column)
+    if backend == SQLITE:
+        # json_each() yields a `value` column; the caller labels it.
+        return func.json_each(column).table_valued("value").c.value
+    if backend == POSTGRESQL:
+        return func.unnest(column)
+    raise _unsupported("unnest_ids", backend, "no phase")
+
+
+# ---------------------------------------------------------------------------
+# 4. Connection setup — everything the embedded backend needs at connect time
+# ---------------------------------------------------------------------------
+
+
+def is_embedded(url: str) -> bool:
+    """True when this URL selects the embedded (SQLite) backend."""
+    return url.startswith("sqlite")
+
+
+def default_db_path() -> Any:
+    """Where a fresh embedded install puts its single file.
+
+    XDG data dir, so the brain sits with other application state rather
+    than in the user's config or cwd.
+    """
+    import os
+    from pathlib import Path
+
+    root = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
+    return Path(root).expanduser() / "hafiz" / "hafiz.db"
+
+
+def normalize_url(url: str) -> str:
+    """Expand and canonicalise a database URL.
+
+    ``sqlite:///path`` is the user-facing spelling; it is rewritten to the
+    async driver here because every DB call in Hafiz is ``async``. A sync
+    SQLite URL reaching ``create_async_engine`` fails with "the asyncio
+    extension requires an async driver", which reads as a bug in Hafiz
+    rather than as a URL the user can fix.
+
+    Parsed with SQLAlchemy's own URL parser rather than string surgery.
+    SQLite's slash convention is genuinely tricky — ``sqlite:///rel.db`` is
+    relative and ``sqlite:////abs.db`` is absolute — and a hand-rolled
+    version of this silently turned absolute paths into relative ones,
+    which then defeated the file-permission hardening downstream.
+    """
+    if not is_embedded(url):
+        return url
+    from pathlib import Path
+
+    from sqlalchemy.engine import make_url
+
+    parsed = make_url(url)
+    if parsed.database:
+        parsed = parsed.set(database=str(Path(parsed.database).expanduser()))
+    if "+" not in parsed.drivername:
+        parsed = parsed.set(drivername="sqlite+aiosqlite")
+    return parsed.render_as_string(hide_password=False)
+
+
+def db_file_path(url: str) -> Any:
+    """The filesystem path behind an embedded URL, or None for in-memory."""
+    from pathlib import Path
+
+    from sqlalchemy.engine import make_url
+
+    if not is_embedded(url):
+        return None
+    database = make_url(url).database
+    if not database or database.startswith(":memory:"):
+        return None
+    return Path(database).expanduser()
+
+
+def engine_options(url: str) -> dict:
+    """Engine kwargs appropriate to the backend.
+
+    Postgres keeps its explicit pool. SQLite gets SQLAlchemy's own default
+    pool for the driver — passing ``pool_size``/``max_overflow`` at a
+    single-writer file database is at best noise and at worst an error,
+    depending on which pool class the dialect picks.
+    """
+    if is_embedded(url):
+        return {"echo": False}
+    return {"echo": False, "pool_size": 5, "max_overflow": 10}
+
+
+#: PRAGMAs applied to every embedded connection.
+#:
+#: ``foreign_keys`` is the load-bearing one: SQLite ships it **OFF**, so
+#: without it every ``ondelete="CASCADE"`` and ``SET NULL`` in the schema
+#: silently does nothing. Deleting a communication would orphan its messages
+#: rather than remove them — a retention guarantee quietly becoming a lie.
+#:
+#: ``busy_timeout`` covers the contention Open Question 5 raises: Hafiz now
+#: writes from background hooks, so a capture can fire mid-ingest. WAL gives
+#: one writer plus many readers; the timeout makes the writer wait instead of
+#: raising "database is locked".
+#:
+#: ``secure_delete`` zeroes freed content instead of merely unlinking it from
+#: the b-tree, which is what makes ``forget --hard`` mean what it says. It is
+#: set explicitly because its default is decided at *compile time*
+#: (``SQLITE_SECURE_DELETE``) and therefore varies by platform: Debian's
+#: system SQLite enables it, the stock upstream build does not. Relying on the
+#: build meant the redaction guarantee silently held on some users' machines
+#: and not others — and testing on a machine where it happened to be on made
+#: the difference invisible.
+_SQLITE_PRAGMAS = (
+    "journal_mode=WAL",
+    "foreign_keys=ON",
+    "busy_timeout=5000",
+    "synchronous=NORMAL",
+    "secure_delete=ON",
+)
+
+
+def prepare_engine(engine: Any) -> Any:
+    """Attach backend-specific connection setup. Returns the engine.
+
+    For SQLite this loads sqlite-vec and applies the PRAGMAs on **every**
+    connection. Per-connection, not once: a pooled connection that missed
+    the extension fails only when it happens to serve a vector query, which
+    makes the bug look intermittent and unrelated to pooling.
+    """
+    from sqlalchemy import event
+
+    sync_engine = getattr(engine, "sync_engine", engine)
+    url = str(sync_engine.url)
+    if not is_embedded(url):
+        return engine
+
+    @event.listens_for(sync_engine, "connect")
+    def _configure_sqlite(dbapi_connection: Any, _record: Any) -> None:  # pragma: no cover
+        import sqlite_vec
+        from sqlalchemy.util import await_only
+
+        raw = getattr(dbapi_connection, "driver_connection", dbapi_connection)
+        # aiosqlite owns a worker thread and its sqlite3 handle is bound to
+        # it, so the load cannot run on the caller's thread — `await_only`
+        # is how a sync event handler reaches an async driver's thread.
+        await_only(raw.enable_load_extension(True))
+        await_only(raw._execute(sqlite_vec.load, raw._conn))
+        await_only(raw.enable_load_extension(False))
+        for pragma in _SQLITE_PRAGMAS:
+            await_only(raw.execute(f"PRAGMA {pragma}"))
+        # Hardened here rather than at init, because *here* the file provably
+        # exists — SQLite creates it on first connect. Doing it only at
+        # `hafiz init` left every database created by any other path
+        # world-readable, and the WAL sibling is created later still.
+        secure_db_file(url)
+
+    return engine
+
+
+async def reclaim_free_pages(session: Any) -> bool:
+    """VACUUM after a destructive delete. True if it ran.
+
+    SQLite keeps deleted content in the file's free pages until a VACUUM
+    rewrites the database, so a "hard" delete leaves the bytes recoverable
+    with `strings`. Postgres reclaims via autovacuum and needs nothing here,
+    so this is a no-op there rather than a cross-backend cost.
+
+    Best-effort: a redaction that already committed must not be reported as
+    failed because the reclaim could not run (VACUUM cannot execute inside a
+    transaction, and a concurrent reader can block it).
+    """
+    from sqlalchemy import text as sa_text
+
+    try:
+        if backend_of(session) != SQLITE:
+            return False
+        await session.commit()  # VACUUM cannot run inside a transaction
+        await session.execute(sa_text("VACUUM"))
+        return True
+    except Exception:  # noqa: BLE001 — the delete already succeeded
+        return False
+
+
+def secure_db_file(url: str) -> list[Any]:
+    """Restrict the embedded DB file to the owner. Returns paths changed.
+
+    Postgres gated the brain behind database auth. A single file inherits
+    the process umask instead — commonly ``0644``, i.e. world-readable on
+    any shared machine. The ``-wal`` and ``-shm`` siblings carry recently
+    written content and need the same treatment; chmod'ing only the ``.db``
+    leaves the most recent turns readable.
+    """
+    path = db_file_path(url)
+    if path is None:
+        return []
+    changed = []
+    for candidate in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        try:
+            if candidate.exists():
+                candidate.chmod(0o600)
+                changed.append(candidate)
+        except OSError:
+            continue  # a perms failure must not stop the CLI from working
+    return changed
 
 
 #: ``most_recalled`` in the retrieval report. Raw SQL because it joins a
@@ -315,6 +595,57 @@ _MOST_RECALLED_SQL = {
         "WHERE r.at >= :since GROUP BY 1,2,3 ORDER BY hits DESC LIMIT :limit"
     ),
 }
+
+
+#: "How many live annotations have a near-duplicate sibling?" — a self-join
+#: over every pair, so it is raw SQL to keep the vectors in the database.
+#: Two dialect-specific pieces: the distance operator, and null-safe
+#: equality on ``project`` (``IS NOT DISTINCT FROM`` on PG; plain ``IS`` on
+#: SQLite, where ``IS`` is already null-safe).
+_CLUSTERED_SQL_TEMPLATE = (
+    "SELECT count(*) FROM annotations a "
+    "WHERE a.valid_until IS NULL AND a.embedding IS NOT NULL "
+    "AND EXISTS (SELECT 1 FROM annotations b "
+    "  WHERE b.valid_until IS NULL AND b.embedding IS NOT NULL "
+    "    AND b.id <> a.id AND b.kind = a.kind "
+    "    AND b.project {null_safe_eq} a.project "
+    "    AND (1 - {distance}) >= :thr)"
+)
+
+_CLUSTERED_SQL = {
+    POSTGRESQL: _CLUSTERED_SQL_TEMPLATE.format(
+        null_safe_eq="IS NOT DISTINCT FROM",
+        distance="(a.embedding <=> b.embedding)",
+    ),
+    SQLITE: _CLUSTERED_SQL_TEMPLATE.format(
+        null_safe_eq="IS",
+        distance="vec_distance_cosine(a.embedding, b.embedding)",
+    ),
+}
+
+
+def clustered_annotations_sql(backend: str) -> str:
+    """SQL counting live annotations that have a near-duplicate sibling."""
+    try:
+        return _CLUSTERED_SQL[backend]
+    except KeyError:
+        raise _unsupported("clustered_annotations", backend, "no phase") from None
+
+
+#: "Which tables exist?" — a catalogue query, and every engine keeps its
+#: catalogue somewhere different. Returns one ``name`` column either way.
+_TABLE_LIST_SQL = {
+    POSTGRESQL: "SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public'",
+    SQLITE: "SELECT name FROM sqlite_master WHERE type = 'table'",
+}
+
+
+def table_list_sql(backend: str) -> str:
+    """SQL listing the user tables in the current database."""
+    try:
+        return _TABLE_LIST_SQL[backend]
+    except KeyError:
+        raise _unsupported("table_list", backend, "no phase") from None
 
 
 def most_recalled_sql(backend: str) -> str:

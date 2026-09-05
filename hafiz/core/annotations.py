@@ -38,7 +38,13 @@ from hafiz.core.database import (
 from hafiz.core.database import (
     Session as SessionRow,
 )
-from hafiz.core.dialect import cosine_distance, similarity, tags_overlap
+from hafiz.core.dialect import (
+    backend_of,
+    clustered_annotations_sql,
+    cosine_distance,
+    similarity,
+    tags_overlap,
+)
 from hafiz.core.embeddings import embed_query
 from hafiz.core.git_context import current_git_context
 
@@ -1005,15 +1011,7 @@ async def count_clustered_annotations(threshold: float | None = None) -> int:
     async with session_factory() as session:
         return (
             await session.execute(
-                text(
-                    "SELECT count(*) FROM annotations a "
-                    "WHERE a.valid_until IS NULL AND a.embedding IS NOT NULL "
-                    "AND EXISTS (SELECT 1 FROM annotations b "
-                    "  WHERE b.valid_until IS NULL AND b.embedding IS NOT NULL "
-                    "    AND b.id <> a.id AND b.kind = a.kind "
-                    "    AND b.project IS NOT DISTINCT FROM a.project "
-                    "    AND (1 - (a.embedding <=> b.embedding)) >= :thr)"
-                ),
+                text(clustered_annotations_sql(backend_of(session))),
                 {"thr": thr},
             )
         ).scalar() or 0

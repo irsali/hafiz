@@ -68,8 +68,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from hafiz.core.config import get_settings
 from hafiz.core.dialect import (
+    db_file_path,
+    engine_options,
+    is_embedded,
     json_col,
+    normalize_url,
     partial_index,
+    prepare_engine,
+    secure_db_file,
     string_array_col,
     ts_col,
     uuid_array_col,
@@ -695,11 +701,22 @@ _session_factory = None
 
 
 def get_engine(url: str | None = None):
-    """Get or create the async engine."""
+    """Get or create the async engine for the configured backend.
+
+    The backend is chosen by URL scheme — ``sqlite://`` picks the embedded
+    store, anything else keeps Postgres. There is deliberately no flag: the
+    URL already says which database this is, and a second switch could
+    disagree with it.
+    """
     global _engine
     if _engine is None:
-        db_url = url or get_settings().database.url
-        _engine = create_async_engine(db_url, echo=False, pool_size=5, max_overflow=10)
+        db_url = normalize_url(url or get_settings().database.url)
+        if is_embedded(db_url):
+            path = db_file_path(db_url)
+            if path is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+        _engine = prepare_engine(create_async_engine(db_url, **engine_options(db_url)))
+        secure_db_file(db_url)
     return _engine
 
 
@@ -723,28 +740,52 @@ def _alembic_config(url: str | None = None):
     hafiz_root = Path(hafiz.__file__).resolve().parent.parent
     cfg = Config(str(hafiz_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(hafiz_root / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", url or get_settings().database.url)
+    cfg.set_main_option("sqlalchemy.url", normalize_url(url or get_settings().database.url))
     return cfg
 
 
 async def create_tables(url: str | None = None) -> None:
-    """Initialize schema by running Alembic migrations to head.
+    """Initialize schema for whichever backend the URL selects.
 
-    Alembic is the single source of truth for the schema. On a fresh DB this
-    runs every migration in order; on an existing Alembic-tracked DB it applies
-    only missing ones.
+    **Postgres** runs Alembic to head. Alembic is the single source of truth
+    there: on a fresh DB it runs every migration in order; on an existing one
+    it applies only what's missing.
 
     IMPORTANT: the `0005_structural_grounding` migration is destructive. It
     drops the old `chunks` / `entities` / `relations` / `observations` tables
     and replaces them with the seven-table identity/body/embedding model.
     Callers should communicate "re-ingest required" to the user on first run.
+
+    **Embedded** creates the schema from the ORM and then *stamps* Alembic at
+    head. Replaying the history is not an option — `0001`, `0005` and `0006`
+    import `pgvector` and `postgresql.UUID` directly, so they cannot execute
+    against SQLite at all.
+
+    Stamping rather than skipping Alembic is the load-bearing part. A plain
+    bootstrap script would work on a fresh file and then strand every
+    *upgrade*: `create_all` does not ALTER existing tables, so a user who
+    updates Hafiz after a schema change would get a silently stale schema —
+    and embedded users are precisely the solo installs least able to diagnose
+    that. Stamping gives them a correct schema today and a working migration
+    path for every future revision, which must be written dialect-aware.
     """
     import asyncio
 
     from alembic import command
 
-    cfg = _alembic_config(url)
-    await asyncio.get_running_loop().run_in_executor(None, command.upgrade, cfg, "head")
+    db_url = normalize_url(url or get_settings().database.url)
+    cfg = _alembic_config(db_url)
+    loop = asyncio.get_running_loop()
+
+    if not is_embedded(db_url):
+        await loop.run_in_executor(None, command.upgrade, cfg, "head")
+        return
+
+    engine = get_engine(db_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await loop.run_in_executor(None, command.stamp, cfg, "head")
+    secure_db_file(db_url)
 
 
 async def close_engine() -> None:

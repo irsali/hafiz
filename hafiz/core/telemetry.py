@@ -150,7 +150,8 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
             )
         ).scalar() or 0
 
-        recalled = select(unnest_ids(Retrieval.result_ids).label("id")).subquery()
+        backend = backend_of(session)
+        recalled = select(unnest_ids(Retrieval.result_ids, backend).label("id")).subquery()
         never = (
             await session.execute(
                 select(func.count())
@@ -185,7 +186,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
 
         top = (
             await session.execute(
-                text(most_recalled_sql(backend_of(session))),
+                text(most_recalled_sql(backend)),
                 {"since": since, "limit": limit},
             )
         ).all()

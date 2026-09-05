@@ -16,8 +16,16 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "sqlalchemy[asyncio]>=2.0",
+    # Postgres backend (shared/team installs).
     "asyncpg>=0.29",
     "pgvector>=0.3",
+    # Embedded backend (solo installs). Default dependencies, not an extra:
+    # the embedded store is the default backend, so an install that cannot
+    # open it is not a working install. Both ship pure-python / manylinux
+    # wheels — no Rust, no compiler. That bar is what disqualified libSQL,
+    # whose binding is sdist-only (see workitems/active/embedded-backend.md).
+    "aiosqlite>=0.20",
+    "sqlite-vec>=0.1.6",
     "fastembed>=0.7",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",

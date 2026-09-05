@@ -14,6 +14,7 @@ from rich.table import Table
 
 from hafiz.core.config import CONFIG_FILENAME, find_config_file, get_settings
 from hafiz.core.database import close_engine, create_tables, get_session_factory
+from hafiz.core.dialect import backend_of, db_file_path, is_embedded, table_list_sql
 
 console = Console()
 
@@ -59,6 +60,11 @@ def run_init(*, output_json: bool = False) -> None:
 
     settings = get_settings()
     result["database_url"] = settings.database.url
+    embedded = is_embedded(settings.database.url)
+    result["backend"] = "sqlite" if embedded else "postgresql"
+    if embedded:
+        path = db_file_path(settings.database.url)
+        result["database_path"] = str(path) if path else None
 
     async def _init() -> str | None:
         try:
@@ -73,8 +79,23 @@ def run_init(*, output_json: bool = False) -> None:
 
     if error is not None:
         result["error"] = error
+        # An embedded failure is not a "start your database" problem — there is
+        # no server to start. It is a path, permission, or disk problem, and
+        # telling the user to run Docker would send them the wrong way.
+        next_step = None if embedded else DOCKER_ONE_LINER
         if output_json:
-            console.print_json(json.dumps({**result, "ok": False, "next_step": DOCKER_ONE_LINER}))
+            console.print_json(json.dumps({**result, "ok": False, "next_step": next_step}))
+            raise SystemExit(1)
+
+        if embedded:
+            path = result.get("database_path")
+            console.print(f"[red]Could not open the database file.[/red]\n  [dim]{error}[/dim]\n")
+            console.print(f"Hafiz is configured to use:\n  [bold]{path}[/bold]\n")
+            console.print(
+                "[dim]Check that the directory is writable and has free space. "
+                "To put the database elsewhere:\n"
+                "  hafiz config set database.url sqlite:///</absolute/path>/hafiz.db[/dim]"
+            )
             raise SystemExit(1)
 
         console.print(f"[red]Could not reach the database.[/red]\n  [dim]{error}[/dim]\n")
@@ -97,8 +118,13 @@ def run_init(*, output_json: bool = False) -> None:
         console.print(f"[green]+[/green] Wrote a starter config to [bold]{config_path}[/bold]")
     else:
         console.print(f"  [dim]Config loaded from {config_path}[/dim]")
-    console.print(f"[green]Database initialized.[/green] [dim]{settings.database.url}[/dim]")
-    console.print("  - pgvector extension enabled")
+    if embedded:
+        console.print(f"[green]Database initialized.[/green] [dim]{result['database_path']}[/dim]")
+        console.print("  - sqlite-vec extension loaded")
+        console.print("  - Single file, owner-only (0600) — back it up by copying it")
+    else:
+        console.print(f"[green]Database initialized.[/green] [dim]{settings.database.url}[/dim]")
+        console.print("  - pgvector extension enabled")
     console.print(
         "  - Tables created: files, units, unit_revisions, embeddings, edges, annotations, commits"
     )
@@ -865,12 +891,20 @@ def run_doctor(
     # 2. Database URL valid
     settings = get_settings()
     db_url = settings.database.url
-    url_valid = db_url.startswith("postgresql") and "@" in db_url
+    # Postgres needs credentials in the URL; the embedded backend is a file
+    # path and has none. Demanding an '@' of both reported a permanent,
+    # unfixable failure for a perfectly healthy embedded install.
+    url_valid = (
+        is_embedded(db_url)
+        if db_url.startswith("sqlite")
+        else (db_url.startswith("postgresql") and "@" in db_url)
+    )
     _check(
         "Database URL valid",
         url_valid,
         detail=db_url,
-        fix="Set HAFIZ_DATABASE__URL or update hafiz.toml [database] section.",
+        fix="Set HAFIZ_DATABASE__URL or update hafiz.toml [database] section. "
+        "Use sqlite:///<path>/hafiz.db or postgresql+asyncpg://user:pass@host/db.",
     )
 
     # 3. (removed — ANTHROPIC_API_KEY no longer needed, extraction is agent-driven)
@@ -901,30 +935,50 @@ def run_doctor(
                     "Database connectivity",
                     False,
                     detail=str(e)[:120],
-                    fix="Ensure PostgreSQL is running and the database URL is correct.",
+                    fix=(
+                        "Check the database file is readable and its directory writable."
+                        if is_embedded(get_settings().database.url)
+                        else "Ensure PostgreSQL is running and the database URL is correct."
+                    ),
                 )
                 return  # Can't proceed without DB
 
-            # 5. pgvector extension
-            try:
-                async with session_factory() as session:
-                    result = await session.execute(
-                        text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            # 5. Vector extension — a different extension per backend, so
+            #    checking for pg_extension on an embedded install would report
+            #    a permanent, unfixable failure for a database that is fine.
+            embedded_backend = is_embedded(get_settings().database.url)
+            if embedded_backend:
+                try:
+                    async with session_factory() as session:
+                        version = (await session.execute(text("SELECT vec_version()"))).scalar()
+                    _check("sqlite-vec extension", True, detail=f"loaded ({version})")
+                except Exception as e:
+                    _check(
+                        "sqlite-vec extension",
+                        False,
+                        detail=str(e)[:120],
+                        fix="Reinstall the driver: pip install --force-reinstall sqlite-vec",
                     )
-                    has_pgvector = result.scalar() is not None
-                _check(
-                    "pgvector extension",
-                    has_pgvector,
-                    detail="installed" if has_pgvector else "not installed",
-                    fix="Run: hafiz init (or CREATE EXTENSION vector in psql).",
-                )
-            except Exception as e:
-                _check(
-                    "pgvector extension",
-                    False,
-                    detail=str(e)[:120],
-                    fix="Run: hafiz init",
-                )
+            else:
+                try:
+                    async with session_factory() as session:
+                        result = await session.execute(
+                            text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+                        )
+                        has_pgvector = result.scalar() is not None
+                    _check(
+                        "pgvector extension",
+                        has_pgvector,
+                        detail="installed" if has_pgvector else "not installed",
+                        fix="Run: hafiz init (or CREATE EXTENSION vector in psql).",
+                    )
+                except Exception as e:
+                    _check(
+                        "pgvector extension",
+                        False,
+                        detail=str(e)[:120],
+                        fix="Run: hafiz init",
+                    )
 
             # 6. Tables exist (structural-grounding schema)
             expected_tables = {
@@ -938,9 +992,7 @@ def run_doctor(
             }
             try:
                 async with session_factory() as session:
-                    result = await session.execute(
-                        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-                    )
+                    result = await session.execute(text(table_list_sql(backend_of(session))))
                     existing_tables = {row[0] for row in result.fetchall()}
 
                 missing = expected_tables - existing_tables

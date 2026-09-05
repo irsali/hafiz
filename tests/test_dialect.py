@@ -163,15 +163,25 @@ def test_all_three_embedding_columns_use_the_same_operator(column):
     assert "<=>" in _sql(cosine_distance(column, VECTOR), PG)
 
 
-def test_vector_search_refuses_sqlite_rather_than_approximating():
-    """Phase 3 owns this. Until then it must fail loudly.
+def test_vector_distance_compiles_on_both_backends():
+    """Two operators, one meaning: cosine distance on a 0..2 scale, so
+    :func:`similarity` composes identically and no caller needs a branch."""
+    assert "<=>" in _sql(cosine_distance(Embedding.embedding, VECTOR), PG)
+    assert "vec_distance_cosine" in _sql(cosine_distance(Embedding.embedding, VECTOR), LITE)
 
-    A backend that raises is debuggable. A backend that quietly returns
-    differently-ordered results is not, and Hafiz serves one ``--json``
-    contract from both.
+
+def test_an_unsupported_backend_refuses_rather_than_approximating():
+    """The rule that outlives any one phase.
+
+    A backend that raises is debuggable; one that quietly returns
+    differently-ordered results is not, and Hafiz serves a single ``--json``
+    contract from every backend. Postgres and SQLite are both implemented
+    now, so this asserts the behaviour on a dialect that is not.
     """
-    with pytest.raises(UnsupportedOnBackendError, match="Phase 3"):
-        _sql(cosine_distance(Embedding.embedding, VECTOR), LITE)
+    from sqlalchemy.dialects import mysql
+
+    with pytest.raises(UnsupportedOnBackendError, match="mysql"):
+        _sql(cosine_distance(Embedding.embedding, VECTOR), mysql.dialect())
 
 
 # ---------------------------------------------------------------------------
