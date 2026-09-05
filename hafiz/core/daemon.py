@@ -123,40 +123,35 @@ class _Server:
     async def _op_context(self, req: dict) -> dict:
         from hafiz.core.context import build_context
 
+        kwargs = _supported_kwargs(build_context, req.get("kwargs") or {})
         async with self._embed_lock:
-            bundle = await build_context(
-                req["query"],
-                project=req.get("project"),
-                limit_chunks=req.get("limit_chunks", 5),
-                limit_annotations=req.get("limit_annotations", 5),
-                include_domains=req.get("include_domains"),
-                exclude_domains=req.get("exclude_domains"),
-                min_score=req.get("min_score"),
-            )
-        return {"ok": True, "bundle": bundle.to_dict()}
+            bundle = await build_context(req["query"], **kwargs)
+        return {"ok": True, "bundle": bundle.to_wire()}
 
     async def _op_query_recall(self, req: dict) -> dict:
-        # NOTE: this forwards a hand-maintained set of keys, so a filter added to
-        # search_annotations and not added here is silently ignored on the warm
-        # path — the caller gets an unfiltered set and no error. `tags` was in
-        # that state until it was noticed in review. When adding a filter,
-        # add it here too; `active_only` is deliberately still absent (the
-        # daemon has always served active-only recall, and changing that is a
-        # behavioural question of its own, not a plumbing fix).
-        from hafiz.core.annotations import search_annotations
+        """Recall, with every caller argument forwarded.
 
+        Arguments are taken from ``req["kwargs"]`` wholesale rather than
+        copied key by key. The previous hand-maintained list was a rot
+        generator: a filter added to ``search_annotations`` and not mirrored
+        here was silently ignored on the warm path — the caller got an
+        unfiltered result set and no error. ``tags`` had already gone missing
+        that way (caught in review, not by a test), and ``active_only`` was
+        still missing, which would have made ``--include-superseded`` return
+        nothing at all once the daemon was actually wired in.
+
+        Unknown keys are dropped against the real signature, so a newer
+        client talking to an older daemon degrades to "that filter was
+        ignored" rather than ``TypeError`` — and :func:`_supported_kwargs`
+        makes that visible in the response.
+        """
+        from hafiz.core.annotations import search_annotations
+        from hafiz.core.wire import to_wire
+
+        kwargs = _supported_kwargs(search_annotations, req.get("kwargs") or {})
         async with self._embed_lock:
-            results = await search_annotations(
-                req["query"],
-                limit=req.get("limit", 8),
-                project=req.get("project"),
-                kind=req.get("kind"),
-                source=req.get("source"),
-                tags=req.get("tags"),
-                rerank=req.get("rerank"),  # None → honor config default
-                min_score=req.get("min_score"),
-            )
-        return {"ok": True, "results": [_annotation_to_dict(r) for r in results]}
+            results = await search_annotations(req["query"], **kwargs)
+        return {"ok": True, "results": [to_wire(r) for r in results]}
 
     async def _op_observe(self, req: dict) -> dict:
         from hafiz.core.annotations import store_annotation
@@ -251,6 +246,43 @@ class _Server:
     @staticmethod
     def _write(writer: asyncio.StreamWriter, obj: dict) -> None:
         writer.write((json.dumps(obj, default=str) + "\n").encode("utf-8"))
+
+
+def configured_idle_timeout() -> float:
+    """Seconds of inactivity before the daemon exits. ``0`` means never.
+
+    ``HAFIZ_DAEMON_IDLE`` wins so a single detached invocation can override
+    without editing config; otherwise ``[daemon] idle_timeout`` from
+    ``hafiz.toml``. A machine whose daemon backs another process wants
+    ``0``, so the ~0.9s model load isn't repaid after every quiet spell.
+    """
+    raw = os.environ.get("HAFIZ_DAEMON_IDLE", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass  # fall through to config rather than dying on a typo
+    try:
+        from hafiz.core.config import get_settings
+
+        return float(get_settings().daemon.idle_timeout)
+    except Exception:  # noqa: BLE001 — a config problem must not stop the daemon
+        return DEFAULT_IDLE_TIMEOUT
+
+
+def _supported_kwargs(fn, kwargs: dict) -> dict:
+    """Keep only the keys ``fn`` actually accepts.
+
+    The daemon and the client are separate processes and can be different
+    versions of Hafiz for the window between an upgrade and the next idle
+    shutdown. Passing a caller's kwargs straight through would make that
+    window a hard ``TypeError`` on every request; filtering makes it a
+    degraded-but-working call, which the version handshake then repairs.
+    """
+    import inspect
+
+    accepted = set(inspect.signature(fn).parameters)
+    return {k: v for k, v in kwargs.items() if k in accepted}
 
 
 def _annotation_to_dict(ann) -> dict:
@@ -355,11 +387,7 @@ def main() -> None:
     import logging as _logging
 
     _logging.basicConfig(level=_logging.INFO)
-    raw = os.environ.get("HAFIZ_DAEMON_IDLE", "").strip()
-    try:
-        idle = float(raw) if raw else DEFAULT_IDLE_TIMEOUT
-    except ValueError:
-        idle = DEFAULT_IDLE_TIMEOUT
+    idle = configured_idle_timeout()
     try:
         asyncio.run(serve(idle_timeout=idle))
     except KeyboardInterrupt:

@@ -86,6 +86,8 @@ def run_status(*, output_json: bool) -> None:
     sock = socket_path()
 
     if output_json:
+        from hafiz.core.daemon_client import _daemon_disabled
+
         console.print_json(
             json.dumps(
                 {
@@ -93,18 +95,43 @@ def run_status(*, output_json: bool) -> None:
                     "running": live,
                     "socket": str(sock),
                     "version": resp.get("version") if resp else None,
+                    # A consumer polling this needs to know whether "not
+                    # running" means "will spawn on demand" or "will never
+                    # spawn". Those are different operational states and the
+                    # old shape could not tell them apart.
+                    "enabled": not _daemon_disabled(),
+                    "idle_timeout": _configured_idle_timeout(),
                 }
             )
         )
         return
 
+    # The auto-spawn line is conditional on the escape hatch being off,
+    # because it was previously printed unconditionally and was false for
+    # three months — the daemon had no callers at all, so no client request
+    # ever spawned it. A status line that promises behaviour nothing
+    # delivers is worse than no line: it sends the reader looking for a
+    # broken spawn rather than a missing caller.
+    from hafiz.core.daemon_client import _daemon_disabled
+
+    disabled = _daemon_disabled()
     if live:
         console.print(
             Panel(
                 f"[bold green]running[/bold green]\n\n"
                 f"  Socket:   {sock}\n"
-                f"  Version:  {resp.get('version')}",
+                f"  Version:  {resp.get('version')}\n"
+                f"  Idle timeout: {_idle_timeout_label()}",
                 border_style="green",
+            )
+        )
+    elif disabled:
+        console.print(
+            Panel(
+                f"[yellow]not running[/yellow]\n\n"
+                f"  Socket:   {sock}\n"
+                f"  [dim]HAFIZ_NO_DAEMON is set — every call runs in-process.[/dim]",
+                border_style="yellow",
             )
         )
     else:
@@ -112,10 +139,25 @@ def run_status(*, output_json: bool) -> None:
             Panel(
                 f"[yellow]not running[/yellow]\n\n"
                 f"  Socket:   {sock}\n"
-                f"  [dim]Auto-spawns on the next client request.[/dim]",
+                f"  [dim]Spawns on the next `hafiz query --observations` or "
+                f"`hafiz context`.[/dim]",
                 border_style="yellow",
             )
         )
+
+
+def _configured_idle_timeout() -> float:
+    from hafiz.core.daemon import configured_idle_timeout
+
+    return configured_idle_timeout()
+
+
+def _idle_timeout_label() -> str:
+    """Human rendering of the configured idle shutdown."""
+    seconds = _configured_idle_timeout()
+    if seconds <= 0:
+        return "never (stays hot until stopped)"
+    return f"{seconds / 60:.0f} min"
 
 
 def run_stop(*, output_json: bool) -> None:

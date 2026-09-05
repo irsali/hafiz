@@ -163,27 +163,36 @@ async def request(req: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-async def context(query: str, **kwargs) -> dict:
-    """Return a context bundle dict (daemon-first, direct fallback)."""
-    resp = await request({"op": "context", "query": query, **kwargs})
+async def context(query: str, **kwargs):
+    """A ``ContextBundle`` (daemon-first, direct fallback).
+
+    Returns the **same type** either way. An earlier version returned a
+    ``dict`` from the warm path and a bundle from the direct path, which
+    would have broken ``--format compact`` the moment the daemon was
+    actually wired in: ``bundle.to_compact()`` does not exist on a dict.
+    The daemon's job is to change latency, not the caller's world.
+    """
+    from hafiz.core.context import ContextBundle, build_context
+
+    resp = await request({"op": "context", "query": query, "kwargs": kwargs})
     if resp and resp.get("ok"):
-        return resp["bundle"]
-    from hafiz.core.context import build_context
-
-    bundle = await build_context(query, **kwargs)
-    return bundle.to_dict()
+        return ContextBundle.from_wire(resp["bundle"])
+    return await build_context(query, **kwargs)
 
 
-async def query_recall(query: str, **kwargs) -> list[dict]:
-    """Return annotation recall results (daemon-first, direct fallback)."""
-    resp = await request({"op": "query_recall", "query": query, **kwargs})
+async def query_recall(query: str, **kwargs) -> list:
+    """``AnnotationResult`` objects (daemon-first, direct fallback).
+
+    Objects, not dicts, for the same reason as :func:`context` — callers
+    render ``.snippet`` and read ``.metadata``, and a dict has neither.
+    """
+    from hafiz.core.annotations import AnnotationResult, search_annotations
+    from hafiz.core.wire import from_wire
+
+    resp = await request({"op": "query_recall", "query": query, "kwargs": kwargs})
     if resp and resp.get("ok"):
-        return resp["results"]
-    from hafiz.core.annotations import search_annotations
-    from hafiz.core.daemon import _annotation_to_dict
-
-    results = await search_annotations(query, **kwargs)
-    return [_annotation_to_dict(r) for r in results]
+        return [from_wire(AnnotationResult, r) for r in resp["results"]]
+    return await search_annotations(query, **kwargs)
 
 
 async def observe(content: str, **kwargs) -> dict:

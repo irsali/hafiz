@@ -72,6 +72,24 @@ from urllib.parse import urlparse, urlunparse
 # ``setdefault`` respects an explicit local override.
 os.environ.setdefault("TERM", "dumb")
 
+# Tests never talk to a warm daemon unless they ask to.
+#
+# Two reasons, both learned the hard way the moment the daemon was actually
+# wired into the read path:
+#
+# 1. **Monkeypatching stops working.** A test that patches
+#    `hafiz.core.annotations.search_annotations` patches *this* process. If a
+#    daemon is up, the request crosses a socket into a different process that
+#    never saw the patch, and the test asserts against real data. One test
+#    flipped from pass to fail purely because a developer had `hafiz serve`
+#    running.
+# 2. **Tests would spawn daemons.** `request()` auto-spawns when no socket
+#    answers, so a suite run on a clean machine would fork background
+#    processes that outlive it.
+#
+# `setdefault`, so a test that genuinely wants the daemon path can override.
+os.environ.setdefault("HAFIZ_NO_DAEMON", "1")
+
 collect_ignore = [
     # Uses the old chunker API (ChunkResult, chunk_file, LANGUAGE_MAP). The
     # new chunker is walk_files + prepare_embedding_parts; a fresh test

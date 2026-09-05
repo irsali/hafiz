@@ -235,12 +235,20 @@ A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embeddi
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `serve` | Run the daemon (foreground). `--detach` backgrounds it; `--idle-timeout <secs>` sets auto-shutdown (default 1800). | Embed + DB | normally auto-spawned; run by hand to pre-warm | rich panel |
-| `serve status` | Report whether the daemon is live + its version. | — | `--json` → `{"ok","running","socket","version"}` | rich panel |
+| `serve status` | Report whether the daemon is live, its version, and whether it *would* spawn. | — | `--json` → `{"ok","running","socket","version","enabled","idle_timeout"}` | rich panel |
 | `serve stop` | Stop the running daemon (best-effort: removes the socket). | — | `--json` → `{"ok","was_running","socket_removed"}` | rich line |
 
+**Which commands use it:** `hafiz query --observations` and `hafiz context`. Both
+return identical results with or without a daemon — same objects, same `--json`,
+same ordering. Writes (`observe` / `note` / `capture`) still run in-process.
+
+**Measured** on a 1,900-annotation / 154k-embedding store: recall is **0.8s warm
+vs 1.8s cold**, because the warm path skips the fastembed model load (~0.9s).
+
 - **Transport:** Unix domain socket, **0600**, at `$XDG_RUNTIME_DIR/hafiz/daemon.sock` (falls back to `/tmp/hafiz-<uid>/daemon.sock`). Never a TCP port — a sovereign personal store stays off the network; filesystem permissions gate access. Override the path with `HAFIZ_DAEMON_SOCKET`.
-- **On-demand:** clients auto-spawn the daemon if it's absent and **fall back to direct in-process execution** on any daemon error, so the daemon can only make things faster — never break a call that the plain CLI would have served. Disable entirely with `HAFIZ_NO_DAEMON=1`.
-- **Idle shutdown:** the daemon exits after `--idle-timeout` seconds of inactivity, so it never lingers forever.
+- **On-demand:** clients auto-spawn the daemon if it's absent and **fall back to direct in-process execution** on any daemon error, so the daemon can only make things faster — never break a call that the plain CLI would have served. Disable entirely with `HAFIZ_NO_DAEMON=1`; `serve status --json` reports that as `enabled: false`.
+- **Idle shutdown:** the daemon exits after `idle_timeout` seconds of inactivity. Precedence is `--idle-timeout` → `HAFIZ_DAEMON_IDLE` → `[daemon] idle_timeout` in `hafiz.toml` → 1800. **Set it to `0` to keep the daemon hot indefinitely** — the right choice when another process consumes hafiz continuously, where a 30-minute shutdown means repaying the model-load cost after every quiet spell.
+- **Caching:** the daemon caches the embedding model and the DB pool, **never results**. Every op re-runs the query, so `forget` and `observe` from another process are visible immediately, and a redacted row can never be served from memory.
 - **Version skew:** every message carries the hafiz version; a client talking to a daemon from a prior hafiz version respawns it automatically.
 
 **Rewrite resilience:** reconcile pass on every ingest marks commits that are no longer reachable in git as `commits.rewritten_at = now`. The installed `post-rewrite` hook triggers a fresh ingest automatically after an amend / rebase.

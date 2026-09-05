@@ -291,6 +291,23 @@ class TelemetrySettings(BaseModel):
     min_query_chars: int = 3
 
 
+class DaemonSettings(BaseModel):
+    """The warm daemon that keeps the embedding model and DB pool hot.
+
+    ``idle_timeout`` is the seconds of inactivity before the daemon exits.
+    **Set it to 0 to keep the daemon hot indefinitely** — the right choice
+    when another process consumes hafiz continuously, where a 30-minute
+    shutdown means paying the ~0.9s model-load cost again on the next
+    request after every quiet spell.
+
+    Configurable rather than hardcoded because the trade is the user's, not
+    ours: a laptop that runs one query an hour wants the memory back, and a
+    machine hosting a hafiz-backed service does not.
+    """
+
+    idle_timeout: float = 1800.0  # 30 minutes; 0 disables shutdown
+
+
 class LLMSettings(BaseModel):
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-20250514"
@@ -343,6 +360,7 @@ class HafizSettings(BaseSettings):
     distill: DistillSettings = Field(default_factory=DistillSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
+    daemon: DaemonSettings = Field(default_factory=DaemonSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     graph: GraphSettings = Field(default_factory=GraphSettings)

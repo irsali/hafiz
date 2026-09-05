@@ -62,9 +62,11 @@ def run_context(
                     min_score=min_score,
                 )
             else:
-                from hafiz.core.context import build_context
+                # Daemon-first; returns a ContextBundle either way and falls
+                # back to direct execution on any daemon problem.
+                from hafiz.core.daemon_client import context as warm_context
 
-                bundle = await build_context(
+                bundle = await warm_context(
                     query,
                     project=project,
                     limit_chunks=limit_chunks,

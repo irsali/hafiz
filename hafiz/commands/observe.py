@@ -382,7 +382,10 @@ def run_recall(
 
     async def _search():
         try:
-            from hafiz.core.annotations import search_annotations
+            # Daemon-first. `query_recall` returns AnnotationResult either
+            # way and falls back to direct in-process execution on any
+            # daemon problem, so this can only be faster, never different.
+            from hafiz.core.daemon_client import query_recall
 
             search_project: str | list[str] | None = project
             if workspace:
@@ -394,7 +397,7 @@ def run_recall(
                     "hafiz.core.context is rewired (Phase 3b). "
                     "Falling back to --project filter.[/yellow]"
                 )
-            results = await search_annotations(
+            results = await query_recall(
                 query,
                 limit=limit,
                 project=search_project,

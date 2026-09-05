@@ -117,6 +117,39 @@ class ContextBundle:
 
         return "\n".join(sections)
 
+    def to_wire(self) -> dict:
+        """Lossless serialization for the daemon protocol.
+
+        Not ``to_dict()``. That method is the public ``--json`` contract and
+        is trimmed on purpose — it drops ``AnnotationResult.metadata`` /
+        ``snippet`` and ``SearchResult.is_neighbor``. Rebuilding a bundle
+        from it would hand ``to_compact()`` and ``to_markdown()`` a poorer
+        object than the direct path produced, so the warm path would render
+        differently with nothing raising. See :mod:`hafiz.core.wire`.
+        """
+        from hafiz.core.wire import to_wire as _tw
+
+        return {
+            "query": self.query,
+            "chunks": [_tw(c) for c in self.chunks],
+            "entities": self.entities,
+            "annotations": [_tw(a) for a in self.annotations],
+            "project_distribution": self.project_distribution,
+        }
+
+    @classmethod
+    def from_wire(cls, payload: dict) -> ContextBundle:
+        """Rebuild a bundle produced by :meth:`to_wire`."""
+        from hafiz.core.wire import from_wire as _fw
+
+        return cls(
+            query=payload["query"],
+            chunks=[_fw(SearchResult, c) for c in payload.get("chunks") or []],
+            entities=payload.get("entities") or [],
+            annotations=[_fw(AnnotationResult, a) for a in payload.get("annotations") or []],
+            project_distribution=payload.get("project_distribution"),
+        )
+
     def to_dict(self) -> dict:
         """Serialize the context bundle for JSON output."""
         result = {
