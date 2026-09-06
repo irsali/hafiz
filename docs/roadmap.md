@@ -12,7 +12,9 @@ Every tool and agent you use — Claude Code, Cursor, Copilot, Aider, a research
 
 > **Status (2026-04-25):** Phases 1–6 shipped, plus the temporal/capture/distill layer (journal, note, capture, session, distill, expiry, supersession — see [workitems/done/temporal-session-awareness.md](../workitems/done/temporal-session-awareness.md)) and the tunable registry / self-tuning surface (see [workitems/done/tunable-registry.md](../workitems/done/tunable-registry.md)). Core CLI surface is stable; the product is dogfooded daily. One-time migration scripts are still open. See [Shipped](#shipped) and [Open work](#open-work) below.
 >
-> **Dropped from scope (as of 2026-04-21):** REST API layer and MCP server. Hafiz is intentionally CLI-only; agents integrate via `hafiz` + `--json`. This decision replaces the earlier "future" positioning of those surfaces.
+> **Dropped from scope (as of 2026-04-21):** REST API layer. Hafiz's primary contract is `hafiz` + `--json`; there is no HTTP surface and none planned.
+>
+> **MCP reinstated (2026-09-06), reversing half of that decision.** `hafiz mcp` serves the knowledge layer to agents that *cannot* shell out — Cursor chat, desktop and hosted clients — over **stdio only**: no HTTP, no SSE, no listening socket. It is 14 tools giving full capability parity of the knowledge surface, generated from one registry keyed to the same core functions the CLI calls, so it cannot drift from the CLI contract. Install/admin, destructive and long-running ingest commands are deliberately absent: an MCP client calls tools without asking anyone, so those stay on the CLI where a human is present. Needs the optional extra — `pip install hafiz[mcp]`.
 >
 > This file is the **product vision + future backlog**. It is *not* the development guide — see [CLAUDE.md](../CLAUDE.md) for conventions, layout, and how to add a command. [commands.md](commands.md) is the source of truth for command shapes and flags.
 

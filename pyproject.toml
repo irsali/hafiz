@@ -48,6 +48,17 @@ Issues = "https://github.com/irsali/hafiz/issues"
 hafiz = "hafiz.cli:main"
 
 [project.optional-dependencies]
+# `hafiz mcp` — the stdio MCP server, for agents that cannot shell out.
+#
+# An extra rather than a default dependency because the SDK is expensive out
+# of proportion to what a stdio server uses: 19 transitive packages, including
+# starlette, uvicorn, sse-starlette and a compiled `cryptography` build — an
+# entire HTTP server stack that this transport never touches. Measured, not
+# assumed. Most installs will never run `hafiz mcp`, and CLAUDE.md is explicit
+# that dependencies are costs borne by users.
+mcp = [
+    "mcp>=2.0",
+]
 # NOTE on all accelerator extras: onnxruntime, onnxruntime-gpu and
 # onnxruntime-openvino all install the SAME `onnxruntime` import package, so
 # only one can be active in a venv — whichever is installed last overwrites the
@@ -93,6 +104,11 @@ dev = [
     # ruff minor can add rules that would fail the gate out of band. Bump
     # deliberately, re-running `ruff check . && ruff format .` against it.
     "ruff>=0.15,<0.16",
+    # The MCP SDK, so CI actually builds the server rather than skipping the
+    # one test that validates every generated schema against the SDK's own
+    # validation. Mirrors the `mcp` extra, for the same reason as the JS deps
+    # below: an extra that CI never installs is an extra CI never tests.
+    "mcp>=2.0",
     # JS/TS parser deps so the test suite + CI exercise tree_sitter_js
     # instead of skipping it. Mirrors the `js` extra.
     "tree-sitter>=0.23",

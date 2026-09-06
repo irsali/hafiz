@@ -157,6 +157,36 @@ def watch(
     run_watch(path, project=project, output_json=json_output)
 
 
+# ─── MCP (stdio server) ─────────────────────────────────────────────
+
+
+@app.command()
+def mcp(
+    list_tools: bool = typer.Option(
+        False,
+        "--list",
+        help="Print the tool surface and exit instead of serving. Exits 1 on registry drift.",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Machine-readable output for --list."),
+) -> None:
+    """Serve hafiz's knowledge surface to MCP clients over stdio.
+
+    For agents that cannot shell out — Cursor chat, desktop and hosted
+    clients. Everything an agent needs to read from and write to the brain,
+    minus install, destructive and long-running commands, which stay on the
+    CLI where a human is present.
+
+    Normally launched by the client, not by hand:
+
+        {"mcpServers": {"hafiz": {"command": "hafiz", "args": ["mcp"]}}}
+
+    Needs the optional extra: `pipx inject hafiz mcp`.
+    """
+    from hafiz.commands.mcp import run_mcp
+
+    run_mcp(list_tools=list_tools, output_json=output_json)
+
+
 # ─── SERVE (warm daemon) ────────────────────────────────────────────
 
 serve_app = typer.Typer(

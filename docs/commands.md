@@ -228,6 +228,33 @@ The partition is the safety property. Untagged paths **also** indexed under a pr
 
 **Multi-project ingest.** When indexing a workspace with several projects (e.g. `workspace.projects = ["a", "b", "c"]`), run `hafiz ingest` **one project at a time, sequentially in the same shell** — not in parallel. Each `hafiz ingest` process loads its own ONNX embedding model (~500 MB baseline) and the per-call peak RSS for batched embedding scales with the configured `embedding.max_part_chars`; running N processes in parallel multiplies both, defeating the runtime chunking that bounds peak RSS in `embed_texts`. Concrete pattern: avoid spawning ingest from multiple VSCode tasks, CI matrix shards on the same machine, or git hooks across sibling repos triggered together. If you really need parallelism, install ingest-only on a host with enough RAM headroom for `N × (model + per-call peak)` and confirm with `hafiz doctor`.
 
+### MCP (stdio server)
+
+For agents that **cannot shell out** — Cursor chat, desktop and hosted clients. Everything else should use the CLI: it is the primary contract, and `--json` is stable.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `mcp` | Serve the knowledge layer over MCP on **stdio**. Normally launched by the client, not by hand. | Embed + DB | 13 tools, see below | — (speaks JSON-RPC on stdout) |
+| `mcp --list` | Print the tool surface and exit. Exits **1** on registry drift. | — | `--json` → `{"ok","transport","count","drift","tools":[{"name","summary","writes","target","input_schema"}]}` | rich table |
+
+Client config:
+
+```json
+{"mcpServers": {"hafiz": {"command": "hafiz", "args": ["mcp"]}}}
+```
+
+Needs the optional extra — `pipx inject hafiz mcp`, or `pip install 'hafiz[mcp]'`. It is an extra because the SDK pulls 19 transitive packages (starlette, uvicorn, sse-starlette, a compiled `cryptography`) — an entire HTTP server stack this stdio-only transport never touches.
+
+**The 13 tools.** Read: `hafiz_context`, `hafiz_query`, `hafiz_recall_observations`, `hafiz_recall_session`, `hafiz_graph`, `hafiz_journal`, `hafiz_distill`, `hafiz_reconcile`, `hafiz_retrievals`. Write: `hafiz_observe`, `hafiz_note`, `hafiz_capture`, `hafiz_session`.
+
+Parity is of **capability**, not of command count: every flag on a covered command survives as a tool parameter, so `hafiz_query(observations=true, kind="decision")` covers `query --observations --type decision`. Schemas are generated from the same core function signatures the CLI calls, so the two surfaces cannot drift — a parameter added to a core function fails the build until it is described.
+
+**Deliberately absent**, and staying CLI-only: install/admin (`init`, `hooks`, `agent`, `config set`, `embedding`, `serve`, `watch`), destructive (`forget`, `prune`) and long-running ingest paths (`ingest`, `import`, `extract`, `review`). An MCP client calls tools without asking anyone; anything irreversible or environment-mutating needs a human present.
+
+**Attribution.** A write with no explicit `source` is attributed to the connecting client — `agent:cursor-ide`, from what it sends at `initialize` — so the audit trail records which client wrote what rather than a uniform `agent:mcp`.
+
+**Transport.** stdio only. No HTTP, no SSE, no listening socket. The server is spawned by the client and dies with it.
+
 ### Daemon (warm serving)
 
 A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embedding-model load + DB connect) before any search runs. The **warm daemon** loads the model + pooled DB engine **once** and answers many requests over a Unix socket, dropping per-call latency to the actual vector op (~15ms recall, ~400ms graph-context) plus cheap local IPC.

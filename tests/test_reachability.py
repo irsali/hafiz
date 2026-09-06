@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 PKG_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -56,12 +57,27 @@ def _public_names(tree: ast.Module) -> set[str]:
     }
 
 
+#: ``"hafiz.core.graph_ops:graph_op"`` — how ``mcp_registry`` names the core
+#: function behind a tool. A string target is a real reference the AST cannot
+#: follow, so without this the checker reports a wired-up module as dead.
+#:
+#: Taught to the checker rather than waved through ``ALLOWED_UNREACHABLE``,
+#: which would be a permanent hole: delete the ToolSpec and the module really
+#: would be dead, with the allowlist entry still vouching for it.
+_STRING_TARGET = re.compile(r"^(hafiz\.[A-Za-z0-9_.]+):([A-Za-z0-9_]+)$")
+
+
 def _imports_by_module() -> dict[str, set[str]]:
     """``module -> names that other production modules import from it``."""
     imported: dict[str, set[str]] = {}
     for path in sorted((PKG_ROOT / "hafiz").rglob("*.py")):
         self_mod = ".".join(path.relative_to(PKG_ROOT).with_suffix("").parts)
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                match = _STRING_TARGET.match(node.value)
+                if match and match.group(1) != self_mod:
+                    imported.setdefault(match.group(1), set()).add(match.group(2))
+                continue
             if isinstance(node, ast.ImportFrom) and node.module:
                 if not node.module.startswith("hafiz") or node.module == self_mod:
                     continue
@@ -139,3 +155,24 @@ def test_the_check_would_have_caught_the_daemon():
     # And that wiring it in clears the flag.
     used_after = {"_send_one", "query_recall", "context"}
     assert public & used_after
+
+
+def test_string_targets_resolve_but_do_not_wave_everything_through():
+    """The registry-target rule must be specific, not a blanket amnesty.
+
+    A rule added to silence a failure is worth checking in the direction it
+    was *not* added for: it should still flag a module nothing references at
+    all, and it should credit only the exact function a target names.
+    """
+    imported = _imports_by_module()
+
+    # Positive: mcp_registry names these as "module:function" strings only.
+    assert "graph_op" in imported.get("hafiz.core.graph_ops", set())
+    assert "session_op" in imported.get("hafiz.core.session_ops", set())
+
+    # Negative: a module nobody references stays absent, so the reachability
+    # assertion above would still fire for it.
+    assert "hafiz.core.a_module_that_does_not_exist" not in imported
+
+    # Specific: the rule credits the named function, not the whole module.
+    assert "<module>" not in imported.get("hafiz.core.graph_ops", set())
