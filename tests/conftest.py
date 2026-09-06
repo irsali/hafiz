@@ -120,6 +120,7 @@ _DB_DEPENDENT = [
     "test_importer_claude_code.py",
     "test_index_freshness.py",
     "test_mcp.py",
+    "test_migrate.py",
     "test_ingest_flow.py",
     "test_polymorphic_lineage.py",
     "test_prune_untagged.py",

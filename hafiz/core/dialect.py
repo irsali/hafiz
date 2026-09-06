@@ -383,6 +383,19 @@ def tags_overlap(column: Any, tags: list[str]) -> ColumnElement:
 # ---------------------------------------------------------------------------
 
 
+def backend_of_url(url: str) -> str:
+    """The backend a URL selects, named the way :func:`backend_of` names it.
+
+    For the case where there is no bind to ask — reporting on a database
+    before connecting to it, or naming both sides of a migration. Kept beside
+    ``backend_of`` so the two cannot start disagreeing about what to call a
+    backend.
+    """
+    from sqlalchemy.engine import make_url
+
+    return "sqlite" if is_embedded(url) else make_url(normalize_url(url)).get_dialect().name
+
+
 def backend_of(bindable: Any) -> str:
     """The dialect name behind a session, connection, or engine.
 

@@ -774,6 +774,30 @@ async def create_tables(url: str | None = None) -> None:
     from alembic import command
 
     db_url = normalize_url(url or get_settings().database.url)
+
+    # `url` selects the *backend*, not the database. Both halves of this
+    # function reach the configured store regardless: the embedded branch
+    # takes its engine from `get_engine`, a process-wide singleton, and
+    # `alembic/env.py` overwrites `sqlalchemy.url` with `load_settings()`
+    # before either branch can use it.
+    #
+    # Passing a different URL therefore used to create tables and stamp
+    # Alembic on the *current* database while appearing to target another —
+    # silently, because both operations are idempotent against a store
+    # already at head. Caught while building `migrate-backend`, which needs
+    # two databases open at once; it now builds its own target schema.
+    configured = normalize_url(get_settings().database.url)
+    if db_url != configured:
+        raise RuntimeError(
+            f"create_tables() cannot target a database other than the configured one.\n"
+            f"  asked for:  {db_url}\n"
+            f"  configured: {configured}\n\n"
+            f"It resolves its engine from the process-wide singleton, and Alembic's "
+            f"env.py re-reads the URL from settings — so this call would have silently "
+            f"acted on the configured store instead. Point the configuration at the "
+            f"database you mean, or build the schema against an explicit engine."
+        )
+
     cfg = _alembic_config(db_url)
     loop = asyncio.get_running_loop()
 

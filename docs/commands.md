@@ -768,6 +768,31 @@ One append-only source-layer table, one INSERT per search.
 - **Query text is a new data category** for this store: it's what you were *looking for*, not what you concluded. So it lands in the source layer with the source layer's guarantees — `retention_until` (default 90d), swept by `forget --all-expired`, counted in `status`/`doctor` — and it never leaves the machine.
 - **Opt out** with `[telemetry] retrieval = false` (or `HAFIZ_TELEMETRY__RETRIEVAL=false`). `retention_days` and `min_query_chars` are tunable in the same block; queries shorter than `min_query_chars` (default 3) aren't recorded, since "ok" / "yes" say nothing about what was asked for.
 
+### Switching backends
+
+`export` is a one-way eject to plain files. This is the transport: every table, both layers, into a database on the other backend.
+
+It exists because "just re-ingest" only half works. Code and docs can be re-derived — git is their source. **Annotations cannot.** Someone who starts on SQLite, accumulates two years of decisions and then wants Postgres for a second machine has nothing to re-ingest from.
+
+| Command | Purpose | Brain | Agent use | Terminal use |
+|---------|---------|:-----:|-----------|-------------|
+| `migrate-backend --to <url>` | Copy the whole store to another backend. `--dry-run` reports without writing; `--yes` skips the prompt. | All tables | `--json` → `{ok, dry_run, source_backend, target_backend, target, total_rows, vector_check, tables:[{table, source_rows, copied, back_references, ok}]}` | rich table + verification line |
+
+```bash
+hafiz migrate-backend --to "sqlite:///~/.local/share/hafiz/hafiz.db" --dry-run
+hafiz migrate-backend --to "sqlite:///~/.local/share/hafiz/hafiz.db"
+hafiz config set database.url sqlite:///~/.local/share/hafiz/hafiz.db
+```
+
+Guarantees, in the order they matter:
+
+- **Nothing is recomputed.** Every column copies verbatim, including `retention_until`, `valid_until` and `superseded_at`. Tombstoned rows migrate *as tombstoned* — they are the audit trail, not junk.
+- **The source is opened read-only** and is never modified.
+- **It refuses rather than resumes.** The target must be empty; this copies, it does not merge. A run that dies halfway leaves a database the next run declines to touch — delete it and retry.
+- **It verifies itself.** Per-table row counts are compared and a vector is round-tripped, because "exited zero" is not evidence that 400,000 rows arrived. A mismatch is a failure, not a warning.
+
+Measured on a real store: **421,732 rows, Postgres → SQLite, 81s**, 71,194 self-references restored, vectors round-tripping with a maximum element delta of 0.
+
 ### Sovereignty (export)
 
 The data-portability complement to `forget`. Dumps the brain's **wisdom layer** — annotations (decisions / facts / learnings / patterns / warnings) — to plain files for backup, human review, or migration. Code and AST structure are **excluded** (git is their sovereign copy). Forgotten (`valid_until`) and retention-expired rows are never included — export reflects only live data.

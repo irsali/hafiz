@@ -157,6 +157,38 @@ def watch(
     run_watch(path, project=project, output_json=json_output)
 
 
+# ─── MIGRATE-BACKEND ────────────────────────────────────────────────
+
+
+@app.command("migrate-backend")
+def migrate_backend_cmd(
+    to: str = typer.Option(
+        ...,
+        "--to",
+        help="Target database URL, e.g. 'sqlite:///~/.local/share/hafiz/hafiz.db' "
+        "or 'postgresql+asyncpg://user@host/hafiz'.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would be copied, write nothing."
+    ),
+    assume_yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    output_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Copy this store to another backend — SQLite to Postgres, or back.
+
+    `hafiz export` is a one-way eject to plain files; this is the transport.
+    It exists because "just re-ingest" only works for code and docs, which git
+    can regenerate. Your annotations have no source to re-derive from.
+
+    Every column copies verbatim, including retention and tombstone
+    timestamps — nothing is recomputed. The source is opened read-only. The
+    target must be empty: this copies, it does not merge.
+    """
+    from hafiz.commands.migrate import run_migrate_backend
+
+    run_migrate_backend(to, dry_run=dry_run, output_json=output_json, assume_yes=assume_yes)
+
+
 # ─── MCP (stdio server) ─────────────────────────────────────────────
 
 
