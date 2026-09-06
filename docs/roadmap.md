@@ -48,7 +48,7 @@ New content types are parsers, not schema changes. New agents are CLI callers, n
                     └──────┬──────┘  - Git-aware delta ingest
                            │
               ┌────────────▼────────────────┐
-              │    POSTGRESQL + pgvector     │
+              │  SQLITE+vec  or  POSTGRES   │
               │                             │
               │  ┌─────────┐ ┌───────────┐  │
               │  │  Units  │ │ Revisions │  │
@@ -92,7 +92,7 @@ New content types are parsers, not schema changes. New agents are CLI callers, n
 
 ## Data Model
 
-**Seven tables**, all in one PostgreSQL database with `pgvector`. Alembic owns the schema — see [alembic/versions/](alembic/versions/).
+**Seven tables**, in one database — an embedded SQLite file with `sqlite-vec` by default, or PostgreSQL with `pgvector` for a shared install. The schema, the CLI surface, the `--json` shapes and the agent contract are identical on both; [hafiz/core/dialect.py](../hafiz/core/dialect.py) is the one place that knows which backend is in use, and the full test suite runs against each. Alembic owns the schema — see [alembic/versions/](alembic/versions/). Move a store between backends with `hafiz migrate-backend`.
 
 Built on two invariants. *Identity is stable, body evolves* — every fact that can change over time is an immutable **unit** with append-only **revisions**; branch switches, commit hops, and edits become diffs, never destructive overwrites. *Bodies are canonical, embeddings are an index* — the vector search layer sits in a separate `embeddings` table (1:N from revisions), so oversized units (long docs, huge functions, whole-file fallbacks) get multiple embedded parts while small units get one. Agent annotations reference units by stable identity, surviving body changes without orphaning; editing one paragraph of a ten-paragraph note re-embeds one part, not ten.
 
@@ -161,7 +161,7 @@ commits        (hash PK, project, author, committed_at, summary)
 
 ```bash
 # ─── SETUP ───
-hafiz init                          # create schema + pgvector extension
+hafiz init                          # create the store (a file, or a Postgres schema)
 hafiz status [--diagnose]           # counts, health, config/DB/embedding checks
 hafiz config show                   # print merged config
 hafiz hooks install <repo>          # write post-commit + post-merge hooks

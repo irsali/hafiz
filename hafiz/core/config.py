@@ -73,6 +73,11 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # and via `hafiz config set <key> <value>`.
 
 [database]
+# A single file — no server to install, no database to create.
+# Switch to Postgres for a shared or multi-machine install:
+#   url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
+# Already have data? `hafiz migrate-backend --to <url>` moves it across
+# rather than starting over; re-ingesting cannot recover your annotations.
 url = "{database_url}"
 
 [embedding]
@@ -124,8 +129,32 @@ def write_default_config(
     return path
 
 
+def _default_database_url() -> str:
+    """Where a fresh install keeps its brain: a single file, no server.
+
+    Postgres was the default until 2026-09-06. It is still fully supported
+    and still the right answer for a shared or multi-machine install — but it
+    is the wrong thing to *require* of someone who just wants to try hafiz,
+    and "install Postgres, install pgvector, create a database" was the
+    largest drop-off in the install path.
+
+    Derived from :func:`hafiz.core.dialect.default_db_path` rather than
+    written out here, so there is one definition of where the store lives. A
+    hardcoded literal would also have ignored ``XDG_DATA_HOME``, quietly
+    disagreeing with every other caller.
+
+    Only reachable by installs with **no config file and no ``HAFIZ_*``
+    override** — both outrank this — so switching the default cannot move an
+    existing user's database out from under them. To move one deliberately:
+    ``hafiz migrate-backend``.
+    """
+    from hafiz.core.dialect import default_db_path
+
+    return f"sqlite:///{default_db_path()}"
+
+
 class DatabaseSettings(BaseModel):
-    url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
+    url: str = Field(default_factory=_default_database_url)
 
 
 class EmbeddingSettings(BaseModel):

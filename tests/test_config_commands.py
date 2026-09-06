@@ -63,7 +63,26 @@ def test_config_get_rejects_unknown_key():
     # JSON mode emits a well-formed error payload on stdout.
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
-    assert payload["error"] == "unknown_tunable"
+    # Renamed from "unknown_tunable" on 2026-09-06, when `config get/set/unset`
+    # started accepting plain settings keys (database.url, embedding.device)
+    # as well as tunables. The old code named the wrong thing: someone
+    # mistyping a config key was told no *tunable* was registered, which is
+    # true and unhelpful.
+    assert payload["error"] == "unknown_key"
+
+
+def test_config_get_reads_a_plain_settings_key():
+    """`database.url` is a config key, not a tunable — and the most important one.
+
+    Guards the half of the fix that `config set` cannot: a key that can be
+    written but not read back is still broken.
+    """
+    result = runner.invoke(app, ["config", "get", "database.url", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["key"] == "database.url"
+    assert payload["value"]
+    assert payload["source"] in {"env", "toml", "default"}
 
 
 # ── config set / unset roundtrip (user scope) ──────────────────────────

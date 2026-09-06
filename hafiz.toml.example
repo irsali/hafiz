@@ -1,5 +1,22 @@
 [database]
-url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
+# Embedded by default: one file, no server, no setup. This is the right
+# choice for a solo install and is *faster* than Postgres for it — neither
+# backend has a vector index yet, so both scan linearly, and an in-process
+# store skips the socket + driver overhead. Measured at 152k vectors, k=10:
+# 87.5ms (sqlite-vec) vs 150.3ms (pgvector).
+#
+# Omit this key entirely and hafiz uses the same location by default —
+# $XDG_DATA_HOME/hafiz/hafiz.db, falling back to ~/.local/share.
+url = "sqlite:///~/.local/share/hafiz/hafiz.db"
+
+# Postgres stays first-class, and is the right answer when several machines
+# or several people share one brain. Requires the pgvector extension.
+# url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
+#
+# Moving between the two: `hafiz migrate-backend --to <url>` copies every
+# table, verifies the row counts and round-trips a vector. Do not "just
+# re-ingest" — that recovers code and docs, which git can regenerate, but
+# your annotations have no source to re-derive from.
 
 [embedding]
 model = "nomic-ai/nomic-embed-text-v1.5"

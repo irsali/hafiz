@@ -135,6 +135,21 @@ def run_init(*, output_json: bool = False) -> None:
         "  [bold]hafiz agent install claude-code[/bold]   teach your agent to use hafiz"
     )
 
+    # Said only on the first run of an embedded install, which is exactly when
+    # someone could be surprised: hafiz defaulted to Postgres before
+    # 2026-09-06, so an existing user who never wrote a config file would
+    # otherwise meet a brand-new empty store with no explanation and conclude
+    # their brain was gone. A config file or a HAFIZ_* override outranks the
+    # default, so this cannot actually have moved anyone's data — but the
+    # sentence costs one line and the alternative is a frightening silence.
+    if created and embedded:
+        console.print(
+            "\n[dim]Using the embedded store — no server needed. Coming from Postgres?\n"
+            "  hafiz migrate-backend --to sqlite:///"
+            f"{result['database_path']}\n"
+            "  Re-ingesting recovers code and docs, but not your annotations.[/dim]"
+        )
+
 
 def _staleness_note(entry: dict) -> tuple[str, str]:
     """(label, rich style) summarising one project's index freshness."""
@@ -379,19 +394,125 @@ def run_config_show(*, output_json: bool = False) -> None:
 # ── `hafiz config get` ────────────────────────────────────────────────
 
 
+def _settings_field(key: str):
+    """The pydantic sub-model and field behind a plain config key, or None.
+
+    ``hafiz config set`` originally accepted only *tunables* — the RAM- and
+    policy-sensitive knobs in the tunable registry. But ``database.url`` is
+    the single most important key in the file, and every path that needs it
+    changed (switching backends, pointing at a different Postgres, recovering
+    from a bad URL) told the user to run a command that answered "No tunable
+    registered for key 'database.url'". The advice was in the README, in
+    `init`'s error output and in `migrate-backend`'s success message.
+
+    Resolved against ``HafizSettings`` rather than an allowlist, so a field
+    added to a settings model becomes settable without anyone remembering to
+    register it — and a key that does not exist is still refused.
+    """
+    from hafiz.core.config import HafizSettings
+
+    parts = key.split(".")
+    if len(parts) != 2:
+        return None
+    section, field = parts
+    section_field = HafizSettings.model_fields.get(section)
+    if section_field is None:
+        return None
+    model = section_field.annotation
+    if not hasattr(model, "model_fields") or field not in model.model_fields:
+        return None
+    return model, field
+
+
+def _unknown_key_error(key: str, output_json: bool):
+    return _config_error(
+        "unknown_key",
+        f"No config key or tunable named {key!r}.\n"
+        f"Config keys look like 'database.url' or 'embedding.device'; "
+        f"run `hafiz config show` to list them, or `hafiz doctor --json` for tunables.",
+        output_json,
+        exit_code=1,
+    )
+
+
+def _write_config_key(key: str, value: Any, *, local: bool, output_json: bool):
+    """Write one already-validated key into the TOML file and report it."""
+    from hafiz.core.config import reset_settings
+
+    target = _resolve_config_target(local=local)
+    data = _read_toml(target)
+    dug = _dig(data, key.split("."))
+    if dug is None:
+        return _config_error(
+            "malformed_toml",
+            f"Existing {target} has a non-table entry blocking {key!r}.",
+            output_json,
+            exit_code=1,
+        )
+    parent, leaf = dug
+    parent[leaf] = value
+    _write_toml(target, data)
+    reset_settings()
+
+    if output_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "ok": True,
+                    "key": key,
+                    "value": value,
+                    "target": str(target),
+                    "scope": "local" if local else "user",
+                }
+            )
+        )
+        return None
+
+    console.print(f"[green]+[/green] {key} = {value}  [dim]({target})[/dim]")
+    return None
+
+
+def _report_settings_key(key: str, field, *, output_json: bool):
+    """Print a plain settings key's effective value and where it came from."""
+    import os
+
+    section, field_name = key.split(".")
+    model, _ = field
+    current = getattr(getattr(get_settings(), section), field_name)
+    default = model.model_fields[field_name].get_default(call_default_factory=True)
+
+    env_name = f"HAFIZ_{section.upper()}__{field_name.upper()}"
+    if env_name in os.environ:
+        source = "env"
+    else:
+        config_file = find_config_file()
+        in_file = bool(config_file) and field_name in _read_toml(config_file).get(section, {})
+        source = "toml" if in_file else "default"
+
+    if output_json:
+        console.print_json(
+            json.dumps({"key": key, "value": current, "source": source, "default": default})
+        )
+        return None
+
+    console.print()
+    console.print(f"[bold]{key}[/bold] = {current}")
+    console.print(f"  source:  [dim]{source}[/dim]")
+    if current != default:
+        console.print(f"  default: [dim]{default}[/dim]")
+    return None
+
+
 def run_config_get(key: str, *, output_json: bool = False) -> None:
     from hafiz.core import tunables as _tunables
 
     try:
         t = _tunables.get(key)
     except KeyError:
-        return _config_error(
-            "unknown_tunable",
-            f"No tunable registered for key {key!r}. "
-            f"Run `hafiz doctor --json` to list registered tunables.",
-            output_json,
-            exit_code=1,
-        )
+        field = _settings_field(key)
+        if field is None:
+            return _unknown_key_error(key, output_json)
+        return _report_settings_key(key, field, output_json=output_json)
 
     value, source = _tunables.resolve_with_source(key)
     if output_json:
@@ -464,15 +585,30 @@ def run_config_set(
 ) -> None:
     from hafiz.core import tunables as _tunables
 
+    settings_field = None
     try:
         t = _tunables.get(key)
     except KeyError:
-        return _config_error(
-            "unknown_tunable",
-            f"No tunable registered for key {key!r}.",
-            output_json,
-            exit_code=1,
-        )
+        settings_field = _settings_field(key)
+        if settings_field is None:
+            return _unknown_key_error(key, output_json)
+        t = None
+
+    if settings_field is not None:
+        # Coerced and validated by the settings model itself, so a bad value
+        # is refused with pydantic's own message rather than being written to
+        # the file and blowing up on the next command.
+        model, field_name = settings_field
+        try:
+            value = getattr(model(**{field_name: raw_value}), field_name)
+        except Exception as e:  # noqa: BLE001 — pydantic raises its own types
+            return _config_error(
+                "validation_failed",
+                f"Invalid value for {key}: {e}",
+                output_json,
+                exit_code=1,
+            )
+        return _write_config_key(key, value, local=local, output_json=output_json)
 
     try:
         value = _tunables._coerce(t, raw_value)
@@ -542,12 +678,8 @@ def run_config_unset(key: str, *, local: bool = False, output_json: bool = False
     try:
         _tunables.get(key)
     except KeyError:
-        return _config_error(
-            "unknown_tunable",
-            f"No tunable registered for key {key!r}.",
-            output_json,
-            exit_code=1,
-        )
+        if _settings_field(key) is None:
+            return _unknown_key_error(key, output_json)
 
     target = _resolve_config_target(local=local)
     if not target.is_file():

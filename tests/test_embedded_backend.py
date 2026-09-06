@@ -465,3 +465,90 @@ async def test_db_file_is_owner_only(embedded_session, embedded_url):
     wal = path.with_name(path.name + "-wal")
     if wal.exists():
         assert stat.S_IMODE(wal.stat().st_mode) == 0o600, "the WAL holds recent turns too"
+
+
+# ── The first-run path (Phase 4: embedded became the default) ────────────
+
+
+def test_a_fresh_install_reaches_a_working_store_with_no_server():
+    """install -> init -> a usable database, on a machine with no Postgres.
+
+    This is the north star of the embedded-backend work stated as an
+    assertion. Run as a subprocess in an isolated HOME/XDG so it exercises
+    the real first-run path: no config file, no ``HAFIZ_*`` overrides, no
+    database server anywhere.
+
+    In-process would prove much less. The settings object and the engine are
+    both process-wide singletons that the test session has already pointed at
+    its own database, so the one thing under test — what hafiz does when
+    nothing has been configured — is exactly what an in-process test cannot
+    reach.
+    """
+    import json
+    import os
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    hafiz_bin = Path(os.environ.get("HAFIZ_BIN", "")) if os.environ.get("HAFIZ_BIN") else None
+    if hafiz_bin is None:
+        from shutil import which
+
+        found = which("hafiz")
+        if not found:
+            pytest.skip("the hafiz entrypoint is not on PATH in this environment")
+        hafiz_bin = Path(found)
+
+    with tempfile.TemporaryDirectory(prefix="hafiz-freshenv-") as tmp:
+        home = Path(tmp) / "home"
+        home.mkdir()
+        env = {
+            "HOME": str(home),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "TERM": "dumb",
+        }
+        done = subprocess.run(
+            [str(hafiz_bin), "init", "--json"],
+            env=env,
+            # From the isolated home, not the repo. Config discovery starts at
+            # the *cwd*, so running this from the checkout would find hafiz's
+            # own `hafiz.toml` — which pins Postgres — and the test would
+            # report a Postgres default for a config-less machine. That is the
+            # resolution chain working correctly; the test just has to stand
+            # somewhere a new user would stand.
+            cwd=str(home),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert done.returncode == 0, (
+            f"`hafiz init` failed on a machine with no config and no database "
+            f"server — the exact first run this backend exists for.\n"
+            f"stdout: {done.stdout}\nstderr: {done.stderr}"
+        )
+
+        payload = json.loads(done.stdout)
+        assert payload["ok"] is True
+        assert payload["backend"] == "sqlite", (
+            f"a fresh install chose {payload['backend']!r}; the default must not "
+            f"require a server the user has not installed"
+        )
+
+        db = Path(payload["database_path"])
+        assert db.exists(), "init reported success but created no database file"
+        assert str(home) in str(db), (
+            f"the store landed at {db}, outside the isolated HOME — the default "
+            f"ignores XDG_DATA_HOME"
+        )
+        # Owner-only: the brain holds decisions, transcripts and source paths.
+        assert oct(db.stat().st_mode)[-3:] == "600", (
+            f"database file is {oct(db.stat().st_mode)[-3:]}, not 0600"
+        )
+
+        # And the written config is the one that produced this, not a
+        # Postgres URL the user would then have to fix by hand.
+        config = Path(payload["config_path"])
+        assert config.exists()
+        assert "sqlite" in config.read_text(encoding="utf-8")

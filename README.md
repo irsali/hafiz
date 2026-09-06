@@ -1,6 +1,8 @@
 # Hafiz
 
-A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your codebase into PostgreSQL + pgvector, extracts entities and relationships, stores observations, and provides semantic search from the terminal or any AI agent.
+A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your codebase, extracts entities and relationships, stores observations, and provides semantic search from the terminal or any AI agent.
+
+It runs on a **single local file** by default — no database server to install. Postgres + pgvector remains fully supported for shared and multi-machine installs.
 
 ## Quick Start
 
@@ -11,16 +13,20 @@ hafiz ingest . --project my-project
 hafiz query "how does authentication work?"
 ```
 
-`hafiz init` writes `~/.config/hafiz/hafiz.toml` for you if you don't have one,
-and if it can't reach a database it prints the exact `docker run` line to start
-one — so the happy path is install, `init`, ingest.
+That's the whole setup. No server, no database to create, no connection string
+to get right: `hafiz init` writes `~/.config/hafiz/hafiz.toml` if you don't have
+one and creates a single file at `~/.local/share/hafiz/hafiz.db` (owner-only,
+`0600` — back it up by copying it).
+
+Running a team, or want one brain shared across machines? See
+[Using PostgreSQL](#using-postgresql-shared-or-multi-machine).
 
 See the full setup guide below. Doing a cross-machine or cross-agent test? See [docs/testing-cross-machine.md](docs/testing-cross-machine.md).
 
 ## Prerequisites
 
 - **Python 3.12+** -- `python3 --version`
-- **Docker** -- for PostgreSQL + pgvector (or a native PostgreSQL install)
+- **That's it** for the default setup — the embedded store needs no server. PostgreSQL is optional; see [Using PostgreSQL](#using-postgresql-shared-or-multi-machine).
 - **NVIDIA GPU + CUDA drivers** (optional) -- for accelerated embeddings (`nvidia-smi` to verify). Install the `[cuda]` extra (`[gpu]` is a kept alias). CUDA-only: the extra is a no-op on macOS (it resolves to nothing), so Apple Silicon runs CPU embeddings — `pipx install "hafiz[cuda]"` is safe but installs the plain CPU path there.
 
   > **Verify it actually took.** `onnxruntime`, `onnxruntime-gpu` and
@@ -100,7 +106,72 @@ Config goes in `%APPDATA%\hafiz\hafiz.toml` (or `.\hafiz.toml` in the project). 
 
 ## Setup
 
-### 1. Start PostgreSQL with pgvector
+### 1. Nothing to install
+
+The default backend is a single SQLite file with the `sqlite-vec` extension,
+both shipped as ordinary dependencies. There is no server to start and no
+database to create. Skip to step 2 — or skip to `hafiz init`, which writes the
+config for you.
+
+It is also *faster* than Postgres for a solo install, not a compromise:
+neither backend has a vector index yet, so both scan linearly, and an
+in-process store skips the socket and driver overhead. Measured at 152,247
+vectors, k=10: **87.5 ms** (sqlite-vec) vs **150.3 ms** (pgvector).
+
+### 2. Create the config file
+
+**You can skip this step** — `hafiz init` writes a working config for you if
+none exists, at `~/.config/hafiz/hafiz.toml` (Linux/macOS) or
+`%APPDATA%\hafiz\hafiz.toml` (Windows). It never overwrites an existing one.
+
+Write it by hand only if you want different values up front:
+
+```toml
+[database]
+# Omit this key entirely to use the default: $XDG_DATA_HOME/hafiz/hafiz.db
+url = "sqlite:///~/.local/share/hafiz/hafiz.db"
+
+[embedding]
+model = "nomic-ai/nomic-embed-text-v1.5"
+provider = "fastembed"
+dimensions = 768
+
+[workspace]
+root = "/path/to/your/workspace"          # <-- change this
+projects = ["my-project"]                 # <-- change this
+ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+```
+
+Update `root` to your workspace directory and `projects` to your project names.
+
+### 3. Initialize the database
+
+```bash
+hafiz init
+```
+
+Creates the database file and all tables. On Postgres it also enables the pgvector extension.
+
+### 4. Verify the setup
+
+```bash
+hafiz status --diagnose
+```
+
+All checks should pass (database connection, vector extension, embeddings, config).
+
+For a deeper health check that also surfaces host capabilities (RAM, GPU, ONNX providers) and per-tunable defaults, run:
+
+```bash
+hafiz doctor --probe        # show recommended values for this machine
+hafiz doctor --apply        # persist them to the sticky tuning cache
+```
+
+### Using PostgreSQL (shared or multi-machine)
+
+The embedded store is one file on one machine. Postgres is the answer when
+several machines or several people share one brain, and it stays first-class —
+the CLI surface, `--json` shapes and agent contract are identical on both.
 
 ```bash
 docker run -d \
@@ -111,14 +182,13 @@ docker run -d \
   -p 5432:5432 \
   --restart unless-stopped \
   pgvector/pgvector:pg17
-```
 
-This starts a PostgreSQL 17 container with the pgvector extension pre-installed. Data persists in the container; add `-v hafiz-pgdata:/var/lib/postgresql/data` if you want a named volume.
+hafiz config set database.url postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz
+hafiz init
+```
 
 <details>
 <summary>Alternative: native PostgreSQL</summary>
-
-If you prefer a system install instead of Docker:
 
 ```bash
 # Ubuntu / Debian
@@ -136,53 +206,19 @@ psql -d hafiz -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 </details>
 
-### 2. Create the config file
-
-**You can skip this step** — `hafiz init` writes a working config for you if
-none exists, at `~/.config/hafiz/hafiz.toml` (Linux/macOS) or
-`%APPDATA%\hafiz\hafiz.toml` (Windows). It never overwrites an existing one.
-
-Write it by hand only if you want different values up front:
-
-```toml
-[database]
-url = "postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz"
-
-[embedding]
-model = "nomic-ai/nomic-embed-text-v1.5"
-provider = "fastembed"
-dimensions = 768
-
-[workspace]
-root = "/path/to/your/workspace"          # <-- change this
-projects = ["my-project"]                 # <-- change this
-ignore = [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
-```
-
-Update `root` to your workspace directory and `projects` to your project names. Adjust the database URL if you changed the credentials above.
-
-### 3. Initialize the database
+**Already have data? Move it, don't re-ingest.**
 
 ```bash
-hafiz init
+hafiz migrate-backend --to postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz --dry-run
+hafiz migrate-backend --to postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz
+hafiz config set database.url postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz
 ```
 
-Creates all tables, indexes, and enables the pgvector extension.
-
-### 4. Verify the setup
-
-```bash
-hafiz status --diagnose
-```
-
-All checks should pass (database connection, pgvector, embeddings, config).
-
-For a deeper health check that also surfaces host capabilities (RAM, GPU, ONNX providers) and per-tunable defaults, run:
-
-```bash
-hafiz doctor --probe        # show recommended values for this machine
-hafiz doctor --apply        # persist them to the sticky tuning cache
-```
+Re-ingesting rebuilds code and docs — git is their source. It cannot recover
+your **annotations**: decisions, learnings, warnings have no source to
+re-derive from. `migrate-backend` copies every table verbatim (retention and
+tombstone timestamps included), verifies the row counts, and round-trips a
+vector before reporting success. It works in both directions.
 
 ### 5. Index your first project
 
