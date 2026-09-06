@@ -48,6 +48,7 @@ EXPECTED_TOOLS = {
     "hafiz_session",
     "hafiz_reconcile",
     "hafiz_retrievals",
+    "hafiz_status",
 }
 
 #: Core functions that must never become reachable from MCP. An MCP client
@@ -325,3 +326,104 @@ def test_missing_extra_explains_itself():
     assert issubclass(MissingDependencyError, RuntimeError)
     message = MissingDependencyError.__doc__ or ""
     assert "extra" in message
+
+
+# ── Status (the 14th tool) ───────────────────────────────────────────────
+
+
+async def test_status_trims_only_the_uninformative_half(_engine_per_test):
+    """`verbose=False` must drop up-to-date projects and nothing else.
+
+    The trim exists to surface signal, not to save bytes — measured on a real
+    store where 8 of 11 projects were stale it saved only 12%. So the test
+    asserts the *semantics*: what survives is exactly what is actionable, and
+    the compliance-relevant fields are never among the casualties.
+    """
+    from hafiz.core.health import collect_status, is_stale
+
+    full = await collect_status(verbose=True)
+    trimmed = await collect_status(verbose=False)
+
+    # Same contract, minus nothing, plus one summary.
+    assert set(trimmed) - set(full) == {"staleness_summary"}
+    assert not set(full) - set(trimmed)
+
+    # Only genuinely stale projects survive, and all of them do.
+    assert set(trimmed["staleness"]) == {n for n, e in full["staleness"].items() if is_stale(e)}
+
+    summary = trimmed["staleness_summary"]
+    assert summary["projects_checked"] == len(full["staleness"])
+    assert summary["stale"] == len(trimmed["staleness"])
+    assert summary["trimmed"] == summary["projects_checked"] - summary["stale"]
+
+
+async def test_status_never_trims_the_retention_and_capture_signals(_engine_per_test):
+    """These two are why status is worth exposing at all.
+
+    `retention.overdue` is a stated guarantee that can quietly stop being
+    met; `capture` answers "is anything still arriving", whose silence let
+    transcript capture die unnoticed for two months. A payload-shrinking
+    change that dropped either would be a regression disguised as an
+    optimisation.
+    """
+    from hafiz.core.health import collect_status
+
+    trimmed = await collect_status(verbose=False)
+    assert set(trimmed["retention"]) == {"overdue", "communications", "retrievals"}
+    assert "capture" in trimmed
+
+
+async def test_an_empty_staleness_is_never_ambiguous(_engine_per_test):
+    """Trimmed output must distinguish "all fresh" from "never checked".
+
+    An empty `staleness` with nothing beside it reads as health whether or
+    not anything was examined — the exact shape of failure this repo has
+    already paid for once.
+    """
+    from hafiz.core.health import collect_status
+
+    trimmed = await collect_status(verbose=False)
+    assert "staleness_summary" in trimmed, (
+        "trimmed status omits the summary, so an empty staleness map cannot be "
+        "told apart from freshness never having been checked"
+    )
+
+
+async def test_status_is_reachable_as_a_tool(_engine_per_test):
+    payload = await call_tool("hafiz_status", {})
+    assert payload["staleness_summary"]["projects_checked"] >= 0
+    assert "files" in payload and "units" in payload
+
+    verbose = await call_tool("hafiz_status", {"verbose": True})
+    assert "staleness_summary" not in verbose
+
+
+def test_collect_status_does_not_touch_engine_lifecycle():
+    """A long-lived server must not have its pool disposed by a status call.
+
+    The code this was extracted from ended in ``finally: await
+    close_engine()``. Correct for a one-shot CLI process; for the MCP server
+    it would dispose the pool on every call. Asserted statically because the
+    failure is a *slow* one — the next call simply reconnects, so nothing
+    looks broken until connection churn shows up under load.
+
+    Parsed rather than grepped: the first version searched the source text
+    and failed on the module docstring, which explains the very rule it is
+    enforcing. A check that cannot tell code from prose about code has to be
+    silenced, and a silenced check protects nothing.
+    """
+    import ast as _ast
+    import inspect as _inspect
+
+    from hafiz.core import health
+
+    called = {
+        getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+        for node in _ast.walk(_ast.parse(_inspect.getsource(health)))
+        if isinstance(node, _ast.Call)
+    }
+    assert "close_engine" not in called, (
+        "hafiz.core.health calls close_engine; engine lifecycle belongs to "
+        "whichever caller owns the process, not to the shared data collector. "
+        "The MCP server would be disposing its own pool on every status call."
+    )

@@ -136,48 +136,6 @@ def run_init(*, output_json: bool = False) -> None:
     )
 
 
-def _embedding_device_summary() -> dict:
-    """Sync, DB-independent summary of the embedding-device selection."""
-    from hafiz.core import device_state as dstate
-
-    settings = get_settings()
-    sticky = dstate.load_state()
-    configured = settings.embedding.device
-
-    if configured in ("cpu", "gpu"):
-        source = "config"
-        effective = configured
-    elif sticky is not None:
-        source = "sticky"
-        effective = sticky.device
-    else:
-        source = "not-probed"
-        effective = "(not probed)"
-
-    return {
-        "configured": configured,
-        "source": source,
-        "effective": effective,
-        "sticky_probed_at": sticky.probed_at if sticky else None,
-        "sticky_reason_category": sticky.reason_category if sticky else None,
-    }
-
-
-async def _index_staleness(last_commit_per_project: dict[str | None, str]) -> dict:
-    """For each project, how far its indexed commit trails the repo's HEAD.
-
-    Fills the gap that let four repos drift 31-64 commits behind while hooks
-    were installed and firing: nothing ever compared the index to the repo.
-
-    Thin wrapper over :func:`hafiz.core.freshness.index_staleness`, which search
-    results share — the probe belongs in core, and two copies would drift. The
-    already-computed map is handed over rather than re-derived.
-    """
-    from hafiz.core.freshness import index_staleness
-
-    return await index_staleness(list(last_commit_per_project), last_commit=last_commit_per_project)
-
-
 def _staleness_note(entry: dict) -> tuple[str, str]:
     """(label, rich style) summarising one project's index freshness."""
     behind = entry.get("commits_behind")
@@ -193,148 +151,27 @@ def _staleness_note(entry: dict) -> tuple[str, str]:
 
 
 def run_status(*, output_json: bool = False) -> None:
-    """Show database statistics and index health."""
+    """Show database statistics and index health.
+
+    The numbers come from :func:`hafiz.core.health.collect_status`, shared
+    with the ``hafiz_status`` MCP tool so the two cannot report differently.
+    ``verbose=True`` because the CLI has always printed everything; the
+    trimmed form exists for callers paying per byte of context.
+
+    Engine disposal stays here rather than in core: this is a one-shot
+    process, whereas the other caller is a long-lived server that would be
+    closing the pool underneath itself.
+    """
 
     async def _status():
+        from hafiz.core.health import collect_status
+
         try:
-            from sqlalchemy import func, select
-
-            from hafiz.core.database import (
-                Annotation,
-                Commit,
-                Edge,
-                Embedding,
-                File,
-                Unit,
-                UnitRevision,
-            )
-
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                # ── Current-state counts (tombstoned / superseded excluded) ─
-                files_count = (
-                    await session.execute(
-                        select(func.count()).select_from(File).where(File.valid_until.is_(None))
-                    )
-                ).scalar() or 0
-                units_count = (
-                    await session.execute(
-                        select(func.count()).select_from(Unit).where(Unit.valid_until.is_(None))
-                    )
-                ).scalar() or 0
-                current_revisions_count = (
-                    await session.execute(
-                        select(func.count())
-                        .select_from(UnitRevision)
-                        .where(UnitRevision.superseded_at.is_(None))
-                    )
-                ).scalar() or 0
-                embeddings_count = (
-                    await session.execute(select(func.count()).select_from(Embedding))
-                ).scalar() or 0
-                edges_count = (
-                    await session.execute(
-                        select(func.count()).select_from(Edge).where(Edge.superseded_at.is_(None))
-                    )
-                ).scalar() or 0
-                annotations_count = (
-                    await session.execute(select(func.count()).select_from(Annotation))
-                ).scalar() or 0
-                commits_count = (
-                    await session.execute(select(func.count()).select_from(Commit))
-                ).scalar() or 0
-
-                # ── Historical totals (include tombstoned for context) ──
-                total_units = (
-                    await session.execute(select(func.count()).select_from(Unit))
-                ).scalar() or 0
-                total_revisions = (
-                    await session.execute(select(func.count()).select_from(UnitRevision))
-                ).scalar() or 0
-
-                # ── Breakdowns by project and kind (current only) ──
-                project_rows = (
-                    await session.execute(
-                        select(File.project, func.count())
-                        .where(File.valid_until.is_(None))
-                        .group_by(File.project)
-                        .order_by(func.count().desc())
-                    )
-                ).all()
-
-                kind_rows = (
-                    await session.execute(
-                        select(Unit.kind, func.count())
-                        .where(Unit.valid_until.is_(None))
-                        .group_by(Unit.kind)
-                        .order_by(func.count().desc())
-                    )
-                ).all()
-
-            # ── Most-recent commit per project, and how stale it is ──
-            # Ordered by commits.committed_at, NOT max(hash): hashes are hex,
-            # so a lexicographic max picks a commit at random and silently
-            # masked genuinely stale indexes across six repos for months.
-            from hafiz.core.store import last_indexed_commit_per_project
-
-            last_commit_per_project = await last_indexed_commit_per_project()
-            staleness = await _index_staleness(last_commit_per_project)
-
-            # Bounded retention is an outward-facing commitment; the sweep only
-            # runs on `import`, which stops firing exactly when it's needed. The
-            # count is what makes an unenforced policy visible.
-            from hafiz.core.communications import count_overdue_communications
-            from hafiz.core.telemetry import count_overdue_retrievals
-
-            overdue_comms = await count_overdue_communications()
-            overdue_retr = await count_overdue_retrievals()
-            overdue = overdue_comms + overdue_retr
-
-            # Retention overdue answers "is the sweep keeping up", which a
-            # store receiving nothing passes trivially. Capture freshness
-            # answers the question that actually went unasked for two
-            # months: "is anything still arriving?"
-            from hafiz.core.freshness import capture_freshness
-
-            capture = await capture_freshness()
-
-            stats = {
-                "files": files_count,
-                "units": units_count,
-                "revisions_current": current_revisions_count,
-                "revisions_total": total_revisions,
-                "units_total": total_units,
-                "units_tombstoned": total_units - units_count,
-                "embeddings": embeddings_count,
-                "edges": edges_count,
-                "annotations": annotations_count,
-                "commits": commits_count,
-                "by_project": {p or "(none)": c for p, c in project_rows},
-                "by_kind": {k or "(none)": c for k, c in kind_rows},
-                "last_commit_per_project": {
-                    p or "(none)": c for p, c in last_commit_per_project.items()
-                },
-                "staleness": staleness,
-                "retention": {
-                    "overdue": overdue,
-                    "communications": overdue_comms,
-                    "retrievals": overdue_retr,
-                },
-                "capture": capture,
-                # A project-less ingest can't update a project's rows — `files`
-                # is unique on (project, path) — so it writes a parallel
-                # untagged copy that search then returns alongside the real one.
-                # 1,956 such rows accumulated unnoticed on a real deployment
-                # because nothing counted them.
-                "untagged": {"files": dict(project_rows).get(None, 0)},
-            }
-            return stats
+            return await collect_status(verbose=True)
         finally:
             await close_engine()
 
-    device_info = _embedding_device_summary()
     stats = asyncio.run(_status())
-    stats["embedding_device"] = device_info
 
     if output_json:
         console.print_json(json.dumps(stats))

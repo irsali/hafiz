@@ -234,7 +234,7 @@ For agents that **cannot shell out** — Cursor chat, desktop and hosted clients
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `mcp` | Serve the knowledge layer over MCP on **stdio**. Normally launched by the client, not by hand. | Embed + DB | 13 tools, see below | — (speaks JSON-RPC on stdout) |
+| `mcp` | Serve the knowledge layer over MCP on **stdio**. Normally launched by the client, not by hand. | Embed + DB | 14 tools, see below | — (speaks JSON-RPC on stdout) |
 | `mcp --list` | Print the tool surface and exit. Exits **1** on registry drift. | — | `--json` → `{"ok","transport","count","drift","tools":[{"name","summary","writes","target","input_schema"}]}` | rich table |
 
 Client config:
@@ -245,7 +245,9 @@ Client config:
 
 Needs the optional extra — `pipx inject hafiz mcp`, or `pip install 'hafiz[mcp]'`. It is an extra because the SDK pulls 19 transitive packages (starlette, uvicorn, sse-starlette, a compiled `cryptography`) — an entire HTTP server stack this stdio-only transport never touches.
 
-**The 13 tools.** Read: `hafiz_context`, `hafiz_query`, `hafiz_recall_observations`, `hafiz_recall_session`, `hafiz_graph`, `hafiz_journal`, `hafiz_distill`, `hafiz_reconcile`, `hafiz_retrievals`. Write: `hafiz_observe`, `hafiz_note`, `hafiz_capture`, `hafiz_session`.
+**The 14 tools.** Read: `hafiz_context`, `hafiz_query`, `hafiz_recall_observations`, `hafiz_recall_session`, `hafiz_graph`, `hafiz_journal`, `hafiz_distill`, `hafiz_reconcile`, `hafiz_retrievals`, `hafiz_status`. Write: `hafiz_observe`, `hafiz_note`, `hafiz_capture`, `hafiz_session`.
+
+`hafiz_status` defaults to `verbose=false`, which reports the same fields as `hafiz status --json` but names only the projects actually behind their repo, plus a `staleness_summary` count of what was checked — so an empty staleness map cannot be misread as "never checked". `verbose=true` returns the full CLI payload. `retention` and `capture` are never trimmed: they are the "is retention being enforced" and "is anything still arriving" signals.
 
 Parity is of **capability**, not of command count: every flag on a covered command survives as a tool parameter, so `hafiz_query(observations=true, kind="decision")` covers `query --observations --type decision`. Schemas are generated from the same core function signatures the CLI calls, so the two surfaces cannot drift — a parameter added to a core function fails the build until it is described.
 

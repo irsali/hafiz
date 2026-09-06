@@ -306,9 +306,12 @@ def test_large_drift_is_styled_as_an_error_not_a_warning():
 
 
 async def test_untagged_files_are_excluded_from_per_repo_staleness(db):
-    from hafiz.commands.maintenance import _index_staleness
+    # Moved from `commands.maintenance._index_staleness` when the data half of
+    # `run_status` was extracted into core so the CLI and the `hafiz_status`
+    # MCP tool could share one implementation.
+    from hafiz.core.health import index_staleness_for
 
-    out = await _index_staleness({None: "a" * 40, "freshness-test-j": "b" * 40})
+    out = await index_staleness_for({None: "a" * 40, "freshness-test-j": "b" * 40})
     assert "(none)" not in out
     assert None not in out
     assert "freshness-test-j" in out

@@ -429,6 +429,23 @@ TOOLS: tuple[ToolSpec, ...] = (
         },
     ),
     ToolSpec(
+        name="hafiz_status",
+        summary=(
+            "Health of the store: how much is indexed, which projects have fallen behind "
+            "their repo, whether retention is being enforced, and whether transcripts are "
+            "still arriving. Check index freshness before trusting a code search."
+        ),
+        target="hafiz.core.health:collect_status",
+        params={
+            "verbose": (
+                "False (default) names only the projects actually behind their repo and "
+                "adds a 'staleness_summary' count. True also lists every up-to-date "
+                "project. Prefer False: the answer you want is which projects are stale, "
+                "not a roll-call of the healthy ones."
+            ),
+        },
+    ),
+    ToolSpec(
         name="hafiz_retrievals",
         summary=(
             "What the store was asked for and could NOT answer — a worklist of things "
