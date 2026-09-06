@@ -1,16 +1,24 @@
 """Write path for the structural-grounding schema.
 
-``index_file`` is the heart of the ingest pipeline:
+``index_file`` is the heart of the ingest pipeline, in three phases that
+are ordered read-then-embed-then-write on purpose:
 
     enumerate units (via a Parser)
-      upsert File row
-      for each ParsedUnit:
-          upsert Unit (keyed by identity_key)
-          hash-compare body against current revision
-          if changed: insert new revision + supersede old
-                      split body into embedding parts
-                      embed + insert embeddings
-      tombstone units seen in DB but not in this parse
+
+    1. read only:  hash-compare each body against its current revision
+                   to find what changed, and split those into parts
+    2. no DB:      embed every changed part, in one batched call
+    3. write:      upsert File row
+                   for each ParsedUnit:
+                       upsert Unit (keyed by identity_key)
+                       if changed: insert new revision + supersede old
+                                   insert its already-computed embeddings
+                   tombstone units seen in DB but not in this parse
+
+Embedding sits in phase 2, outside the write phase, because SQLite has a
+single database-wide write lock held from the first write until commit.
+Embedding inside phase 3 would hold that lock across ONNX inference and
+block every other writer — see ``tests/test_concurrency.py``.
 
 ``tombstone_vanished_files`` handles file-level deletions across a ingest
 pass: files present in DB under the project but not in the seen set get
@@ -168,6 +176,56 @@ async def _upsert_unit(
     return new_unit
 
 
+async def _current_hashes_for_file(
+    session: AsyncSession, *, project: str | None, path: str
+) -> dict[str, str]:
+    """``identity_key -> content_hash`` of each live revision of this file.
+
+    Read-only, and that is the entire point: it lets ``index_file`` work out
+    what needs re-embedding *before* it writes anything. See the phase
+    comments in ``index_file`` for why that ordering matters.
+
+    Scoped by ``file_id`` rather than by an ``IN`` over identity keys so the
+    statement carries two bind parameters instead of one per unit — a file
+    with more units than SQLite's variable limit would otherwise fail here,
+    and only for large files.
+    """
+    file_id = (
+        await session.execute(select(File.id).where(File.project == project, File.path == path))
+    ).scalar_one_or_none()
+    if file_id is None:
+        return {}
+    stmt = (
+        select(Unit.identity_key, UnitRevision.content_hash)
+        .join(UnitRevision, UnitRevision.unit_id == Unit.id)
+        .where(Unit.file_id == file_id, UnitRevision.superseded_at.is_(None))
+    )
+    return {key: content_hash for key, content_hash in (await session.execute(stmt)).all()}
+
+
+async def _embed_pending(
+    pending: dict[int, list[EmbeddingPart]], embed_fn: EmbedFn
+) -> dict[int, list[list[float]]]:
+    """Embed every pending revision's parts in one batched call.
+
+    Keyed by the parsed unit's *position* in the parse result rather than by
+    revision (it runs before the revisions exist) or by identity_key (which
+    is not unique within a file — see the comment at the callsite).
+    """
+    texts = [part.content for parts in pending.values() for part in parts]
+    if not texts:
+        return {}
+    vectors = await embed_fn(texts)
+    if len(vectors) != len(texts):
+        raise RuntimeError(f"Embedder returned {len(vectors)} vectors for {len(texts)} inputs")
+    out: dict[int, list[list[float]]] = {}
+    offset = 0
+    for key, parts in pending.items():
+        out[key] = vectors[offset : offset + len(parts)]
+        offset += len(parts)
+    return out
+
+
 def _source_tag(parser: Parser) -> str:
     """Map a Parser to its ``unit_revisions.source`` value.
 
@@ -215,7 +273,51 @@ async def index_file(
         parse_result = parser.parse(abs_path, content)
         now = datetime.now(UTC)
         source_tag = _source_tag(parser)
+        max_chars = resolve_tunable("embedding.max_part_chars")
 
+        # ── Phase 1: work out what changed, without writing ──────────────
+        #
+        # Phases 1 and 2 read but never write, and that ordering is
+        # load-bearing rather than stylistic. SQLite has one write lock for
+        # the whole database file, taken at the first write of a transaction
+        # and held until commit. Embedding is ONNX inference — CPU work of
+        # unbounded duration that needs no database at all — so embedding
+        # inside the write phase would hold that lock across it, and every
+        # other writer (a capture hook, an `observe`, the daemon) would wait
+        # on `busy_timeout` and then fail with "database is locked".
+        #
+        # Measured before this split, with a 2s embedder: a concurrent write
+        # blocked 2.05s. After it: 0.01s. Postgres never had the problem —
+        # MVCC — which is exactly why the ordering needs a comment rather
+        # than being obvious from the code. See tests/test_concurrency.py.
+        identity_keys = [
+            compute_identity_key(
+                project=project,
+                path=str(abs_path),
+                kind=parsed.kind,
+                name=parsed.name,
+                parent_name=parsed.parent_name,
+            )
+            for parsed in parse_result.units
+        ]
+        known_hashes = await _current_hashes_for_file(session, project=project, path=str(abs_path))
+        # Keyed by *position*, not by identity_key. Two parsed units in one
+        # file can legitimately share an identity — two same-named functions,
+        # or (very commonly) two identical markdown headings such as
+        # "## Notes". Keying by identity would collapse them and give the
+        # first revision the second one's embedding.
+        pending: dict[int, list[EmbeddingPart]] = {}
+        for idx, (identity_key, parsed) in enumerate(
+            zip(identity_keys, parse_result.units, strict=True)
+        ):
+            if known_hashes.get(identity_key) == compute_hash(parsed.content):
+                continue
+            pending[idx] = prepare_embedding_parts(parsed.content, max_chars=max_chars)
+
+        # ── Phase 2: embed, still holding no write lock ──────────────────
+        vectors_of = await _embed_pending(pending, embed_fn)
+
+        # ── Phase 3: write ───────────────────────────────────────────────
         file = await _upsert_file(
             session,
             project=project,
@@ -225,16 +327,12 @@ async def index_file(
         )
 
         seen_identity_keys: set[str] = set()
-        changed_revisions: list[tuple[UnitRevision, str]] = []
+        embeddings_written = 0
+        revisions_created = 0
 
-        for parsed in parse_result.units:
-            identity_key = compute_identity_key(
-                project=project,
-                path=str(abs_path),
-                kind=parsed.kind,
-                name=parsed.name,
-                parent_name=parsed.parent_name,
-            )
+        for idx, (identity_key, parsed) in enumerate(
+            zip(identity_keys, parse_result.units, strict=True)
+        ):
             seen_identity_keys.add(identity_key)
 
             unit = await _upsert_unit(
@@ -277,43 +375,34 @@ async def index_file(
                 current.superseded_by = new_rev.id
                 await session.flush()
 
-            changed_revisions.append((new_rev, parsed.content))
+            revisions_created += 1
 
-        # Batch-embed all changed revisions together. Group by revision
-        # so we can assign parts back. Part size comes from the Tunable
-        # registry so `hafiz config` / `hafiz doctor --apply` can adjust
-        # it per host without touching callsites.
-        max_chars = resolve_tunable("embedding.max_part_chars")
-        per_rev_parts: list[tuple[UnitRevision, list[EmbeddingPart]]] = []
-        for rev, rev_content in changed_revisions:
-            per_rev_parts.append((rev, prepare_embedding_parts(rev_content, max_chars=max_chars)))
+            parts = pending.get(idx)
+            vectors = vectors_of.get(idx)
+            if parts is None or vectors is None:
+                # The body moved between the phase-1 probe and here, which
+                # only happens when a second ingest of this same file
+                # interleaved. Correctness wins over the lock guarantee for
+                # this rare case: embed the straggler inline rather than
+                # storing a revision with no vector, which would make it
+                # permanently unsearchable.
+                parts = prepare_embedding_parts(parsed.content, max_chars=max_chars)
+                vectors = (await _embed_pending({idx: parts}, embed_fn))[idx]
 
-        all_part_texts: list[str] = [p.content for _, parts in per_rev_parts for p in parts]
-
-        embeddings_written = 0
-        if all_part_texts:
-            vectors = await embed_fn(all_part_texts)
-            if len(vectors) != len(all_part_texts):
-                raise RuntimeError(
-                    f"Embedder returned {len(vectors)} vectors for {len(all_part_texts)} inputs"
-                )
-            v_idx = 0
-            for rev, parts in per_rev_parts:
-                for part in parts:
-                    session.add(
-                        Embedding(
-                            id=uuid.uuid4(),
-                            unit_revision_id=rev.id,
-                            part_index=part.part_index,
-                            content=part.content,
-                            content_hash=compute_hash(part.content),
-                            embedding=vectors[v_idx],
-                            token_span_start=part.token_span_start,
-                            token_span_end=part.token_span_end,
-                        )
+            for part, vector in zip(parts, vectors, strict=True):
+                session.add(
+                    Embedding(
+                        id=uuid.uuid4(),
+                        unit_revision_id=new_rev.id,
+                        part_index=part.part_index,
+                        content=part.content,
+                        content_hash=compute_hash(part.content),
+                        embedding=vector,
+                        token_span_start=part.token_span_start,
+                        token_span_end=part.token_span_end,
                     )
-                    v_idx += 1
-                    embeddings_written += 1
+                )
+                embeddings_written += 1
 
         # Tombstone units of this file that weren't in the parse result.
         vanished_stmt = select(Unit).where(
@@ -348,7 +437,7 @@ async def index_file(
             file_id=file.id,
             parser_name=parser.name,
             units_seen=len(parse_result.units),
-            revisions_created=len(changed_revisions),
+            revisions_created=revisions_created,
             embeddings_written=embeddings_written,
             units_tombstoned=units_tombstoned,
             edges_written=edges_written,

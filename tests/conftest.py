@@ -110,6 +110,7 @@ _DB_DEPENDENT = [
     "test_annotation_tag_pin.py",
     "test_cli.py",
     "test_communications_schema.py",
+    "test_concurrency.py",
     "test_config.py",
     "test_exact_duplicates.py",
     "test_extract_v2.py",
@@ -427,6 +428,14 @@ _DB_SKIP_MARKERS = (
     "pgvector",
 )
 
+#: Skips that are *deliberately* backend-conditional rather than symptoms of an
+#: absent database. A test of SQLite's single write lock has nothing to assert
+#: under Postgres MVCC, and must be able to say so without tripping the guard
+#: below — which matches on reason text and would otherwise fire on the word
+#: "postgres". Exempted by prefix so the exemption is structural: a test opts in
+#: explicitly, rather than by wording its reason carefully enough to slip past.
+_DB_SKIP_EXEMPT_PREFIXES = ("backend-specific:",)
+
 _db_skips: list[str] = []
 
 
@@ -437,6 +446,9 @@ def pytest_runtest_logreport(report) -> None:
     reason = ""
     if isinstance(report.longrepr, tuple) and len(report.longrepr) == 3:
         reason = str(report.longrepr[2])
+    normalized = reason.lower().removeprefix("skipped: ").lstrip()
+    if normalized.startswith(_DB_SKIP_EXEMPT_PREFIXES):
+        return
     if any(marker in reason.lower() for marker in _DB_SKIP_MARKERS):
         _db_skips.append(f"{report.nodeid} — {reason}")
 

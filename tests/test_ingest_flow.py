@@ -267,3 +267,62 @@ async def test_file_unique_project_path_lets_distinct_projects_share_path():
         files = (await s.execute(select(File))).scalars().all()
         assert len(files) == 2
         assert {f.project for f in files} == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_every_embedding_belongs_to_its_own_revision_body():
+    """An embedding part must be a slice of the revision it hangs off.
+
+    Sounds tautological; is not. ``identity_key`` is a hash of
+    (project, path, kind, name, parent_name) and is therefore **not unique
+    within a file** — two same-named functions, or the far more common case
+    of two identical markdown headings like ``## Notes``, collide. Any
+    bookkeeping in ``index_file`` that keys per-unit work by identity_key
+    silently gives the first occurrence the second occurrence's data.
+
+    Caught exactly that while moving embedding out of the write transaction
+    (see tests/test_concurrency.py): the ``pending`` map was keyed by
+    identity_key, so the superseded revision was stored with the surviving
+    revision's vector. Nothing else in the suite noticed, because every
+    other fixture uses distinct unit names.
+    """
+    abs_path = Path("/tmp/dupe_headings.md")
+    body = "## Notes\n\nfirst body here\n\n## Notes\n\nsecond body here\n"
+    await index_file(abs_path, body, project="dupes", embed_fn=mock_embed)
+
+    factory = get_session_factory()
+    async with factory() as s:
+        revisions = (
+            (
+                await s.execute(
+                    select(UnitRevision)
+                    .join(Unit, Unit.id == UnitRevision.unit_id)
+                    .join(File, File.id == Unit.file_id)
+                    .where(File.project == "dupes")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert revisions, "the fixture produced no revisions"
+
+        # Two headings sharing an identity means one Unit and two revisions:
+        # the second supersedes the first. Both must carry their own text.
+        for rev in revisions:
+            parts = (
+                (
+                    await s.execute(
+                        select(Embedding)
+                        .where(Embedding.unit_revision_id == rev.id)
+                        .order_by(Embedding.part_index)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert parts, f"revision {rev.id} has no embedding"
+            joined = "".join(p.content for p in parts)
+            assert joined in rev.content or rev.content in joined, (
+                f"revision body {rev.content!r} does not match its embedded "
+                f"text {joined!r} — embedding bookkeeping crossed revisions"
+            )
