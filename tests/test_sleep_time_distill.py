@@ -225,8 +225,21 @@ def test_message_threshold_defaults_to_the_note_threshold():
 
 
 def _dense(n: int) -> dict[str, list[float]]:
-    """n turns that all cluster together, so one theme forms before splitting."""
-    return {f"m{i}": [1.0, 0.001 * i] for i in range(n)}
+    """n turns that cluster into one theme but are not near-identical.
+
+    Pairwise cosine ~0.85 — above the clustering bar, below the collapse bar.
+    The first version used `[1.0, 0.001 * i]`, which is ~1.0 in float32 and so
+    got folded onto a single representative once collapse existed, making these
+    split tests silently test the wrong thing.
+    """
+    off = 0.42
+    out = {}
+    for i in range(n):
+        v = [0.0] * (n + 1)
+        v[0] = 1.0
+        v[1 + i] = off
+        out[f"m{i}"] = v
+    return out
 
 
 def test_splitting_an_oversized_theme_loses_no_member():
@@ -535,3 +548,171 @@ def test_preview_truncates_with_an_ellipsis():
     out = _preview("x" * 500, 200)
     assert out.endswith("…")
     assert len(out) == 201
+
+
+# ── Phase 2d: near-identical repeats collapse ────────────────────────
+#
+# With themes anchored on user turns, the largest ones turned out to be
+# harness-injected skill preambles ("Base directory for this skill: ...") at
+# similarity 0.99-1.00 — role=user, but the harness said them, not the user.
+# 57 of 197 multi-member members. And because themes sort by size, twelve
+# copies of one string sorted *ahead* of a real topic.
+
+
+def _same(n: int, *, kind_user: bool = True) -> dict[str, list[float]]:
+    """n byte-identical vectors — the boilerplate case."""
+    return {f"m{i}": [1.0, 0.0] for i in range(n)}
+
+
+def _spread(ids: list[str], pairwise: float = 0.85) -> dict[str, list[float]]:
+    """Vectors mutually `pairwise` apart: one topic, distinctly different texts.
+
+    Not `_at(c)`: two vectors each at cosine 0.85-0.90 from `[1, 0]` sit at
+    ~0.99 from *each other*, so they would collapse. The pairwise value is what
+    the threshold sees, and a shared base plus one distinct offset each makes
+    it exact — cosine is `1 / (1 + off**2)`, so `off = sqrt(1/p - 1)`.
+    """
+    off = (1.0 / pairwise - 1.0) ** 0.5
+    out = {}
+    for n, i in enumerate(ids):
+        v = [0.0] * (len(ids) + 1)
+        v[0] = 1.0
+        v[1 + n] = off
+        out[i] = v
+    return out
+
+
+def test_repeats_collapse_onto_one_representative():
+    themes = cluster_candidates(
+        [],
+        [_msg(f"m{i}", days=i) for i in range(12)],
+        _same(12),
+        threshold=0.65,
+        collapse_threshold=0.98,
+    )
+    assert len(themes) == 1
+    assert themes[0].size == 1, "twelve copies are one distinct capture"
+    assert themes[0].total_size == 12, "and the theme still accounts for all twelve"
+
+
+def test_a_collapsed_repeat_is_still_cited():
+    """The safety property, and the reason this is a collapse and not a drop.
+
+    Citing is what drains a capture. A repeat hidden from the reader *and*
+    from the scaffold would sit in the backlog forever — the same trap that
+    made the size cap a split rather than a truncation.
+    """
+    msgs = [_msg(f"m{i}", days=i) for i in range(12)]
+    theme = cluster_candidates([], msgs, _same(12), threshold=0.65, collapse_threshold=0.98)[0]
+
+    cmd = _theme_scaffold(theme)
+    for m in msgs:
+        assert m.id in cmd, f"{m.id} was collapsed out of its own scaffold"
+    assert sorted(theme.cited_ids) == sorted(m.id for m in msgs)
+
+
+def test_the_oldest_repeat_becomes_the_representative():
+    """A theme reads oldest-first, so the first occurrence is what to show."""
+    theme = cluster_candidates(
+        [],
+        [_msg(f"m{i}", days=i) for i in range(5)],
+        _same(5),
+        threshold=0.65,
+        collapse_threshold=0.98,
+    )[0]
+    assert theme.members[0].id == "m0"
+
+
+def test_collapsing_stops_boilerplate_outranking_a_real_theme():
+    """The ordering consequence, which is the point.
+
+    Themes sort by size. Ten copies of one preamble outranked a genuine
+    three-capture topic until size stopped counting repeats.
+    """
+    # Boilerplate sits on the first axis; the real topic on later ones, so
+    # the two groups do not cluster with each other. The three real captures
+    # are ~0.85 pairwise — one topic, three distinct texts.
+    vectors = {f"m{i}": [1.0, 0.0, 0.0, 0.0, 0.0] for i in range(10)}
+    for n, rid in enumerate(("real1", "real2", "real3")):
+        v = [0.0, 0.0, 0.0, 0.0, 0.0]
+        v[1] = 1.0
+        v[2 + n] = 0.42
+        vectors[rid] = v
+    msgs = [_msg(f"m{i}", days=i) for i in range(10)] + [
+        _msg("real1", days=20),
+        _msg("real2", days=21),
+        _msg("real3", days=22),
+    ]
+    themes = cluster_candidates(
+        [], msgs, vectors, threshold=0.65, message_threshold=0.78, collapse_threshold=0.98
+    )
+    assert themes[0].size == 3, (
+        f"the real 3-capture theme must sort first, got sizes {[t.size for t in themes]}"
+    )
+
+
+def test_notes_are_exempt_from_collapsing():
+    """A note is deliberate, `hafiz note` already refuses byte-identical
+    repeats, and a genuinely repeated note is a signal rather than noise —
+    the same reasoning that exempts notes from the unembedded-turn rule."""
+    notes = [_note(f"n{i}") for i in range(9)]
+    theme = cluster_candidates(
+        notes,
+        [],
+        {f"n{i}": [1.0, 0.0] for i in range(9)},
+        threshold=0.65,
+        collapse_threshold=0.98,
+    )[0]
+    assert theme.size == 9
+    assert theme.duplicates == []
+
+
+def test_collapse_defaults_to_off_so_existing_behaviour_is_unchanged():
+    """Omitting the threshold must leave every existing caller's meaning."""
+    themes = cluster_candidates(
+        [], [_msg(f"m{i}", days=i) for i in range(6)], _same(6), threshold=0.65
+    )
+    assert themes[0].size == 6
+    assert themes[0].duplicates == []
+
+
+def test_distinct_captures_are_never_collapsed():
+    """The bar is "same text", not "same topic" — well above dedup's 0.88."""
+    # `_spread`, not `_at`: two vectors each 0.85-0.90 from `[1, 0]` sit at
+    # ~0.99 from *each other* and would rightly collapse. The pairwise value
+    # is what the threshold sees.
+    vectors = _spread(["m0", "m1", "m2"])
+    theme = cluster_candidates(
+        [],
+        [_msg(f"m{i}", days=i) for i in range(3)],
+        vectors,
+        threshold=0.65,
+        message_threshold=0.78,
+        collapse_threshold=0.98,
+    )[0]
+    assert theme.size == 3, "~0.85 pairwise is the same topic, not the same text"
+    assert theme.duplicates == []
+
+
+def test_the_shipped_collapse_threshold_folds_real_boilerplate():
+    """Guards the default. 0.99-1.00 is what the harness preambles measured."""
+    from hafiz.core.config import DistillSettings
+
+    cfg = DistillSettings()
+    ids = [f"m{i}" for i in range(8)]
+    # 0.99 pairwise, not 1.0. The real harness preambles measured 0.99-1.00,
+    # and byte-identical vectors would collapse at *any* threshold up to 1.0 —
+    # so a fixture built from them cannot detect the default being loosened to
+    # 1.0. Verified by mutation: with `_same(8)` this test passed at 1.0.
+    themes = cluster_candidates(
+        [],
+        [_msg(i, days=n) for n, i in enumerate(ids)],
+        _spread(ids, pairwise=0.99),
+        threshold=cfg.cluster_threshold,
+        message_threshold=cfg.cluster_threshold_messages,
+        collapse_threshold=cfg.collapse_threshold,
+    )
+    assert themes[0].size == 1, (
+        f"the shipped collapse_threshold {cfg.collapse_threshold} left "
+        f"{themes[0].size} near-identical copies as distinct captures"
+    )

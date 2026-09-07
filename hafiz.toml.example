@@ -128,6 +128,17 @@ theme_corpus_limit = 400
 # 80-uuid command is long enough that nobody runs it. 0 disables splitting.
 # Env override: HAFIZ_DISTILL__MAX_THEME_SIZE=20
 max_theme_size = 12
+# Cosine at/above which two *message* members of one theme count as the same
+# text and fold onto one representative. Repeats are still cited by the
+# scaffold — citing is what drains — they just stop inflating the theme, which
+# matters because themes sort by size and twelve copies of one string sorted
+# ahead of a real topic. Well above [dedup] threshold (0.88) on purpose: that
+# asks "the same claim restated?", this asks the narrower "the same text?".
+# The case that prompted it: harness-injected skill preambles ("Base directory
+# for this skill: ...") at 0.99-1.00, 57 of 197 multi-member theme members.
+# Notes are exempt — a note is deliberate and a repeated one is a signal.
+# Env override: HAFIZ_DISTILL__COLLAPSE_THRESHOLD=0.995
+collapse_threshold = 0.98
 # `--brief` gate. It prints NOTHING unless the backlog has at least this many
 # pending captures OR one that has waited this long — either condition fires
 # it. `--brief` is built for a session-start hook, so silence must be the

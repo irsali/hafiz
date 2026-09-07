@@ -314,6 +314,20 @@ class DistillSettings(BaseModel):
     # 0 disables splitting.
     max_theme_size: int = 12
 
+    # Cosine at/above which two *message* members of one theme count as the
+    # same text and fold onto one representative. Repeats are still cited by
+    # the scaffold — citing is what drains — they just stop inflating the
+    # theme, which matters because themes sort by size and twelve copies of
+    # one string sorted ahead of a real topic.
+    #
+    # Well above [dedup] threshold (0.88) on purpose: dedup asks "is this the
+    # same claim restated?", this asks the narrower "is this the same text?".
+    # The case that prompted it is harness-injected skill preambles ("Base
+    # directory for this skill: ...") at 0.99-1.00, measured at 57 of 197
+    # multi-member theme members. Notes are exempt: a note is deliberate and a
+    # repeated one is a signal. 1.0 effectively disables it.
+    collapse_threshold: float = 0.98
+
     # ``--brief`` gates. The backlog only earns an interruption when it is
     # either big enough or old enough; either condition fires it. Below both,
     # ``--brief`` prints nothing at all, so a session hook can pipe it

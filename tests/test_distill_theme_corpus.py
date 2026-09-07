@@ -70,13 +70,25 @@ async def db():
     await close_engine()
 
 
-def _vec(seed: float) -> list[float]:
-    """A unit-ish vector that clusters with its neighbours.
+# Pairwise cosine for the vectors below: 1 / (1 + _OFF**2) with _OFF = 0.42,
+# i.e. ~0.85. Deliberately between the message clustering bar (0.78) and the
+# near-identical collapse bar (0.98), so these rows cluster into one theme
+# without being folded onto a representative. An earlier version of this
+# fixture handed every row the *same* vector, which made the tests
+# accidentally exercise collapse once it existed.
+_OFF = 0.42
 
-    All seeds sit close together on purpose: the point of these tests is
-    *which rows reach the clusterer*, not how well it separates them.
+
+def _vec(i: int) -> list[float]:
+    """A vector that clusters with its siblings but is distinct from them.
+
+    The point of these tests is *which rows reach the clusterer*, not how well
+    it separates them — but "identical" is its own case now, so distinct it is.
     """
-    return [seed] + [0.01] * (DIM - 1)
+    v = [0.0] * DIM
+    v[0] = 1.0
+    v[1 + (int(i) % (DIM - 1))] = _OFF
+    return v
 
 
 async def _seed_roles(*, user: int, assistant: int) -> str:
@@ -110,7 +122,7 @@ async def _seed_roles(*, user: int, assistant: int) -> str:
                     role="user",
                     content=f"a user turn asking about retention policy {i}",
                     ts=now - timedelta(minutes=90 - i),
-                    embedding=_vec(0.5),
+                    embedding=_vec(i),
                 )
             )
             seq += 1
@@ -123,7 +135,7 @@ async def _seed_roles(*, user: int, assistant: int) -> str:
                     role="assistant",
                     content=f"Done. Committed. {i} passed, 0 skipped.",
                     ts=now - timedelta(minutes=10 - (i % 10)),
-                    embedding=_vec(0.5),
+                    embedding=_vec(100 + i),
                 )
             )
             seq += 1
@@ -170,7 +182,7 @@ async def _seed(
                     role="user",
                     content=f"an embedded turn about retention policy number {i}",
                     ts=now - timedelta(minutes=60 - i),
-                    embedding=_vec(0.5),
+                    embedding=_vec(i),
                 )
             )
             seq += 1
@@ -198,7 +210,7 @@ async def _seed(
                     content="ship it",
                     ts=now - timedelta(minutes=5),
                     marked_salient=True,
-                    embedding=_vec(0.5),
+                    embedding=_vec(500),
                 )
             )
         await s.commit()

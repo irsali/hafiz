@@ -160,8 +160,12 @@ def _theme_scaffold(theme: Theme) -> str:
     Every member is cited, not just the first five: citing a capture is what
     marks it distilled, so a truncated scaffold would leave the uncited
     members in the queue forever and make the backlog look stuck.
+
+    ``cited_ids`` rather than ``members``, so collapsed near-identical repeats
+    are cited as well. They are hidden from the reader, not from the drain —
+    hiding them from both is how a capture strands.
     """
-    ids = ",".join(m.id for m in theme.members)
+    ids = ",".join(theme.cited_ids)
     return f"hafiz observe '<distilled text>' --type decision --derived-from {ids}"
 
 

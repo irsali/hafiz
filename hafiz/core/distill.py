@@ -46,6 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 from sqlalchemy import func, or_, select
 
 from hafiz.core.database import (
@@ -109,10 +110,33 @@ class Theme:
 
     members: list[ThemeMember]
     score: float  # best pairwise similarity inside the theme; 1.0 alone
+    # Near-identical repeats of a member, held aside so they still get cited
+    # but stop inflating the theme. A 12-member theme at similarity 1.00 is
+    # not 12 pieces of evidence, it is the same text 12 times — and because
+    # themes sort by size, that boilerplate sorted *first*. Messages only:
+    # notes are deliberate captures and a repeated one is a signal.
+    duplicates: list[ThemeMember] = field(default_factory=list)
 
     @property
     def size(self) -> int:
+        """Distinct captures — what the theme is actually worth reading."""
         return len(self.members)
+
+    @property
+    def total_size(self) -> int:
+        """Every capture the theme's scaffold cites, repeats included."""
+        return len(self.members) + len(self.duplicates)
+
+    @property
+    def cited_ids(self) -> list[str]:
+        """Everything the scaffold must cite.
+
+        Repeats are included deliberately. Citing is what drains a capture
+        from the queue, so a collapsed repeat that went uncited would sit in
+        the backlog forever — the same trap that makes the size cap a split
+        rather than a truncation.
+        """
+        return [m.id for m in self.members] + [m.id for m in self.duplicates]
 
     @property
     def newest(self) -> datetime:
@@ -138,6 +162,10 @@ class Backlog:
     # grouping set to begin with. Kept because it is the honest measure of
     # how much of the handed-over text is unclusterable.
     skipped_unembedded: int
+    # Near-identical repeats folded onto a representative. Counted rather than
+    # silently dropped: they are still cited and still drain, but a reader
+    # deserves to know a theme of 1 stood for 12 copies.
+    collapsed: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -147,6 +175,7 @@ class Backlog:
             "themes": self.themes,
             "clustered": self.clustered,
             "skipped_unembedded": self.skipped_unembedded,
+            "collapsed": self.collapsed,
         }
 
 
@@ -312,6 +341,7 @@ async def find_distill_candidates(
         threshold=thr,
         message_threshold=msg_thr,
         max_size=cfg.max_theme_size,
+        collapse_threshold=cfg.collapse_threshold,
     )
     # Pending is derived from the themes, not from the raw candidate lists, so
     # "56 pending in 40 themes" can't disagree with itself and the ``--brief``
@@ -341,6 +371,7 @@ async def find_distill_candidates(
             themes=len(themes),
             clustered=sum(t.size for t in themes if t.size > 1),
             skipped_unembedded=sum(1 for m in messages if m.id not in vectors),
+            collapsed=sum(len(t.duplicates) for t in themes),
         ),
     )
 
@@ -374,6 +405,59 @@ def _promoted_exists():
     )
 
 
+def _collapse_repeats(
+    idxs: list[int],
+    embedded: list[ThemeMember],
+    sim,
+    threshold: float,
+) -> tuple[list[int], dict[int, list[int]]]:
+    """Fold near-identical **message** members onto one representative each.
+
+    Returns ``(representatives, {representative: [repeats]})``. Every index in
+    ``idxs`` appears exactly once across the two, because a repeat that went
+    missing would never be cited and so would never drain.
+
+    Why this exists: with themes anchored on the user's turns, the largest ones
+    turned out to be harness-injected skill preambles — "Base directory for
+    this skill: .../skills/commit" — at similarity 0.99–1.00, measured at 57 of
+    197 multi-member members. They carry ``role="user"`` but the harness
+    injected them. And because themes sort by size, twelve copies of one string
+    sorted *ahead* of a real topic.
+
+    **Notes are exempt.** A note is a deliberate capture, ``hafiz note``
+    already refuses a byte-identical repeat, and a genuinely repeated note is a
+    signal rather than noise — the same reasoning that exempts notes from the
+    unembedded-turn rule.
+
+    Near-identity is not a new similarity notion, just a much higher bar than
+    theme membership: single-linkage again, at ``collapse_threshold``. That
+    sits well above ``dedup.threshold`` (0.88, "is this the same claim
+    restated?") because the question here is narrower — "is this the same
+    text?".
+    """
+    from hafiz.core.annotations import _single_linkage
+
+    msg_positions = [n for n, i in enumerate(idxs) if embedded[i].kind == "message"]
+    if len(msg_positions) < 2:
+        return list(idxs), {}
+
+    note_idxs = [i for i in idxs if embedded[i].kind != "message"]
+    msg_idxs = [idxs[n] for n in msg_positions]
+
+    sub = sim[np.ix_(msg_idxs, msg_idxs)]
+    reps: list[int] = []
+    dupes_of: dict[int, list[int]] = {}
+    for group in _single_linkage(sub, threshold):
+        # Oldest wins the representative slot: a theme reads oldest-first, so
+        # the first occurrence is the one a reader wants to see.
+        members = sorted((msg_idxs[g] for g in group), key=lambda i: embedded[i].ts)
+        reps.append(members[0])
+        if len(members) > 1:
+            dupes_of[members[0]] = members[1:]
+
+    return note_idxs + reps, dupes_of
+
+
 def cluster_candidates(
     notes: list[NoteCandidate],
     messages: list[MessageCandidate],
@@ -382,6 +466,7 @@ def cluster_candidates(
     threshold: float,
     message_threshold: float | None = None,
     max_size: int | None = None,
+    collapse_threshold: float | None = None,
 ) -> list[Theme]:
     """Group candidates into themes by embedding similarity.
 
@@ -443,12 +528,15 @@ def cluster_candidates(
         return []
 
     max_size = max_size if max_size is not None else 0
+    # None means off, not "1.0". Those differ: at 1.0 exactly-identical
+    # vectors still fold, so a caller that passed nothing would silently get
+    # collapsing. Off has to mean off for every existing caller to keep its
+    # meaning.
+    collapse_at = collapse_threshold
     embedded = [m for m in members if m.id in vectors]
     themes = [Theme(members=[m], score=1.0) for m in members if m.id not in vectors]
 
     if embedded:
-        import numpy as np
-
         msg_threshold = threshold if message_threshold is None else message_threshold
         sim = _similarity_matrix([vectors[m.id] for m in embedded])
 
@@ -490,7 +578,16 @@ def cluster_candidates(
             # than the merge was. Sorting by ts first makes each part
             # temporally coherent, which matches how a theme is meant to read —
             # oldest first, following how the thought developed.
-            ordered = sorted(idxs, key=lambda i: embedded[i].ts)
+            # Collapse near-identical repeats first, so the size cap below
+            # spends its budget on distinct captures rather than on copies.
+            # Near-identity is just clustering at a very high threshold, so
+            # the same primitive does it — no second similarity notion.
+            if collapse_at is None:
+                reps, dupes_of = list(idxs), {}
+            else:
+                reps, dupes_of = _collapse_repeats(idxs, embedded, sim, collapse_at)
+
+            ordered = sorted(reps, key=lambda i: embedded[i].ts)
             step = max_size if max_size and max_size > 0 else len(ordered)
             for start in range(0, len(ordered), step):
                 part = ordered[start : start + step]
@@ -498,7 +595,13 @@ def cluster_candidates(
                     # Each part is rescored against its own members rather than
                     # inheriting the parent's, so a part's similarity describes
                     # the part.
-                    Theme(members=[embedded[i] for i in part], score=_best(part))
+                    Theme(
+                        members=[embedded[i] for i in part],
+                        score=_best(part),
+                        # A repeat travels with the representative it repeats,
+                        # so it lands in the same part and stays cited.
+                        duplicates=[embedded[j] for i in part for j in dupes_of.get(i, ())],
+                    )
                 )
 
     themes.sort(key=lambda t: (t.size, t.newest), reverse=True)
