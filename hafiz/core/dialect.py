@@ -28,9 +28,14 @@ Three kinds of thing live here:
 
 **The failure mode this module exists to prevent is silent divergence.**
 A backend that raises is debuggable; a backend that quietly returns
-differently-ordered results is not. So every SQLite branch that is not
-yet implemented raises ``UnsupportedOnBackendError`` naming the phase that
-owns it, and none of them fall back to "close enough".
+differently-ordered results is not. So any dialect branch without an
+implementation raises ``UnsupportedOnBackendError`` with a workaround and a
+place to report it, and none of them fall back to "close enough".
+
+Both target backends are fully implemented now, so that error is reachable
+only on a third dialect. It used to name the work-item phase that owed the
+implementation, which stopped being useful once the phases closed — and
+pointed users at a file the repo does not ship.
 """
 
 from __future__ import annotations
@@ -67,12 +72,14 @@ class UnsupportedOnBackendError(NotImplementedError):
     """
 
 
-def _unsupported(construct: str, dialect: str, phase: str) -> UnsupportedOnBackendError:
+def _unsupported(construct: str, dialect: str) -> UnsupportedOnBackendError:
     return UnsupportedOnBackendError(
-        f"{construct} is not implemented for the '{dialect}' backend yet "
-        f"({phase} owns it — see workitems/done/embedded-backend.md). "
+        f"{construct} is not implemented for the '{dialect}' backend yet. "
         "Refusing to emit approximate SQL: a wrong ranking is harder to "
-        "detect than a hard failure."
+        "detect than a hard failure. Workaround: point [database] url at "
+        "Postgres, or migrate with `hafiz migrate-backend --to <url>`. "
+        "Please report it — reaching this on a released version is a gap: "
+        "https://github.com/irsali/hafiz/issues"
     )
 
 
@@ -311,7 +318,7 @@ def _cosine_distance_sqlite(element: _CosineDistance, compiler: Any, **kw: Any) 
 
 @compiles(_CosineDistance)
 def _cosine_distance_default(element: _CosineDistance, compiler: Any, **kw: Any) -> str:
-    raise _unsupported("cosine_distance", compiler.dialect.name, "no phase")
+    raise _unsupported("cosine_distance", compiler.dialect.name)
 
 
 def cosine_distance(column: Any, vector: Any) -> ColumnElement:
@@ -367,7 +374,7 @@ def _tags_overlap_sqlite(element: _TagsOverlap, compiler: Any, **kw: Any) -> str
 
 @compiles(_TagsOverlap)
 def _tags_overlap_default(element: _TagsOverlap, compiler: Any, **kw: Any) -> str:
-    raise _unsupported("tags_overlap", compiler.dialect.name, "no phase")
+    raise _unsupported("tags_overlap", compiler.dialect.name)
 
 
 def tags_overlap(column: Any, tags: list[str]) -> ColumnElement:
@@ -442,7 +449,7 @@ def unnest_ids(column: Any, entity: Any, backend: str) -> Any:
         # every execution. Nineteen spurious warnings per run is how a suite
         # teaches people to stop reading warnings.
         return select(each.c.value.label("id")).select_from(entity).join(each, true()).subquery()
-    raise _unsupported("unnest_ids", backend, "no phase")
+    raise _unsupported("unnest_ids", backend)
 
 
 # ---------------------------------------------------------------------------
@@ -691,7 +698,7 @@ def clustered_annotations_sql(backend: str) -> str:
     try:
         return _CLUSTERED_SQL[backend]
     except KeyError:
-        raise _unsupported("clustered_annotations", backend, "no phase") from None
+        raise _unsupported("clustered_annotations", backend) from None
 
 
 #: "Which tables exist?" — a catalogue query, and every engine keeps its
@@ -707,7 +714,7 @@ def table_list_sql(backend: str) -> str:
     try:
         return _TABLE_LIST_SQL[backend]
     except KeyError:
-        raise _unsupported("table_list", backend, "no phase") from None
+        raise _unsupported("table_list", backend) from None
 
 
 def most_recalled_sql(backend: str) -> str:
@@ -715,4 +722,4 @@ def most_recalled_sql(backend: str) -> str:
     try:
         return _MOST_RECALLED_SQL[backend]
     except KeyError:
-        raise _unsupported("most_recalled", backend, "no phase") from None
+        raise _unsupported("most_recalled", backend) from None

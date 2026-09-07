@@ -671,8 +671,11 @@ class _RemovedInV5:
     def __init__(self, *args, **kwargs):
         raise RuntimeError(
             f"{type(self)._name} was removed in migration 0005 "
-            "(structural-grounding). Callers are rewired in Phase 3; "
-            "see workitems/done/structural-grounding.md."
+            "(structural-grounding) and replaced by units / unit_revisions / "
+            "edges — see docs/architecture.md, 'Data Model (the seven tables)'. "
+            "If you reached this from a hafiz command rather than your own "
+            "code, it is a bug worth reporting: "
+            "https://github.com/irsali/hafiz/issues"
         )
 
 
