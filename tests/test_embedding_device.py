@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -427,17 +428,33 @@ class TestModelCachePurge:
     MODEL = "nomic-ai/nomic-embed-text-v1.5"
     DIRNAME = "models--nomic-ai--nomic-embed-text-v1.5"
 
+    @staticmethod
+    def _abandon(model_dir):
+        """Backdate the tree so the repair path reads it as abandoned.
+
+        Purging is now conditional on liveness — a partial cache written moments
+        ago belongs to a download in flight, and deleting it was a real bug (see
+        tests/test_model_download_notice.py). These two cases are about *shape*,
+        so they state the age explicitly rather than depending on wall-clock.
+        """
+        when = time.time() - 3600
+        for path in sorted(model_dir.rglob("*"), reverse=True):
+            os.utime(path, (when, when))
+        os.utime(model_dir, (when, when))
+
     def test_incomplete_blob_is_purged(self, tmp_path):
         model_dir = tmp_path / self.DIRNAME
         (model_dir / "blobs").mkdir(parents=True)
         (model_dir / "snapshots" / "abc" / "onnx").mkdir(parents=True)
         (model_dir / "blobs" / "x.incomplete").write_text("")
+        self._abandon(model_dir)
         assert embeddings._purge_if_incomplete(tmp_path, self.MODEL) is True
         assert not model_dir.exists()
 
     def test_missing_onnx_is_purged(self, tmp_path):
         model_dir = tmp_path / self.DIRNAME
         (model_dir / "snapshots" / "abc" / "onnx").mkdir(parents=True)
+        self._abandon(model_dir)
         assert embeddings._purge_if_incomplete(tmp_path, self.MODEL) is True
         assert not model_dir.exists()
 

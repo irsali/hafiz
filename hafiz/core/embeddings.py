@@ -22,6 +22,7 @@ import math
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from fastembed import TextEmbedding
@@ -109,11 +110,46 @@ def model_is_cached(cache_dir: Path, model_name: str) -> bool:
     )
 
 
+#: How long a partial cache must sit untouched before the repair path treats it
+#: as abandoned rather than in flight. An active download advances mtimes
+#: continuously, so this only has to exceed the gap *between writes* — not the
+#: total download time, which on a slow link can be far longer. Biased long
+#: because it delays only *automatic* repair: `hafiz embedding retry` and
+#: deleting the cache dir stay instant, and both are named in the load error.
+_STALE_DOWNLOAD_SECONDS = 300
+
+
+def _seconds_since_touched(model_dir: Path) -> float:
+    """Age of the most recently modified thing anywhere in the tree.
+
+    Reads the whole tree rather than just the ``*.incomplete`` blob so the
+    narrow window where a process has created the snapshot dirs but not yet
+    started writing the big blob also counts as activity.
+    """
+    newest = model_dir.stat().st_mtime
+    for path in model_dir.rglob("*"):
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue  # vanished mid-walk; other files will show the activity
+    return time.time() - newest
+
+
 def _purge_if_incomplete(cache_dir: Path, model_name: str) -> bool:
-    """Delete a half-downloaded model cache so fastembed re-downloads cleanly.
+    """Delete an *abandoned* half-downloaded model cache so it re-downloads cleanly.
 
     Without this, fastembed tries to load a file that isn't there and dies on
     every call instead of resuming. Returns True if anything was purged.
+
+    **Only purges a tree nobody is touching.** From the directory shape alone,
+    a download in progress is indistinguishable from one that was interrupted:
+    both show a ``blobs/*.incomplete`` and no resolvable ``onnx/model.onnx``.
+    huggingface_hub serializes its own downloads under a lock in
+    ``<cache>/.locks``, but this runs outside that lock — so an unconditional
+    ``rmtree`` deletes the tree another process is actively writing into, and
+    corrupts the very cache this function exists to repair. Liveness is judged
+    by mtime (see :data:`_STALE_DOWNLOAD_SECONDS`); a fresh partial is left
+    alone and fastembed then blocks on the hub's lock, which is correct.
     """
     model_dir = _model_dir(cache_dir, model_name)
     if not model_dir.is_dir():
@@ -121,10 +157,21 @@ def _purge_if_incomplete(cache_dir: Path, model_name: str) -> bool:
     if model_is_cached(cache_dir, model_name):
         return False
 
+    idle = _seconds_since_touched(model_dir)
+    if idle < _STALE_DOWNLOAD_SECONDS:
+        logger.info(
+            "Model cache at %s is partial but was touched %.0fs ago; "
+            "another process is likely downloading it. Leaving it alone.",
+            model_dir,
+            idle,
+        )
+        return False
+
     shutil.rmtree(model_dir, ignore_errors=True)
     logger.warning(
-        "Purged incomplete embedding-model cache at %s; re-downloading.",
+        "Purged abandoned embedding-model cache at %s (idle %.0fs); re-downloading.",
         model_dir,
+        idle,
     )
     return True
 

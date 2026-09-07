@@ -79,13 +79,16 @@ async def _spawn_daemon() -> None:
     """
     import subprocess
 
-    # The daemon is spawned with stderr=DEVNULL, and it warms the embedding
-    # model *before* binding its socket. So on a cold cache the download runs
-    # inside a process whose output goes nowhere, and the user gets exactly the
-    # unexplained multi-minute stall the notice exists to prevent — on the path
-    # the client prefers. Announce here, where there is still a real terminal.
-    # (The notice is once-per-process, so the direct-exec fallback below won't
-    # repeat it.)
+    # On a cold cache, don't delegate the download to the daemon at all.
+    #
+    # The daemon is spawned with stderr=DEVNULL and warms the embedding model
+    # *before* binding its socket, so a first-run download would run where
+    # nobody can see it — no notice, no progress bars — while the client sits
+    # in a readiness poll looking hung. And the poll's budget is shorter than
+    # a cold download, so it would expire, the caller would fall back to
+    # direct execution, and two processes would fetch the same model into one
+    # cache. Let the foreground process do it, visibly and alone; the daemon
+    # spawns on a later call, once the cache is warm.
     from hafiz.core.config import get_settings
     from hafiz.core.embeddings import _model_cache_dir, announce_download, model_is_cached
 
@@ -94,8 +97,9 @@ async def _spawn_daemon() -> None:
         cache_dir = _model_cache_dir()
         if not model_is_cached(cache_dir, model_name):
             announce_download(cache_dir, model_name, purpose="embedding")
-    except Exception as e:  # never let a courtesy notice break the spawn
-        logger.debug("download notice skipped: %s", e)
+            return
+    except Exception as e:  # a cache probe must never block the spawn
+        logger.debug("cold-cache check skipped: %s", e)
 
     try:
         # Plain Popen, NOT asyncio.create_subprocess_exec: asyncio ties the

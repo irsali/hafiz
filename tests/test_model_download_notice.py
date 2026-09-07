@@ -24,6 +24,8 @@ Two properties this file pins hard:
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -48,8 +50,14 @@ def _write_cache(
     *,
     onnx: bool = True,
     incomplete: bool = False,
+    idle_seconds: float | None = None,
 ) -> Path:
-    """Build a HuggingFace-shaped model cache, optionally broken."""
+    """Build a HuggingFace-shaped model cache, optionally broken.
+
+    ``idle_seconds`` backdates every mtime in the tree. The repair path reads
+    mtimes to tell an abandoned download from one in flight, so a partial cache
+    written "just now" is deliberately treated as live.
+    """
     model_dir = cache_dir / f"models--{model_name.replace('/', '--')}"
     snap = model_dir / "snapshots" / "deadbeefdeadbeef"
     (snap / "onnx").mkdir(parents=True)
@@ -59,7 +67,16 @@ def _write_cache(
     blobs.mkdir(parents=True)
     if incomplete:
         (blobs / "abc123.incomplete").write_bytes(b"")
+    if idle_seconds is not None:
+        _backdate(model_dir, idle_seconds)
     return model_dir
+
+
+def _backdate(model_dir: Path, seconds: float) -> None:
+    when = time.time() - seconds
+    for path in sorted(model_dir.rglob("*"), reverse=True):
+        os.utime(path, (when, when))
+    os.utime(model_dir, (when, when))
 
 
 # ── the predicate ────────────────────────────────────────────────────
@@ -105,13 +122,81 @@ def test_purge_removes_exactly_what_is_not_cached(tmp_path, onnx, incomplete, sh
 
     They share one predicate precisely so a future edit can't drift them apart;
     this pins the equivalence rather than trusting the refactor that created it.
+    Trees are backdated: liveness is a separate axis, covered below.
     """
-    model_dir = _write_cache(tmp_path, onnx=onnx, incomplete=incomplete)
+    model_dir = _write_cache(tmp_path, onnx=onnx, incomplete=incomplete, idle_seconds=3600)
 
     purged = embeddings._purge_if_incomplete(tmp_path, MODEL)
 
     assert purged is should_purge
     assert model_dir.exists() is not should_purge
+
+
+# ── liveness: never delete a download someone else is doing ──────────
+#
+# From the directory shape alone, an in-progress download and an abandoned one
+# are identical: a `blobs/*.incomplete` and no resolvable `onnx/model.onnx`.
+# huggingface_hub serializes its own downloads under a lock in `<cache>/.locks`,
+# but this repair path runs outside that lock, so an unconditional rmtree
+# deletes the tree another process is actively writing into — corrupting the
+# cache this function exists to repair. mtime is the liveness signal.
+
+
+def test_a_download_in_flight_is_left_alone(tmp_path):
+    """The bug: a partial cache written moments ago is someone's live download.
+
+    The client used to spawn a daemon, time out after 20s of a ~22s download,
+    fall back to direct execution, and then rmtree the daemon's half-written
+    tree — producing a corrupt cache on the user's very first command.
+    """
+    model_dir = _write_cache(tmp_path, onnx=False, incomplete=True)
+
+    assert embeddings._purge_if_incomplete(tmp_path, MODEL) is False
+    assert model_dir.exists(), "deleting a live download is the bug, not the fix"
+
+
+def test_a_download_in_flight_still_reads_as_not_cached(tmp_path):
+    """Left alone, but not pretended to be usable.
+
+    The notice must still fire and the loader must still wait — fastembed then
+    blocks on the hub's own lock, which is the correct outcome.
+    """
+    _write_cache(tmp_path, onnx=False, incomplete=True)
+    assert not embeddings.model_is_cached(tmp_path, MODEL)
+
+
+def test_an_abandoned_download_is_purged(tmp_path):
+    """The case the repair path exists for — self-healing must still work."""
+    model_dir = _write_cache(tmp_path, onnx=False, incomplete=True, idle_seconds=3600)
+
+    assert embeddings._purge_if_incomplete(tmp_path, MODEL) is True
+    assert not model_dir.exists()
+
+
+def test_activity_anywhere_in_the_tree_counts_as_live(tmp_path):
+    """The narrow window before the big blob exists at all.
+
+    A process that has created the snapshot dirs but not yet started writing
+    `model.onnx` has no `*.incomplete` blob to read an mtime from, which is why
+    liveness is judged across the whole tree rather than off that one file.
+    """
+    model_dir = _write_cache(tmp_path, onnx=False, incomplete=False, idle_seconds=3600)
+    # A fresh touch deep in the tree is the only evidence of the new process.
+    (model_dir / "snapshots" / "deadbeefdeadbeef" / "onnx" / "model.onnx.incomplete").write_bytes(
+        b""
+    )
+
+    assert embeddings._purge_if_incomplete(tmp_path, MODEL) is False
+    assert model_dir.exists()
+
+
+def test_the_staleness_window_is_long_enough_to_span_a_slow_link(tmp_path):
+    """It only has to exceed the gap *between writes*, not the download time.
+
+    But a too-short window reintroduces the bug on any host that pauses, so
+    pin the shipped value rather than leaving it free to be "tuned" downward.
+    """
+    assert embeddings._STALE_DOWNLOAD_SECONDS >= 120
 
 
 def test_purge_is_a_noop_when_there_is_nothing_to_purge(tmp_path):
@@ -271,43 +356,48 @@ def test_the_reranker_loader_announces_on_a_cold_cache(tmp_path, monkeypatch, ca
     assert "reranker" in err
 
 
-async def test_the_daemon_spawn_announces_before_it_hands_off_the_wait(
-    tmp_path, monkeypatch, capsys
-):
-    """The daemon's stderr is DEVNULL, so it cannot announce its own download.
-
-    `daemon_client` auto-spawns `hafiz serve` for context/recall/observe, and
-    the daemon warms the embedding model *before* binding its socket. A cold
-    download therefore happens inside a process whose output is discarded,
-    while the client sits in its readiness poll — the silent stall, on the
-    preferred path. Worse, the poll's 20s budget is shorter than the ~22s
-    download, so the client gives up and re-downloads in the foreground.
-    Announcing client-side is what makes that wait legible.
-    """
+@pytest.fixture
+def spawn_probe(tmp_path, monkeypatch):
+    """Neuter the real spawn and record whether it was attempted."""
     from hafiz.core import daemon_client
 
+    calls: list[tuple] = []
     monkeypatch.setattr(daemon_client, "_SPAWN_WARMUP_TIMEOUT", 0.0)
     monkeypatch.setattr("hafiz.core.embeddings._model_cache_dir", lambda: tmp_path)
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: None)
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: calls.append((a, kw)))
+    return calls
+
+
+async def test_a_cold_cache_does_not_hand_the_download_to_the_daemon(spawn_probe, capsys):
+    """The daemon cannot announce its own download, and must not race for it.
+
+    It spawns with stderr=DEVNULL and warms the model *before* binding its
+    socket, so a first-run download runs where nobody can see it while the
+    client sits in a readiness poll looking hung. The poll's 20s budget is
+    also shorter than a ~22s download, so it expires, the caller falls back to
+    direct execution, and two processes fetch the same model into one cache.
+    On a cold cache the foreground does it — visibly, and alone.
+    """
+    from hafiz.core import daemon_client
 
     await daemon_client._spawn_daemon()
 
     captured = capsys.readouterr()
     assert EmbeddingSettings().model in captured.err
     assert captured.out == "", "the client's stdout is still the JSON channel"
+    assert spawn_probe == [], "a cold cache must not spawn a daemon to download in the dark"
 
 
-async def test_the_daemon_spawn_is_silent_on_a_warm_cache(tmp_path, monkeypatch, capsys):
+async def test_a_warm_cache_spawns_the_daemon_as_before(tmp_path, spawn_probe, capsys):
+    """The skip is scoped to the cold path; the warm path is the whole point of the daemon."""
     from hafiz.core import daemon_client
 
     _write_cache(tmp_path, EmbeddingSettings().model)
-    monkeypatch.setattr(daemon_client, "_SPAWN_WARMUP_TIMEOUT", 0.0)
-    monkeypatch.setattr("hafiz.core.embeddings._model_cache_dir", lambda: tmp_path)
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: None)
 
     await daemon_client._spawn_daemon()
 
     assert capsys.readouterr().err == ""
+    assert len(spawn_probe) == 1, "a warm cache should still get a daemon"
 
 
 def test_the_reranker_loader_is_silent_on_a_warm_cache(tmp_path, monkeypatch, capsys):
