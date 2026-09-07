@@ -95,15 +95,32 @@ snippet_chars = 480
 # calls an LLM — "automatic" means the backlog drains, groups and surfaces
 # itself, not that beliefs get written for you.
 #
-# Cosine similarity at/above which two captures land in the same theme.
+# Cosine similarity at/above which two *notes* land in the same theme.
 # Deliberately far below [dedup] threshold (0.88): dedup asks "is this the same
 # claim restated?", clustering asks "are these about the same thing?". A theme
 # is a much looser join, and at 0.88 essentially nothing groups.
 # Env override: HAFIZ_DISTILL__CLUSTER_THRESHOLD=0.7
 cluster_threshold = 0.65
+# The same, for transcript turns — higher on purpose. Turns from one work
+# session share vocabulary and framing, so under single-linkage almost every
+# adjacent pair clears a note-tuned bar and one chain absorbs the corpus.
+# Measured at 0.65: one theme held 366 of 400 turns and nothing was of a
+# readable size. At 0.78: 21 readable themes. A note/turn pair uses whichever
+# of the two values is stricter.
+# Env override: HAFIZ_DISTILL__CLUSTER_THRESHOLD_MESSAGES=0.8
+cluster_threshold_messages = 0.78
 # Cap on source-layer turns pulled into the window, taken salient-first then
-# newest. Env override: HAFIZ_DISTILL__MESSAGE_LIMIT=100
+# newest. This is the *readable* list and keeps its unembedded turns.
+# Env override: HAFIZ_DISTILL__MESSAGE_LIMIT=100
 message_limit = 50
+# Cap on embedded turns pulled in *for clustering only*. Separate from
+# message_limit because the two answer different questions: that one bounds
+# how much raw text you are handed, this one bounds the corpus themes are
+# grouped from. Sharing one cap made theme quality hostage to the embed ratio
+# (~8% of turns carry a vector), so clustering saw ~4 rows. Clustering is
+# O(n^2) in this number, which is why it is capped at all.
+# Env override: HAFIZ_DISTILL__THEME_CORPUS_LIMIT=200
+theme_corpus_limit = 400
 # `--brief` gate. It prints NOTHING unless the backlog has at least this many
 # pending captures OR one that has waited this long — either condition fires
 # it. `--brief` is built for a session-start hook, so silence must be the

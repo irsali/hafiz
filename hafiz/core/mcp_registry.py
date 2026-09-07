@@ -345,8 +345,23 @@ TOOLS: tuple[ToolSpec, ...] = (
             "limit": _LIMIT,
             "message_limit": "Cap on transcript turns pulled into the window.",
             "cluster_threshold": (
-                "Cosine similarity at/above which two captures share a theme. Much "
+                "Cosine similarity at/above which two *notes* share a theme. Much "
                 "looser than duplicate detection — 'same topic', not 'same claim'."
+            ),
+            "message_cluster_threshold": (
+                "The same, for transcript turns, and higher on purpose: turns from "
+                "one session are far more self-similar than notes, so a note-tuned "
+                "bar chains most of the corpus into a single theme. A note/turn pair "
+                "uses whichever of the two is stricter."
+            ),
+        },
+        exclude={
+            "theme_corpus_limit": (
+                "Quadratic cost knob, not a query option: clustering builds an n×n "
+                "similarity matrix over this many vectors, so a large value is a "
+                "memory hazard from a caller that never has to ask anyone. Sits in "
+                "config as distill.theme_corpus_limit, where a human sets it once. "
+                "Unlike message_limit, which is linear and safe to expose."
             ),
         },
     ),

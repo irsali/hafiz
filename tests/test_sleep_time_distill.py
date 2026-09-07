@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from hafiz.commands.distill import _preview, _theme_scaffold
 from hafiz.core.distill import (
     Backlog,
@@ -97,6 +99,120 @@ def test_a_note_and_a_turn_cluster_together():
     )
     assert len(themes) == 1
     assert {m.kind for m in themes[0].members} == {"note", "message"}
+
+
+# ── two corpora, two thresholds ──────────────────────────────────────
+#
+# Notes and transcript turns have different density, so one threshold cannot
+# serve both. Measured on the live store at the note-tuned 0.65, single-linkage
+# put 366 of 400 turns in one theme and produced ~nothing readable — at every
+# corpus size tried, so it was never about corpus size. Vectors below are 2-D
+# unit vectors so the cosine is exact and legible: `_at(c)` sits at cosine `c`
+# from `[1, 0]`.
+
+
+def _at(c: float) -> list[float]:
+    return [c, (1.0 - c * c) ** 0.5]
+
+
+def test_messages_use_their_own_stricter_threshold():
+    """A turn pair at 0.70 clears the note bar but not the message bar."""
+    vectors = {"m1": [1.0, 0.0], "m2": _at(0.70)}
+    themes = cluster_candidates(
+        [], [_msg("m1"), _msg("m2")], vectors, threshold=0.65, message_threshold=0.78
+    )
+    assert [t.size for t in themes] == [1, 1]
+
+    # Same pair, same data — only the message bar moves.
+    themes = cluster_candidates(
+        [], [_msg("m1"), _msg("m2")], vectors, threshold=0.65, message_threshold=0.65
+    )
+    assert [t.size for t in themes] == [2]
+
+
+def test_notes_keep_their_looser_threshold_when_messages_tighten():
+    """Raising the message bar must not quietly re-tune note clustering.
+
+    This is the regression that a single shared threshold would have caused:
+    0.65 was reasoned about for notes, and fixing turns should not cost that.
+    """
+    themes = cluster_candidates(
+        [_note("n1"), _note("n2")],
+        [],
+        {"n1": [1.0, 0.0], "n2": _at(0.70)},
+        threshold=0.65,
+        message_threshold=0.78,
+    )
+    assert [t.size for t in themes] == [2]
+
+
+def test_a_cross_kind_pair_takes_the_stricter_threshold():
+    """max, not min. A note/turn pair at 0.70 must not merge under 0.65/0.78."""
+    themes = cluster_candidates(
+        [_note("n1")],
+        [_msg("m1")],
+        {"n1": [1.0, 0.0], "m1": _at(0.70)},
+        threshold=0.65,
+        message_threshold=0.78,
+    )
+    assert [t.size for t in themes] == [1, 1]
+
+
+def test_a_note_cannot_bridge_turns_the_message_bar_held_apart():
+    """Why cross-kind takes the stricter value, stated as a test.
+
+    Single-linkage merges transitively, so a pair that is allowed to link is a
+    pair that can act as a *bridge*. With the looser value on cross-kind pairs,
+    one note sitting at 0.70 from two turns would glue those turns into one
+    theme even though they sit at -0.02 from each other and the message bar
+    correctly held them apart — the 366-member blob, re-entering through the
+    back door.
+
+    n1 at angle 0, m1 and m2 at ±45.6°: each turn is 0.70 from the note and
+    -0.02 from the other turn.
+    """
+    vectors = {"n1": [1.0, 0.0], "m1": _at(0.70), "m2": [0.70, -_at(0.70)[1]]}
+    themes = cluster_candidates(
+        [_note("n1")],
+        [_msg("m1"), _msg("m2")],
+        vectors,
+        threshold=0.65,
+        message_threshold=0.78,
+    )
+    assert [t.size for t in themes] == [1, 1, 1], (
+        "the note must not bridge two turns the message threshold separated"
+    )
+
+
+def test_theme_score_is_the_real_similarity_not_a_masking_artefact():
+    """The reported score must be what the members actually share.
+
+    Honest note on the strength of this test: it pins the property, but it
+    cannot currently fail by scoring off the masked matrix instead. Masked
+    pairs are ``-inf`` and the aggregate is ``max``, so ``-inf`` never wins and
+    the two matrices coincide for every cluster that formed — verified by
+    mutation, which passed. The guard earns its place against a future change
+    to the aggregate: under ``min`` or a mean, a chained cluster containing a
+    masked pair would report a similarity no two members have.
+    """
+    themes = cluster_candidates(
+        [],
+        [_msg("m1"), _msg("m2")],
+        {"m1": [1.0, 0.0], "m2": _at(0.90)},
+        threshold=0.65,
+        message_threshold=0.78,
+    )
+    assert [t.size for t in themes] == [2]
+    assert themes[0].score == pytest.approx(0.90, abs=1e-3)
+
+
+def test_message_threshold_defaults_to_the_note_threshold():
+    """Omitting it must preserve the old single-threshold behaviour, so every
+    existing caller and test keeps its meaning."""
+    themes = cluster_candidates(
+        [], [_msg("m1"), _msg("m2")], {"m1": [1.0, 0.0], "m2": _at(0.70)}, threshold=0.65
+    )
+    assert [t.size for t in themes] == [2]
 
 
 def test_unembedded_turn_is_not_a_candidate():

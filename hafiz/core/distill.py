@@ -132,7 +132,12 @@ class Backlog:
     oldest_pending_age_days: float | None
     themes: int
     clustered: int  # members sitting in a theme of size >= 2
-    skipped_unembedded: int  # turns dropped from themes for having no vector
+    # Readable candidates that carry no vector, so they can be distilled by
+    # reading but never appear in a theme. Not "dropped from themes": since
+    # clustering got its own embedded-only corpus these were never in the
+    # grouping set to begin with. Kept because it is the honest measure of
+    # how much of the handed-over text is unclusterable.
+    skipped_unembedded: int
 
     def to_dict(self) -> dict:
         return {
@@ -166,7 +171,9 @@ async def find_distill_candidates(
     include_promoted: bool = False,
     limit: int = 200,
     message_limit: int | None = None,
+    theme_corpus_limit: int | None = None,
     cluster_threshold: float | None = None,
+    message_cluster_threshold: float | None = None,
 ) -> DistillBundle:
     """Return the promotable backlog for ``[now-since, now]``.
 
@@ -184,7 +191,13 @@ async def find_distill_candidates(
 
     cfg = load_settings().distill
     msg_limit = cfg.message_limit if message_limit is None else message_limit
+    corpus_limit = cfg.theme_corpus_limit if theme_corpus_limit is None else theme_corpus_limit
     thr = cfg.cluster_threshold if cluster_threshold is None else cluster_threshold
+    msg_thr = (
+        cfg.cluster_threshold_messages
+        if message_cluster_threshold is None
+        else message_cluster_threshold
+    )
 
     now = datetime.now(UTC)
     start = now - (since or timedelta(days=7))
@@ -274,10 +287,35 @@ async def find_distill_candidates(
     )
     vectors.update(message_vectors)
 
-    themes = cluster_candidates(notes, messages, vectors, threshold=thr)
+    # The readable candidates above and the clustering corpus below are two
+    # different questions, so they get two queries. `messages` is raw text a
+    # reader is handed and deliberately keeps its unembedded turns; clustering
+    # can only work on vectors, and capping it at the same 50 made theme
+    # quality hostage to the embed ratio (~8% on a real window, so ~4 usable
+    # rows and mostly singleton "themes"). Same function, same retention
+    # predicates, own cap.
+    theme_messages, theme_vectors = await _fetch_message_candidates(
+        start=start,
+        end=end,
+        project=project,
+        session_slug=session_id,
+        limit=corpus_limit,
+        embedded_only=True,
+    )
+    vectors.update(theme_vectors)
+
+    themes = cluster_candidates(
+        notes, theme_messages, vectors, threshold=thr, message_threshold=msg_thr
+    )
     # Pending is derived from the themes, not from the raw candidate lists, so
     # "56 pending in 40 themes" can't disagree with itself and the ``--brief``
     # gate counts only work a reader can actually act on.
+    #
+    # Note this now scales with `theme_corpus_limit`, not `message_limit`, so
+    # the number is larger than it used to be and more honest: it reports the
+    # backlog that exists rather than the slice that happened to be readable.
+    # `brief_max_themes` still bounds what ``--brief`` renders, so a bigger
+    # count does not mean a noisier hook.
     members = [m for t in themes for m in t.members]
     oldest = min((m.ts for m in members), default=None)
 
@@ -336,6 +374,7 @@ def cluster_candidates(
     vectors: dict[str, list[float]],
     *,
     threshold: float,
+    message_threshold: float | None = None,
 ) -> list[Theme]:
     """Group candidates into themes by embedding similarity.
 
@@ -349,6 +388,31 @@ def cluster_candidates(
     themes under ~26 singletons reading "Let me connect to your browser" and
     raw ``<toolCall>`` echoes. Notes are different: a note is a deliberate
     capture, so an unembedded one stays as a singleton rather than vanishing.
+
+    **Two corpora, two thresholds.** ``threshold`` governs note↔note pairs and
+    ``message_threshold`` governs message↔message pairs, because the two
+    populations have different density and one value cannot serve both. Notes
+    are deliberate, hand-written and topically diverse; transcript turns from
+    one work session share vocabulary and framing, so almost every adjacent
+    pair clears a loose bar. Measured on the live store at the note-tuned
+    0.65, single-linkage chaining put 366 of 400 turns in one theme and
+    yielded ~zero themes of a readable size — and it did that at *every*
+    corpus size (39 of 50, 105 of 120), so it was never a corpus problem. At
+    0.78 the same corpora gave 21 readable themes.
+
+    A cross-kind pair takes ``max`` of the two, i.e. the stricter. That is the
+    conservative direction and it matters: a cross-kind link is precisely the
+    one that can act as a bridge between the two populations, so using the
+    looser value would let a single note glue together message clusters the
+    message threshold had correctly held apart — reintroducing the blob
+    through the back door. ``max`` can only reduce merging, never increase it.
+
+    Implemented by masking the similarity matrix rather than by teaching
+    ``_single_linkage`` about kinds: a pair that fails its own threshold is set
+    to ``-inf``, which cannot clear any finite bar, and linkage then runs at
+    the *lowest* of the thresholds. That keeps the shared primitive — which
+    ``reconcile`` also depends on — untouched. Scores are read from the
+    unmasked matrix so a reported similarity stays truthful.
 
     Ordered biggest theme first, then most recent, so the head of the list is
     where distillation pays best.
@@ -371,9 +435,33 @@ def cluster_candidates(
     themes = [Theme(members=[m], score=1.0) for m in members if m.id not in vectors]
 
     if embedded:
+        import numpy as np
+
+        msg_threshold = threshold if message_threshold is None else message_threshold
         sim = _similarity_matrix([vectors[m.id] for m in embedded])
-        for idxs in _single_linkage(sim, threshold):
+
+        # Per-pair threshold: note↔note uses `threshold`, message↔message uses
+        # `msg_threshold`, cross-kind uses the stricter of the two. Built by
+        # outer-combining a boolean "is a message" vector so it stays vectorised
+        # at corpus sizes where an O(n²) Python loop would not.
+        is_msg = np.array([m.kind == "message" for m in embedded])
+        required = np.where(
+            is_msg[:, None] & is_msg[None, :],
+            msg_threshold,
+            np.where(
+                ~is_msg[:, None] & ~is_msg[None, :],
+                threshold,
+                max(threshold, msg_threshold),
+            ),
+        )
+        # A pair below its own bar becomes -inf, which clears no finite
+        # threshold, so linkage can safely run at the lowest of the two.
+        linkage_sim = np.where(sim >= required, sim, -np.inf)
+
+        for idxs in _single_linkage(linkage_sim, min(threshold, msg_threshold)):
             group = [embedded[i] for i in idxs]
+            # Scored off the unmasked matrix: the reported similarity should be
+            # what these captures actually share, not an artefact of masking.
             best = (
                 max(float(sim[i, j]) for i in idxs for j in idxs if i != j)
                 if len(idxs) > 1
@@ -392,6 +480,7 @@ async def _fetch_message_candidates(
     project: str | list[str] | None,
     session_slug: str | None,
     limit: int = 50,
+    embedded_only: bool = False,
 ) -> tuple[list[MessageCandidate], dict[str, list[float]]]:
     """Surface source-layer turns in the distillation window.
 
@@ -401,6 +490,7 @@ async def _fetch_message_candidates(
     - if session_slug is set, restrict to communications belonging to
       that session (so distillation lineage can cite the actual turns)
     - if project filter is set, restrict to communications scoped to it
+    - if ``embedded_only``, the turn carries a vector
 
     Retention is a filter here, not a nicety. Distilling an expired turn
     would mint a fresh annotation carrying its content, and that annotation
@@ -416,6 +506,14 @@ async def _fetch_message_candidates(
     Returns the candidates plus whatever embeddings they carry, so themes can
     be built without a second pass. Selective embedding means many turns have
     none; those are returned without a vector rather than skipped.
+
+    ``embedded_only`` restricts to turns that carry a vector. That is for the
+    *clustering* corpus, which is a different question from the readable
+    candidate list and so gets its own call and its own cap — see
+    ``distill.theme_corpus_limit``. Both callers go through this one function
+    on purpose: the retention and tombstone predicates below are a stated
+    guarantee, and a second hand-written copy of them is exactly how one
+    quietly drifts from the other.
     """
     session_factory = get_session_factory()
     now = datetime.now(UTC)
@@ -443,6 +541,9 @@ async def _fetch_message_candidates(
             )
             .limit(limit)
         )
+
+        if embedded_only:
+            stmt = stmt.where(CommunicationMessage.embedding.is_not(None))
 
         if isinstance(project, list):
             stmt = stmt.where(Communication.scope_value.in_(project))

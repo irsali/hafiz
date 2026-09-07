@@ -258,16 +258,46 @@ class DistillSettings(BaseModel):
     automatically, not that beliefs are written automatically.
     """
 
-    # Cosine similarity at/above which two captures land in one theme.
+    # Cosine similarity at/above which two **notes** land in one theme.
     # Deliberately far below ``dedup.threshold`` (0.88): dedup asks "is this
     # the same claim restated?", clustering asks "are these about the same
     # thing?". A theme is a much looser join, and at 0.88 nothing groups.
+    #
+    # This value was tuned on notes and only ever applied to notes; see
+    # ``cluster_threshold_messages`` for why it must not govern transcript
+    # turns as well.
     cluster_threshold: float = 0.65
+
+    # The same, for source-layer transcript turns. Higher on purpose, and the
+    # gap is not a preference — it is the density difference between two
+    # corpora. Notes are deliberate, hand-written and topically diverse.
+    # Turns from one work session share vocabulary and framing, so under
+    # single-linkage almost every adjacent pair clears a loose bar and one
+    # chain absorbs the corpus. Measured on the live store at 0.65: one theme
+    # held 366 of 400 turns and ~nothing was of a readable size — and it did
+    # that at every corpus size tried (39 of 50, 105 of 120), so it was never
+    # a corpus-size problem. At 0.78: 21 readable themes.
+    cluster_threshold_messages: float = 0.78
 
     # Source-layer turns pulled into the candidate window. Was a hardcoded
     # 50 taken oldest-first, which on a busy window surfaced the least
     # relevant end of it.
     message_limit: int = 50
+
+    # Embedded turns pulled in *for clustering only*, separate from the
+    # readable candidates above. These two numbers answer different
+    # questions and must not share one cap: `message_limit` bounds how much
+    # raw text a reader is handed, while this bounds the corpus themes are
+    # grouped from. Sharing one cap made theme quality hostage to the embed
+    # ratio — measured on a real 30-day window, only 8.2% of 46,922 turns
+    # carry a vector (a 30-token floor plus tool-result suppression, both
+    # deliberate), so a 50-row candidate slice offered clustering ~4 rows
+    # and produced 4 themes of which 3 were singletons.
+    #
+    # Clustering is O(n²) in this number: the similarity matrix at 400 is
+    # ~1.3 MB and the vectors ~2.4 MB, which is why it is capped at all
+    # rather than reading the whole window.
+    theme_corpus_limit: int = 400
 
     # ``--brief`` gates. The backlog only earns an interruption when it is
     # either big enough or old enough; either condition fires it. Below both,
