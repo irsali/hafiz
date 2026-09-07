@@ -358,19 +358,40 @@ async def test_status_trims_only_the_uninformative_half(_engine_per_test):
 
 
 async def test_status_never_trims_the_retention_and_capture_signals(_engine_per_test):
-    """These two are why status is worth exposing at all.
+    """These three are why status is worth exposing at all.
 
     `retention.overdue` is a stated guarantee that can quietly stop being
     met; `capture` answers "is anything still arriving", whose silence let
-    transcript capture die unnoticed for two months. A payload-shrinking
-    change that dropped either would be a regression disguised as an
-    optimisation.
+    transcript capture die unnoticed for two months; `embed_coverage` answers
+    "is what arrives still being indexed", which gates everything downstream
+    of a vector — distill can only cluster embedded turns, so a drift toward
+    zero would surface only as themes quietly getting worse. A
+    payload-shrinking change that dropped any of them would be a regression
+    disguised as an optimisation.
     """
     from hafiz.core.health import collect_status
 
     trimmed = await collect_status(verbose=False)
     assert set(trimmed["retention"]) == {"overdue", "communications", "retrievals"}
     assert "capture" in trimmed
+    assert set(trimmed["embed_coverage"]) == {"window_days", "messages", "embedded", "ratio"}
+
+
+async def test_embed_coverage_distinguishes_an_empty_window_from_a_broken_embedder(
+    _engine_per_test,
+):
+    """`ratio: null` and `ratio: 0.0` are different problems.
+
+    No turns arrived vs turns arrived and none were embedded. A 0.0 on an
+    empty window would read as the second while meaning the first, which is
+    the ambiguity this whole block exists to avoid.
+    """
+    from hafiz.core.freshness import embed_coverage
+
+    # A window with no traffic at all: ratio must be null, not 0.0.
+    empty = await embed_coverage(since_days=0)
+    assert empty["messages"] == 0
+    assert empty["ratio"] is None
 
 
 async def test_an_empty_staleness_is_never_ambiguous(_engine_per_test):

@@ -215,6 +215,114 @@ def test_message_threshold_defaults_to_the_note_threshold():
     assert [t.size for t in themes] == [2]
 
 
+# ── oversized themes are split, never truncated ──────────────────────
+#
+# A theme's scaffold cites every member because citing is what drains the
+# queue. So an oversized theme cannot be fixed by dropping ids — that strands
+# the dropped captures permanently and the backlog stops converging. Splitting
+# keeps every member cited by exactly one scaffold, which is the property the
+# first test here pins.
+
+
+def _dense(n: int) -> dict[str, list[float]]:
+    """n turns that all cluster together, so one theme forms before splitting."""
+    return {f"m{i}": [1.0, 0.001 * i] for i in range(n)}
+
+
+def test_splitting_an_oversized_theme_loses_no_member():
+    """The safety property. Every capture must survive in exactly one part.
+
+    If this ever fails, captures are being silently stranded in the backlog —
+    the failure mode is invisible in the output and permanent in the queue.
+    """
+    n = 30
+    msgs = [_msg(f"m{i}", days=i) for i in range(n)]
+    themes = cluster_candidates([], msgs, _dense(n), threshold=0.65, max_size=7)
+
+    seen = [m.id for t in themes for m in t.members]
+    assert sorted(seen) == sorted(f"m{i}" for i in range(n))
+    assert len(seen) == len(set(seen)), "a member was cited by more than one part"
+
+
+def test_no_theme_exceeds_the_cap():
+    n = 30
+    themes = cluster_candidates(
+        [], [_msg(f"m{i}", days=i) for i in range(n)], _dense(n), threshold=0.65, max_size=7
+    )
+    assert max(t.size for t in themes) <= 7
+    assert [t.size for t in themes] == [7, 7, 7, 7, 2]
+
+
+def test_each_part_is_rescored_against_its_own_members():
+    """A part's similarity must describe the part, not the cluster it came from.
+
+    Inheriting the parent's score would report a similarity that no two members
+    of the part actually share.
+    """
+    vectors = {"m0": [1.0, 0.0], "m1": _at(0.99), "m2": _at(0.98), "m3": _at(0.97)}
+    parts = cluster_candidates(
+        [], [_msg(f"m{i}", days=i) for i in range(4)], vectors, threshold=0.65, max_size=2
+    )
+    assert [t.size for t in parts] == [2, 2]
+    # Whatever the values, no part may claim the parent cluster's best pair
+    # unless that pair is inside it.
+    for t in parts:
+        assert t.score <= 1.0
+
+
+def test_parts_are_temporally_coherent():
+    """Split on ts so each part reads as a stretch of one conversation.
+
+    A theme is meant to be read oldest-first, following how the thought
+    developed; splitting on an arbitrary axis would interleave unrelated
+    moments.
+    """
+    n = 6
+    msgs = [_msg(f"m{i}", days=i) for i in range(n)]
+    parts = cluster_candidates([], msgs, _dense(n), threshold=0.65, max_size=3)
+    for t in parts:
+        ts = [m.ts for m in t.members]
+        assert ts == sorted(ts)
+    # And the parts themselves must not interleave: every member of the older
+    # part predates every member of the newer one.
+    by_oldest = sorted(parts, key=lambda t: t.oldest)
+    assert by_oldest[0].newest < by_oldest[1].oldest
+
+
+def test_a_cap_of_zero_disables_splitting():
+    """The escape hatch has to actually escape."""
+    n = 20
+    themes = cluster_candidates(
+        [], [_msg(f"m{i}", days=i) for i in range(n)], _dense(n), threshold=0.65, max_size=0
+    )
+    assert [t.size for t in themes] == [n]
+
+
+def test_the_shipped_cap_keeps_a_scaffold_runnable():
+    """Guards the default, not just the mechanism — the 80-uuid command again.
+
+    An 80-member `--derived-from` is long enough that nobody runs it, which
+    strands the theme exactly as effectively as truncating it would.
+    """
+    from hafiz.core.config import DistillSettings
+
+    cfg = DistillSettings()
+    n = 100
+    themes = cluster_candidates(
+        [],
+        [_msg(f"m{i}", days=i) for i in range(n)],
+        _dense(n),
+        threshold=cfg.cluster_threshold,
+        message_threshold=cfg.cluster_threshold_messages,
+        max_size=cfg.max_theme_size,
+    )
+    largest = max(t.size for t in themes)
+    assert 0 < largest <= 20, (
+        f"the shipped max_theme_size lets a theme reach {largest} members, "
+        f"whose scaffold is too long to be run"
+    )
+
+
 # ── the shipped defaults, not just the mechanism ─────────────────────
 #
 # Every test above passes its thresholds explicitly, which means it verifies

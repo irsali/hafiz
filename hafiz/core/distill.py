@@ -305,7 +305,12 @@ async def find_distill_candidates(
     vectors.update(theme_vectors)
 
     themes = cluster_candidates(
-        notes, theme_messages, vectors, threshold=thr, message_threshold=msg_thr
+        notes,
+        theme_messages,
+        vectors,
+        threshold=thr,
+        message_threshold=msg_thr,
+        max_size=cfg.max_theme_size,
     )
     # Pending is derived from the themes, not from the raw candidate lists, so
     # "56 pending in 40 themes" can't disagree with itself and the ``--brief``
@@ -375,6 +380,7 @@ def cluster_candidates(
     *,
     threshold: float,
     message_threshold: float | None = None,
+    max_size: int | None = None,
 ) -> list[Theme]:
     """Group candidates into themes by embedding similarity.
 
@@ -414,6 +420,10 @@ def cluster_candidates(
     ``reconcile`` also depends on — untouched. Scores are read from the
     unmasked matrix so a reported similarity stays truthful.
 
+    ``max_size`` caps how many members one theme may hold. Oversized clusters
+    are **split into parts, never truncated** — see the comment at the split
+    for why that distinction is a correctness one rather than a cosmetic one.
+
     Ordered biggest theme first, then most recent, so the head of the list is
     where distillation pays best.
     """
@@ -431,6 +441,7 @@ def cluster_candidates(
     if not members:
         return []
 
+    max_size = max_size if max_size is not None else 0
     embedded = [m for m in members if m.id in vectors]
     themes = [Theme(members=[m], score=1.0) for m in members if m.id not in vectors]
 
@@ -458,16 +469,36 @@ def cluster_candidates(
         # threshold, so linkage can safely run at the lowest of the two.
         linkage_sim = np.where(sim >= required, sim, -np.inf)
 
-        for idxs in _single_linkage(linkage_sim, min(threshold, msg_threshold)):
-            group = [embedded[i] for i in idxs]
+        def _best(idxs: list[int]) -> float:
             # Scored off the unmasked matrix: the reported similarity should be
             # what these captures actually share, not an artefact of masking.
-            best = (
-                max(float(sim[i, j]) for i in idxs for j in idxs if i != j)
-                if len(idxs) > 1
-                else 1.0
-            )
-            themes.append(Theme(members=sorted(group, key=lambda m: m.ts), score=best))
+            if len(idxs) < 2:
+                return 1.0
+            return max(float(sim[i, j]) for i in idxs for j in idxs if i != j)
+
+        for idxs in _single_linkage(linkage_sim, min(threshold, msg_threshold)):
+            # Oversized clusters are **split, never truncated.** A theme's
+            # scaffold cites every member because citing is what drains the
+            # queue, so dropping ids to shorten the command would strand the
+            # dropped captures in the backlog permanently — the queue would
+            # stop converging no matter how much work got done. Splitting keeps
+            # every member cited by exactly one scaffold.
+            #
+            # Chaining means a big cluster is not one topic anyway: at 80
+            # members its ends share nothing, so a split is closer to the truth
+            # than the merge was. Sorting by ts first makes each part
+            # temporally coherent, which matches how a theme is meant to read —
+            # oldest first, following how the thought developed.
+            ordered = sorted(idxs, key=lambda i: embedded[i].ts)
+            step = max_size if max_size and max_size > 0 else len(ordered)
+            for start in range(0, len(ordered), step):
+                part = ordered[start : start + step]
+                themes.append(
+                    # Each part is rescored against its own members rather than
+                    # inheriting the parent's, so a part's similarity describes
+                    # the part.
+                    Theme(members=[embedded[i] for i in part], score=_best(part))
+                )
 
     themes.sort(key=lambda t: (t.size, t.newest), reverse=True)
     return themes

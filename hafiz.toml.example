@@ -121,6 +121,13 @@ message_limit = 50
 # O(n^2) in this number, which is why it is capped at all.
 # Env override: HAFIZ_DISTILL__THEME_CORPUS_LIMIT=200
 theme_corpus_limit = 400
+# Most members one theme may hold. An oversized cluster is SPLIT into parts,
+# never truncated: a scaffold cites every member because citing is what drains
+# the queue, so dropping ids would strand those captures permanently. A chained
+# 80-member theme is not one topic anyway — its ends share nothing — and its
+# 80-uuid command is long enough that nobody runs it. 0 disables splitting.
+# Env override: HAFIZ_DISTILL__MAX_THEME_SIZE=20
+max_theme_size = 12
 # `--brief` gate. It prints NOTHING unless the backlog has at least this many
 # pending captures OR one that has waited this long — either condition fires
 # it. `--brief` is built for a session-start hook, so silence must be the

@@ -94,10 +94,11 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
             never checked", and this codebase has already paid for one signal
             whose silence was mistaken for health.
 
-    ``retention`` and ``capture`` are never trimmed. They are the "is the
-    retention guarantee actually being met" and "is anything still arriving"
-    signals, and the second one going unread is what let transcript capture
-    die unnoticed for two months.
+    ``retention``, ``capture`` and ``embed_coverage`` are never trimmed. They
+    are the "is the retention guarantee actually being met", "is anything still
+    arriving" and "is what arrives still being indexed" signals; the second one
+    going unread is what let transcript capture die unnoticed for two months,
+    and the third gates everything that depends on a vector.
     """
     from sqlalchemy import func, select
 
@@ -112,7 +113,7 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
         UnitRevision,
         get_session_factory,
     )
-    from hafiz.core.freshness import capture_freshness
+    from hafiz.core.freshness import capture_freshness, embed_coverage
     from hafiz.core.store import last_indexed_commit_per_project
     from hafiz.core.telemetry import count_overdue_retrievals
 
@@ -176,6 +177,12 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
     # arriving?"
     capture = await capture_freshness()
 
+    # And a third question the first two don't cover: "is what arrives still
+    # being vector-indexed?" Everything downstream of a vector depends on this
+    # ratio — distill can only cluster embedded turns — and a drift toward zero
+    # would show up only as themes quietly getting worse.
+    embed = await embed_coverage()
+
     stats: dict[str, Any] = {
         "files": files_count,
         "units": units_count,
@@ -197,6 +204,7 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
             "retrievals": overdue_retr,
         },
         "capture": capture,
+        "embed_coverage": embed,
         # A project-less ingest can't update a project's rows — `files` is
         # unique on (project, path) — so it writes a parallel untagged copy
         # that search then returns alongside the real one. 1,956 such rows

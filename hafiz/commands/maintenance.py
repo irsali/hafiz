@@ -246,6 +246,23 @@ def run_status(*, output_json: bool = False) -> None:
             f"  Stop the drift:  hafiz agent install {agent} --hooks[/dim]"
         )
 
+    # Warn only when turns are arriving and none of them are being indexed.
+    # A low ratio is normal and correct — selective embedding declines short
+    # turns and tool-result echoes by design, leaving roughly 8% — so warning
+    # on "low" would fire always and be tuned out. Zero-with-traffic is the
+    # only unambiguous fault, and `ratio is None` (no traffic) is not one.
+    embed = stats.get("embed_coverage") or {}
+    if embed.get("messages") and embed.get("embedded") == 0:
+        console.print(
+            f"  [red]{embed['messages']} transcript turn(s) arrived in the last"
+            f" {embed['window_days']}d and none were embedded.[/red]\n"
+            f"  [dim]Selective embedding declines short turns by design, but zero"
+            f" out of everything is an embedder fault, not a policy outcome.\n"
+            f"  Anything needing a vector is silently degraded — distill can only"
+            f" cluster embedded turns.\n"
+            f"  Check:  hafiz doctor[/dim]"
+        )
+
     if stats["by_project"]:
         console.print()
         proj_table = Table(title="Files by Project", border_style="cyan")

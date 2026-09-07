@@ -299,6 +299,21 @@ class DistillSettings(BaseModel):
     # rather than reading the whole window.
     theme_corpus_limit: int = 400
 
+    # Most members one theme may hold. Oversized clusters are **split into
+    # parts, never truncated**: a theme's scaffold cites every member because
+    # citing is what drains the queue, so dropping ids to shorten the command
+    # would strand those captures in the backlog permanently.
+    #
+    # This is a correctness cap, not cosmetics. Single-linkage chaining
+    # produced an 80-member theme on the live store (366 before the message
+    # threshold was separated), whose `--derived-from` was 80 uuids — long
+    # enough that nobody would run it, which strands the whole theme just as
+    # effectively as truncation would. A chained cluster is not one topic
+    # anyway: at that size its ends share nothing.
+    #
+    # 0 disables splitting.
+    max_theme_size: int = 12
+
     # ``--brief`` gates. The backlog only earns an interruption when it is
     # either big enough or old enough; either condition fires it. Below both,
     # ``--brief`` prints nothing at all, so a session hook can pipe it

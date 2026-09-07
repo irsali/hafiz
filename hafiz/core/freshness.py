@@ -204,3 +204,62 @@ def stale_projects(staleness: dict[str, dict]) -> dict[str, dict]:
         for project, entry in staleness.items()
         if entry.get("commits_behind") or entry.get("is_ancestor") is False
     }
+
+
+async def embed_coverage(*, since_days: int = 30) -> dict:
+    """How much of the recent source layer is vector-indexed.
+
+    Selective embedding is deliberate — short turns and pure tool-result
+    echoes never get a vector, and on a healthy store that leaves roughly
+    8% of turns embedded. But *everything* downstream of a vector depends on
+    that ratio, and nothing reported it: `distill`'s theme clustering can
+    only group embedded turns, so a drift toward zero silently starves it
+    while the queue still looks full of readable candidates.
+
+    That is the same shape as the capture outage this module exists for. The
+    embed policy could regress — a bad token-count change, an embedder that
+    fails soft, a model swap — and the only visible symptom would be themes
+    quietly getting worse, which nobody watches. So the ratio is a number on
+    `status`, not a thing to go and measure when something feels wrong.
+
+    Scoped to live communications inside the window, because the whole
+    corpus average is dominated by history and would not move when today's
+    imports stopped being embedded.
+    """
+    from sqlalchemy import and_, func, or_, select
+
+    from hafiz.core.database import Communication, CommunicationMessage, get_session_factory
+
+    now = datetime.now(UTC)
+    start = now - timedelta(days=since_days)
+    factory = get_session_factory()
+    async with factory() as session:
+        live = and_(
+            Communication.valid_until.is_(None),
+            or_(
+                Communication.retention_until.is_(None),
+                Communication.retention_until > now,
+            ),
+        )
+        base = (
+            select(func.count())
+            .select_from(CommunicationMessage)
+            .join(Communication, Communication.id == CommunicationMessage.communication_id)
+            .where(CommunicationMessage.ts >= start)
+            .where(CommunicationMessage.ts <= now)
+            .where(live)
+        )
+        total = (await session.execute(base)).scalar() or 0
+        embedded = (
+            await session.execute(base.where(CommunicationMessage.embedding.is_not(None)))
+        ).scalar() or 0
+
+    return {
+        "window_days": since_days,
+        "messages": total,
+        "embedded": embedded,
+        # None rather than 0 on an empty window: "no turns arrived" and "turns
+        # arrived and none were embedded" are different problems, and a 0.0
+        # would read as the second while meaning the first.
+        "ratio": round(embedded / total, 4) if total else None,
+    }
