@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `dev` is where the work actually happens — main only ever receives
+    # reviewed merges. Gating main alone meant a run of commits could sit on
+    # dev with a failing gate and nobody would know: `ruff format --check`
+    # rejected HEAD for a day in Sept 2026, found by accident while linting
+    # something else. The gate existed; nothing ran it.
+    branches: [main, dev]
   pull_request:
 
 concurrency:
