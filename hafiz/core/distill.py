@@ -301,6 +301,7 @@ async def find_distill_candidates(
         session_slug=session_id,
         limit=corpus_limit,
         embedded_only=True,
+        prefer_user=True,
     )
     vectors.update(theme_vectors)
 
@@ -512,6 +513,7 @@ async def _fetch_message_candidates(
     session_slug: str | None,
     limit: int = 50,
     embedded_only: bool = False,
+    prefer_user: bool = False,
 ) -> tuple[list[MessageCandidate], dict[str, list[float]]]:
     """Surface source-layer turns in the distillation window.
 
@@ -537,6 +539,27 @@ async def _fetch_message_candidates(
     Returns the candidates plus whatever embeddings they carry, so themes can
     be built without a second pass. Selective embedding means many turns have
     none; those are returned without a vector rather than skipped.
+
+    ``prefer_user`` puts the user's own turns at the head of the ordering, so a
+    capped corpus fills with them first. Used for the clustering corpus and not
+    for the readable list, because the two answer different questions.
+
+    Why preference rather than a filter: measured on a 30-day window, the
+    embedded pool is 3,500 assistant turns to 355 user ones, and clustering
+    that pool produced themes grouped by the *shape of a progress report* —
+    "Done.", "committed", "N passed, M skipped" — rather than by topic. User
+    turns are the irreplaceable half: nothing else records what was asked and
+    why, whereas an assistant status report duplicates what git log and the
+    work items already hold. But assistant turns also carry the *rationale*,
+    so excluding them outright would strand "lets go with B" without the
+    analysis that produced B. A preference keeps them eligible and lets them
+    fill whatever the user's turns don't. It also degrades in the safe
+    direction: a busy window pushes the corpus toward *more* of the good
+    material, and a quiet one still fills to the cap.
+
+    Rejected: a genre heuristic matching status-report phrasing. It would need
+    constant tending and would rot, and this module already learned that
+    lesson once with the ``ts ASC`` cap.
 
     ``embedded_only`` restricts to turns that carry a vector. That is for the
     *clustering* corpus, which is a different question from the readable
@@ -568,6 +591,10 @@ async def _fetch_message_candidates(
             )
             .order_by(
                 CommunicationMessage.marked_salient.desc(),
+                # Prefer the user's own turns when asked. Booleans sort
+                # False-first on both backends, so "is not a user turn"
+                # ascending puts user turns at the head.
+                *([(CommunicationMessage.role != "user").asc()] if prefer_user else []),
                 CommunicationMessage.ts.desc(),
             )
             .limit(limit)
