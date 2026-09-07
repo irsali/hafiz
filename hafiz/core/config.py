@@ -180,7 +180,7 @@ class RerankSettings(BaseModel):
     """
 
     enabled: bool = True
-    model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # ~80 MB ONNX
+    model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # ~90 MB on disk
     # Over-fetch this multiple of the requested limit before reranking, so the
     # cross-encoder has real candidates to reorder (it can only reorder what
     # vector recall surfaced).

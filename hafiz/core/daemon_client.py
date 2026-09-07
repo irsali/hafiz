@@ -79,6 +79,24 @@ async def _spawn_daemon() -> None:
     """
     import subprocess
 
+    # The daemon is spawned with stderr=DEVNULL, and it warms the embedding
+    # model *before* binding its socket. So on a cold cache the download runs
+    # inside a process whose output goes nowhere, and the user gets exactly the
+    # unexplained multi-minute stall the notice exists to prevent — on the path
+    # the client prefers. Announce here, where there is still a real terminal.
+    # (The notice is once-per-process, so the direct-exec fallback below won't
+    # repeat it.)
+    from hafiz.core.config import get_settings
+    from hafiz.core.embeddings import _model_cache_dir, announce_download, model_is_cached
+
+    try:
+        model_name = get_settings().embedding.model
+        cache_dir = _model_cache_dir()
+        if not model_is_cached(cache_dir, model_name):
+            announce_download(cache_dir, model_name, purpose="embedding")
+    except Exception as e:  # never let a courtesy notice break the spawn
+        logger.debug("download notice skipped: %s", e)
+
     try:
         # Plain Popen, NOT asyncio.create_subprocess_exec: asyncio ties the
         # child to the event loop's child-watcher, which can reap the daemon

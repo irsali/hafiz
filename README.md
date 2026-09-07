@@ -226,6 +226,12 @@ vector before reporting success. It works in both directions.
 hafiz ingest /path/to/your/project --project my-project
 ```
 
+> **The first run downloads the embedding model** — about 520 MB, once per
+> machine, into `~/.cache/hafiz/models`. Hafiz says so before it starts, so a
+> long first `ingest` isn't a hang. Your first `hafiz query --observations`
+> fetches a second, smaller (~90 MB) reranker the same way. After that,
+> everything runs locally and offline.
+
 > **Multi-project workspaces:** ingest one project at a time, sequentially in the same shell. Each `hafiz ingest` process loads its own embedding model and embed-call peak RSS scales with `embedding.max_part_chars`; running ingest in parallel (multiple VSCode tasks, CI matrix shards on one host, git hooks firing across sibling repos) multiplies both and can OOM. See [docs/commands.md](docs/commands.md#indexing) for the full note.
 
 ### 6. Try it out

@@ -29,7 +29,12 @@ import math
 import threading
 
 from hafiz.core.config import load_settings
-from hafiz.core.embeddings import _model_cache_dir, _purge_if_incomplete
+from hafiz.core.embeddings import (
+    _model_cache_dir,
+    _purge_if_incomplete,
+    announce_download,
+    model_is_cached,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,11 @@ def _build_reranker():
     model_name = load_settings().rerank.model
     cache_dir = _model_cache_dir()
     _purge_if_incomplete(cache_dir, model_name)
+    # A second download the cold-start audit missed: reranking is on by
+    # default and loads lazily, so this lands on the *first* recall — a
+    # separate command, well after `ingest` paid for the embedding model.
+    if not model_is_cached(cache_dir, model_name):
+        announce_download(cache_dir, model_name, purpose="reranker")
     try:
         return TextCrossEncoder(model_name=model_name, cache_dir=str(cache_dir))
     except Exception as exc:

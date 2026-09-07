@@ -64,7 +64,7 @@ def _model_cache_dir() -> Path:
     """Persistent, XDG-aware cache for downloaded embedding models.
 
     fastembed's default is ``tempfile.gettempdir()/fastembed_cache``. On hosts
-    where ``/tmp`` is tmpfs (RAM-backed) that means a ~260 MB re-download on
+    where ``/tmp`` is tmpfs (RAM-backed) that means a ~520 MB re-download on
     every reboot — plus a fresh window for an interrupted download to leave the
     cache half-written. Pinning the cache under ``~/.cache/hafiz`` makes it
     survive reboots and turns model corruption into a once-ever event.
@@ -76,36 +76,112 @@ def _model_cache_dir() -> Path:
     return path
 
 
-def _purge_if_incomplete(cache_dir: Path, model_name: str) -> bool:
-    """Delete a half-downloaded model cache so fastembed re-downloads cleanly.
+def _model_dir(cache_dir: Path, model_name: str) -> Path:
+    return cache_dir / f"models--{model_name.replace('/', '--')}"
 
-    A download interrupted mid-flight leaves the small config/tokenizer blobs
-    in place but the large ``model.onnx`` as a 0-byte ``*.incomplete`` blob with
-    no snapshot symlink. fastembed then tries to load a file that isn't there
-    and dies on every call instead of resuming. Detect that signature — a
-    ``*.incomplete`` blob, or no resolvable ``onnx/model.onnx`` in any
-    snapshot — and remove the model dir. Returns True if anything was purged.
+
+def model_is_cached(cache_dir: Path, model_name: str) -> bool:
+    """True iff ``model_name`` is present *and* loadable from ``cache_dir``.
+
+    The one predicate for "do we already have this model?". Both the
+    repair-on-corruption path and the download notice read it, deliberately:
+    a second, laxer "does the directory exist?" heuristic would report a
+    corrupt cache as present, and the notice would then stay silent in the one
+    case where the user is about to wait for a full re-download.
+
+    "Loadable" is the same signature :func:`_purge_if_incomplete` repairs — a
+    download interrupted mid-flight leaves the small config/tokenizer blobs in
+    place but the large ``model.onnx`` as a 0-byte ``*.incomplete`` blob with no
+    snapshot symlink. Both shipped models (embedding and cross-encoder) put the
+    weights at ``snapshots/*/onnx/model.onnx``, so one check covers both.
     """
-    model_dir = cache_dir / f"models--{model_name.replace('/', '--')}"
+    model_dir = _model_dir(cache_dir, model_name)
     if not model_dir.is_dir():
         return False
 
     blobs = model_dir / "blobs"
-    has_incomplete = blobs.is_dir() and any(blobs.glob("*.incomplete"))
+    if blobs.is_dir() and any(blobs.glob("*.incomplete")):
+        return False
 
     snapshots = model_dir / "snapshots"
-    has_onnx = snapshots.is_dir() and any(
+    return snapshots.is_dir() and any(
         (snap / "onnx" / "model.onnx").exists() for snap in snapshots.iterdir()
     )
 
-    if has_incomplete or not has_onnx:
-        shutil.rmtree(model_dir, ignore_errors=True)
-        logger.warning(
-            "Purged incomplete embedding-model cache at %s; re-downloading.",
-            model_dir,
+
+def _purge_if_incomplete(cache_dir: Path, model_name: str) -> bool:
+    """Delete a half-downloaded model cache so fastembed re-downloads cleanly.
+
+    Without this, fastembed tries to load a file that isn't there and dies on
+    every call instead of resuming. Returns True if anything was purged.
+    """
+    model_dir = _model_dir(cache_dir, model_name)
+    if not model_dir.is_dir():
+        return False
+    if model_is_cached(cache_dir, model_name):
+        return False
+
+    shutil.rmtree(model_dir, ignore_errors=True)
+    logger.warning(
+        "Purged incomplete embedding-model cache at %s; re-downloading.",
+        model_dir,
+    )
+    return True
+
+
+# Approximate on-disk size of the models hafiz ships with, for the one-time
+# download notice. Measured with `du -sh` against a warm cache rather than
+# taken from the model card: what the user actually waits for is bytes landing
+# on disk, and the ONNX blob plus tokenizer runs well above the headline
+# figure (nomic-embed is 523 MB on disk against a "~260 MB" reputation).
+_MODEL_SIZE_HINT: dict[str, str] = {
+    "nomic-ai/nomic-embed-text-v1.5": "~520 MB",
+    "Xenova/ms-marco-MiniLM-L-6-v2": "~90 MB",
+}
+
+#: Models already announced in this process. The auto-device path can build a
+#: model twice (GPU probe fails → CPU fallback), and one wait deserves one
+#: notice.
+_announced: set[str] = set()
+
+
+def announce_download(cache_dir: Path, model_name: str, *, purpose: str) -> None:
+    """Tell the user, once, that a multi-hundred-MB download is starting.
+
+    Unannounced, this is indistinguishable from a hang: ~520 MB with no output
+    on a slow link is minutes of silence, and the rational response is Ctrl-C —
+    which is exactly what leaves the half-written cache
+    :func:`_purge_if_incomplete` exists to repair.
+
+    **stderr, never stdout.** ``hafiz mcp`` speaks JSON-RPC over stdio and
+    ``--json`` is a documented contract; a line on stdout would corrupt both,
+    and would do it only on a cold cache — the hardest case to reproduce.
+
+    The provenance line is not decoration. Hafiz's claim is that the store
+    stays on the machine, and this is the one moment it contacts a third party;
+    a tool making that claim should say so rather than let a stranger discover
+    it in a packet trace.
+    """
+    if model_name in _announced:
+        return
+    _announced.add(model_name)
+
+    try:
+        shown = f"~/{cache_dir.relative_to(Path.home())}"
+    except ValueError:
+        shown = str(cache_dir)
+
+    size = _MODEL_SIZE_HINT.get(model_name, "a few hundred MB")
+    _console.print(
+        Panel(
+            f"Fetching the {purpose} model — one time, [bold]{size}[/bold].\n"
+            f"  [cyan]{model_name}[/cyan] → {shown}\n"
+            f"From huggingface.co. Nothing from your store is sent.",
+            title="First run",
+            border_style="cyan",
+            padding=(0, 1),
         )
-        return True
-    return False
+    )
 
 
 def _text_embedding(model_name: str, providers: list[str]) -> TextEmbedding:
@@ -116,7 +192,12 @@ def _text_embedding(model_name: str, providers: list[str]) -> TextEmbedding:
     a bare ONNX ``NO_SUCHFILE`` traceback escape.
     """
     cache_dir = _model_cache_dir()
+    # Repair, then decide. A corrupt cache reads as "not cached" either way —
+    # the predicate checks completeness, not presence — so this order is the
+    # natural one rather than a load-bearing one.
     _purge_if_incomplete(cache_dir, model_name)
+    if not model_is_cached(cache_dir, model_name):
+        announce_download(cache_dir, model_name, purpose="embedding")
     try:
         return TextEmbedding(model_name=model_name, providers=providers, cache_dir=str(cache_dir))
     except Exception as exc:
@@ -389,6 +470,11 @@ async def embed_query(query: str) -> list[float]:
 
 
 def reset_cache() -> None:
-    """Drop the in-process singleton. Used by tests and `hafiz embedding retry`."""
+    """Drop the in-process singleton. Used by tests and `hafiz embedding retry`.
+
+    Also clears the announced-downloads set: `hafiz embedding retry` exists to
+    re-download after a failure, and that wait deserves its own notice.
+    """
     global _embed_model
     _embed_model = None
+    _announced.clear()
