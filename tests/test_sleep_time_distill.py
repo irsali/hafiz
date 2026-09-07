@@ -215,6 +215,96 @@ def test_message_threshold_defaults_to_the_note_threshold():
     assert [t.size for t in themes] == [2]
 
 
+# ── the shipped defaults, not just the mechanism ─────────────────────
+#
+# Every test above passes its thresholds explicitly, which means it verifies
+# the *machinery* and says nothing about the *values*. That gap was found by
+# mutation: reverting `cluster_threshold_messages` to 0.65, or
+# `theme_corpus_limit` to 50 — either of which re-creates the original bug —
+# left all 1080 tests green. The three tests below close it, and they read the
+# built-in `DistillSettings()` rather than `load_settings()` on purpose: it is
+# the shipped default that must hold, not whatever this machine's hafiz.toml
+# happens to say.
+
+
+def _chain_vectors(n: int, *, window: int = 4) -> dict[str, list[float]]:
+    """A corpus shaped like the real failure mode: a chain, not a blob.
+
+    Vector *i* is ``window`` consecutive ones starting at *i*, so overlap —
+    and therefore cosine — falls off with distance:
+    adjacent = ``(window-1)/window`` = 0.75, two apart 0.5, four apart 0.0.
+
+    That is deliberately chosen to straddle the two thresholds. At the note bar
+    (0.65) every adjacent pair links and single-linkage transitively merges the
+    whole chain into one theme, even though the ends share nothing. At the turn
+    bar (0.78) no pair links. It reproduces chaining exactly, with no
+    randomness, so the test cannot flake.
+    """
+    dim = n + window - 1
+    vectors = {}
+    for i in range(n):
+        v = [0.0] * dim
+        for j in range(i, i + window):
+            v[j] = 1.0
+        vectors[f"m{i}"] = v
+    return vectors
+
+
+def test_the_shipped_defaults_do_not_chain_a_dense_turn_corpus():
+    """The regression guard that does not care *which* knob broke.
+
+    This asserts the outcome — no single theme swallows the corpus — rather
+    than a threshold value, so it still fails if the default is lowered, if the
+    two thresholds are collapsed into one, or if the linkage strategy is
+    changed in a way that reintroduces chaining. It is the test that would have
+    caught the 366-of-400 blob before it reached the live store.
+    """
+    from hafiz.core.config import DistillSettings
+
+    cfg = DistillSettings()
+    n = 12
+    themes = cluster_candidates(
+        [],
+        [_msg(f"m{i}") for i in range(n)],
+        _chain_vectors(n),
+        threshold=cfg.cluster_threshold,
+        message_threshold=cfg.cluster_threshold_messages,
+    )
+    largest = max(t.size for t in themes)
+    assert largest < n, (
+        f"a chained corpus collapsed into one theme of {largest}/{n} under the "
+        f"shipped defaults (notes {cfg.cluster_threshold}, turns "
+        f"{cfg.cluster_threshold_messages}) — this is the 366-of-400 blob"
+    )
+
+
+def test_the_turn_threshold_ships_stricter_than_the_note_threshold():
+    """The gap between them is the whole fix, not a coincidence of tuning.
+
+    Turns are more self-similar than notes, so their bar must be higher. If a
+    future change makes these equal, the per-corpus split silently becomes a
+    no-op while every mechanism test still passes.
+    """
+    from hafiz.core.config import DistillSettings
+
+    cfg = DistillSettings()
+    assert cfg.cluster_threshold_messages > cfg.cluster_threshold
+
+
+def test_the_clustering_corpus_ships_larger_than_the_readable_slice():
+    """Otherwise the second query buys nothing.
+
+    The point of splitting the caps is that clustering can see past the
+    readable slice. At `theme_corpus_limit <= message_limit` the split is
+    machinery with no effect, which is exactly the starvation it was added to
+    fix.
+    """
+    from hafiz.core.config import DistillSettings
+
+    cfg = DistillSettings()
+    assert cfg.theme_corpus_limit > cfg.message_limit
+
+
 def test_unembedded_turn_is_not_a_candidate():
     """Selective embedding already declined it at import — short turns and pure
     tool-result echoes never get a vector. Re-offering them here contradicts
