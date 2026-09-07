@@ -52,7 +52,7 @@ app = typer.Typer(
         # user to run a command whose own help calls it slow (it loads
         # fastembed). Diagnostics belong under "When stuck".
         "[bold]Getting started:[/bold] hafiz init  →  hafiz ingest <path> "
-        "--project <name>  →  hafiz query \"<text>\"\n"
+        '--project <name>  →  hafiz query "<text>"\n'
         '[bold]Day-to-day:[/bold]    hafiz context "<task>"  ·  hafiz query "<text>"'
         '  ·  hafiz observe "<decision>" --type decision  ·  hafiz note "<thought>"\n'
         "[bold]When stuck:[/bold]    hafiz errors list  ·  hafiz status --diagnose"
