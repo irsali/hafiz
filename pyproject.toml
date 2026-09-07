@@ -23,7 +23,7 @@ dependencies = [
     # the embedded store is the default backend, so an install that cannot
     # open it is not a working install. Both ship pure-python / manylinux
     # wheels — no Rust, no compiler. That bar is what disqualified libSQL,
-    # whose binding is sdist-only (see workitems/active/embedded-backend.md).
+    # whose binding is sdist-only (see workitems/done/embedded-backend.md).
     "aiosqlite>=0.20",
     "sqlite-vec>=0.1.6",
     "fastembed>=0.7",

@@ -3,7 +3,7 @@
 This module is the home of the **selective-embed policy** and the
 ``communications`` / ``communication_messages`` store helpers.
 
-Design rules (locked in workitems/active/communications-and-sessions.md):
+Design rules (locked in workitems/done/communications-and-sessions.md):
 
   - **Raw is canonical, embedding is derived.** ``content`` is required
     on every message; ``embedding`` is nullable and populated only when

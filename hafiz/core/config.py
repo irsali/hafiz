@@ -165,7 +165,7 @@ class EmbeddingSettings(BaseModel):
     # Conservative CPU-safe default. ONNX attention is O(n²) in sequence
     # length; a ~2 KB part is ~512 tokens and keeps peak RSS bounded on
     # a 16 GB laptop. GPU hosts can safely raise this via `hafiz config set`
-    # or `hafiz doctor --apply`. See: workitems/active/tunable-registry.md.
+    # or `hafiz doctor --apply`. See: workitems/done/tunable-registry.md.
     max_part_chars: int = 2_000
 
 

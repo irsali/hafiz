@@ -151,7 +151,7 @@ def parse_extraction_payload(data: dict[str, Any]) -> ExtractionResult:
             "This payload looks like agent extraction v1 "
             "('entities'/'relations' with entity_type/relation_type). "
             "The contract bumped to v2 with the structural-grounding work "
-            "(see workitems/active/structural-grounding.md). Agents now "
+            "(see workitems/done/structural-grounding.md). Agents now "
             "write annotations + semantic edges only; structural facts "
             "(calls/imports/inherits/classes/functions) are owned by the "
             "parser. Update your extractor or re-run `hafiz agent install` "

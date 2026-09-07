@@ -1,7 +1,7 @@
 """The one place where Hafiz knows which database it is talking to.
 
 Hafiz targets Postgres (team/shared installs) and, from Phase 2 of
-workitems/active/embedded-backend.md, an embedded SQLite + sqlite-vec
+workitems/done/embedded-backend.md, an embedded SQLite + sqlite-vec
 backend (solo installs). Two backends behind one ``--json`` contract is a
 permanent maintenance cost, and the way that cost gets paid is by keeping
 every dialect-sensitive construct **in this module**, so "did you go
@@ -70,7 +70,7 @@ class UnsupportedOnBackendError(NotImplementedError):
 def _unsupported(construct: str, dialect: str, phase: str) -> UnsupportedOnBackendError:
     return UnsupportedOnBackendError(
         f"{construct} is not implemented for the '{dialect}' backend yet "
-        f"({phase} owns it — see workitems/active/embedded-backend.md). "
+        f"({phase} owns it — see workitems/done/embedded-backend.md). "
         "Refusing to emit approximate SQL: a wrong ranking is harder to "
         "detect than a hard failure."
     )

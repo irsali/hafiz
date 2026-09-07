@@ -5,7 +5,7 @@ JSON cursor in :mod:`hafiz.core.session` keeps track of *which* session
 this terminal is currently in; the actual session record — slug, name,
 agent, scope, started_at, ended_at — lives here.
 
-Phase 2 of workitems/active/communications-and-sessions.md.
+Phase 2 of workitems/done/communications-and-sessions.md.
 """
 
 from __future__ import annotations

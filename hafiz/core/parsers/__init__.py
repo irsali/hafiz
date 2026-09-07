@@ -13,7 +13,7 @@ In-tree parsers register via module import. Third-party parsers plug in via
 the `hafiz.parsers` Python entry-point group — `pip install hafiz-parser-go`
 is how you turn on Go AST for that language; no config edit required.
 
-See workitems/active/structural-grounding.md for the design.
+See workitems/done/structural-grounding.md for the design.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 The CLI verb stays ``observe`` (and ``note`` / ``recall``); internally these
 write/read the `annotations` table via :mod:`hafiz.core.annotations`. See
-workitems/active/structural-grounding.md for the rename rationale.
+workitems/done/structural-grounding.md for the rename rationale.
 """
 
 from __future__ import annotations

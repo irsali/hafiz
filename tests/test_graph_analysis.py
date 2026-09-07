@@ -658,10 +658,10 @@ def test_graph_stats_top_central_respects_limit():
 #: them as a SQLite gap before the true cause surfaced.
 #:
 #: Rewiring ``graph_analysis`` onto units/edges belongs to Phase 3 of
-#: workitems/active/structural-grounding.md, not here.
+#: workitems/done/structural-grounding.md, not here.
 _PRE_0005_SCHEMA = pytest.mark.skip(
     reason="graph_analysis still targets the pre-0005 entities/relations tables; "
-    "rewire tracked in workitems/active/structural-grounding.md"
+    "rewire tracked in workitems/done/structural-grounding.md"
 )
 
 

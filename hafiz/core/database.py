@@ -22,7 +22,7 @@ Two storage layers (see docs/architecture.md "Storage layers"):
                    rewritten_to track rebase/amend/squash (Phase 5b).
 
 **Source layer** — high-volume, time-series, immutable, retention-bounded
-(see workitems/active/communications-and-sessions.md):
+(see workitems/done/communications-and-sessions.md):
 
   sessions               - Engineer/agent threads of work. Promoted from
                            per-TTY JSON to a real DB row. Annotations FK
@@ -44,7 +44,7 @@ Two storage layers (see docs/architecture.md "Storage layers"):
                            adopted; old metadata stays readable.
 
 See workitems/done/structural-grounding.md and
-workitems/active/communications-and-sessions.md for design.
+workitems/done/communications-and-sessions.md for design.
 """
 
 from __future__ import annotations
@@ -656,7 +656,7 @@ class Retrieval(Base):
 # graph_analysis / observations / distill / store / extractor, and several
 # commands) still import Chunk / Entity / Relation / Observation at module
 # scope. Migration 0005 dropped those tables; the callers get rewired in
-# Phase 3 of workitems/active/structural-grounding.md.
+# Phase 3 of workitems/done/structural-grounding.md.
 #
 # Until then these stubs keep the import chain alive so the CLI loads and
 # unrelated tests run. Any attempt to instantiate or ORM-query them fails
@@ -672,7 +672,7 @@ class _RemovedInV5:
         raise RuntimeError(
             f"{type(self)._name} was removed in migration 0005 "
             "(structural-grounding). Callers are rewired in Phase 3; "
-            "see workitems/active/structural-grounding.md."
+            "see workitems/done/structural-grounding.md."
         )
 
 
