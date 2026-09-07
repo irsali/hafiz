@@ -110,3 +110,85 @@ def test_a_docstring_reference_is_allowed():
     """
     tree = ast.parse('"""Design notes: see workitems/active/thing.md."""\nx = 1\n')
     assert _string_constants(tree) == []
+
+
+# ── cold-start: the errors a brand-new user actually meets ───────────
+#
+# Found by walking a genuinely empty environment (clean HOME + XDG, a cwd
+# outside the repo so config discovery finds nothing). The first thing a new
+# user does is `hafiz status` before `hafiz init`, and what they got was a raw
+# SQLAlchemy traceback plus advice to check that a Postgres server they had
+# never installed was reachable — because the recognizer predated the embedded
+# store becoming the default.
+
+
+def test_a_store_with_no_schema_is_told_to_run_init():
+    """Not "check whether Postgres is reachable" — there is no Postgres.
+
+    This is the single most likely error on a fresh install, so its message is
+    the one that decides whether someone concludes hafiz is broken.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from hafiz.core.error_log import _recognize_db_connectivity
+
+    exc = OperationalError("SELECT count(*) FROM files", {}, Exception("no such table: files"))
+    got = _recognize_db_connectivity(exc, argv=["status"], traceback_text="")
+    assert got is not None
+    message, context = got
+    assert "hafiz init" in message
+    assert context.get("missing_schema") is True
+    assert "Postgres" not in message, (
+        "a SQLite user with no schema must not be sent to check a Postgres server"
+    )
+
+
+def test_a_genuine_connectivity_failure_still_points_at_diagnose():
+    """The narrowing must not swallow the case the recognizer was built for."""
+    from sqlalchemy.exc import OperationalError
+
+    from hafiz.core.error_log import _recognize_db_connectivity
+
+    exc = OperationalError("SELECT 1", {}, Exception("connection refused"))
+    got = _recognize_db_connectivity(exc, argv=["status"], traceback_text="")
+    assert got is not None
+    message, _ = got
+    assert "--diagnose" in message
+    assert "hafiz init" in message, "and should still mention the no-server path"
+
+
+def test_the_json_contract_holds_on_the_unhandled_error_path():
+    """`--json` is a contract, and failure paths are where it matters most.
+
+    An agent that asked for JSON and received a Rich-formatted traceback has
+    no way to read what went wrong — it just fails to parse. The backstop
+    handler used to exempt itself from the documented
+    `{"ok": false, "error": ...}` shape.
+    """
+    from hafiz.cli import _wants_json
+
+    assert _wants_json(["status", "--json"])
+    assert _wants_json(["query", "x", "--format", "json"])
+    assert _wants_json(["query", "x", "--format=json"])
+    assert not _wants_json(["status"])
+    assert not _wants_json(["query", "x", "--format", "compact"])
+    # A value that merely looks like the flag must not trigger it.
+    assert not _wants_json(["observe", "the --json flag is documented"])
+
+
+def test_the_getting_started_path_matches_the_readme():
+    """Three steps: init, ingest, query.
+
+    It used to route a brand-new user through `status --diagnose` and
+    `doctor --probe` between init and ingest. `doctor --probe`'s own help calls
+    it slow — it loads fastembed — so that was a stall recommended as setup,
+    and it contradicted the README's documented happy path.
+    """
+    import hafiz.cli as cli
+
+    help_text = cli.app.info.help or ""
+    started = help_text.split("Getting started:")[1].split("\n")[0]
+    assert "hafiz init" in started
+    assert "hafiz ingest" in started
+    assert "--probe" not in started, "a slow diagnostic is not a setup step"
+    assert "--diagnose" not in started, "diagnostics belong under 'When stuck'"

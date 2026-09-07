@@ -184,12 +184,25 @@ def _recognize_pgvector_missing(
     )
 
 
+#: SQLite reports a store that exists but has no schema as "no such table".
+#: On the embedded backend — the default since the store flip — that means
+#: `hafiz init` has not run, which is a *setup* state, not connectivity.
+_NO_SCHEMA_MARKERS = ("no such table",)
+
+
 def _recognize_db_connectivity(
     exc: BaseException, *, argv: list[str], traceback_text: str
 ) -> _Suggestion | None:
-    """Sqlalchemy ``OperationalError`` — usually unreachable DB, refused
-    connection, bad credentials, or no such database. We don't try to
-    classify the sub-cause; we point the user at the diagnose path."""
+    """Sqlalchemy ``OperationalError`` — an unreachable DB, refused
+    connection, bad credentials, no such database, or a store with no schema.
+
+    The sub-cause is not classified except for one case that matters a great
+    deal: a missing schema. This recognizer used to answer every
+    ``OperationalError`` with "Hafiz couldn't talk to Postgres", which became
+    wrong when the embedded store became the default. The first thing a new
+    user does is ``hafiz status`` before ``hafiz init``, and they were told to
+    check that a Postgres server they never installed was reachable.
+    """
     if not _exc_inherits_from(exc, "sqlalchemy.exc.OperationalError"):
         return None
     # Skip if the embedded message is a pgvector miss — that recognizer
@@ -197,11 +210,19 @@ def _recognize_db_connectivity(
     msg_lower = str(exc).lower()
     if any(marker in msg_lower for marker in _PGVECTOR_MARKERS):
         return None
+    if any(marker in msg_lower for marker in _NO_SCHEMA_MARKERS):
+        return (
+            "The store has no schema yet — run `hafiz init` to create it. "
+            "That is the normal first step on a new install; nothing is "
+            "broken.",
+            {"db_error_class": type(exc).__name__, "missing_schema": True},
+        )
     return (
-        "Hafiz couldn't talk to Postgres. Run `hafiz status --diagnose` "
-        "to see whether the server is reachable and the configured URL "
-        "is correct (check `[database].url` in your hafiz.toml or the "
-        "HAFIZ_DATABASE__URL env var).",
+        "Hafiz couldn't reach the database. Run `hafiz status --diagnose` "
+        "to see whether it is reachable and the configured URL is correct "
+        "(check `[database].url` in your hafiz.toml or the "
+        "HAFIZ_DATABASE__URL env var). If you have not set one up yet, "
+        "`hafiz init` creates an embedded store with no server needed.",
         {"db_error_class": type(exc).__name__},
     )
 

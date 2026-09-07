@@ -46,8 +46,13 @@ app = typer.Typer(
     name="hafiz",
     help=(
         "Hafiz — sovereign intelligence layer for your workspace.\n\n"
-        "[bold]Getting started:[/bold] hafiz init  →  hafiz status --diagnose"
-        "  →  hafiz doctor --probe  →  hafiz ingest <path> --project <name>\n"
+        # Three steps, matching the README. The previous version put
+        # `status --diagnose` and `doctor --probe` between init and ingest,
+        # which contradicted the documented happy path and told a brand-new
+        # user to run a command whose own help calls it slow (it loads
+        # fastembed). Diagnostics belong under "When stuck".
+        "[bold]Getting started:[/bold] hafiz init  →  hafiz ingest <path> "
+        "--project <name>  →  hafiz query \"<text>\"\n"
         '[bold]Day-to-day:[/bold]    hafiz context "<task>"  ·  hafiz query "<text>"'
         '  ·  hafiz observe "<decision>" --type decision  ·  hafiz note "<thought>"\n'
         "[bold]When stuck:[/bold]    hafiz errors list  ·  hafiz status --diagnose"
@@ -2070,6 +2075,24 @@ def errors_clear(
 # legitimate non-zero exits.
 
 
+def _wants_json(argv: list[str]) -> bool:
+    """Did the caller ask for machine-readable output?
+
+    Read off argv rather than from parsed options, because the backstop runs
+    *after* whatever failed — the parsed context is gone, and on a parse
+    failure there never was one. `--format json` is included because it is the
+    documented long form that `--json` aliases.
+    """
+    if "--json" in argv:
+        return True
+    for n, arg in enumerate(argv):
+        if arg == "--format" and n + 1 < len(argv) and argv[n + 1] == "json":
+            return True
+        if arg == "--format=json":
+            return True
+    return False
+
+
 def main() -> None:
     import sys as _sys
 
@@ -2086,6 +2109,28 @@ def main() -> None:
         from hafiz.core.error_log import log_exception
 
         record = log_exception(exc, argv=_sys.argv[1:])
+
+        # `--json` is a contract, and it has to hold on the failure paths too
+        # — those are the ones a caller cannot anticipate. An agent that asked
+        # for JSON and got a Rich-formatted traceback has no way to read what
+        # went wrong; it just fails to parse. The documented shape is
+        # `{"ok": false, "error": ...}` on stdout with a non-zero exit, so the
+        # backstop honours it rather than exempting itself.
+        if _wants_json(_sys.argv[1:]):
+            import json as _json
+
+            print(
+                _json.dumps(
+                    {
+                        "ok": False,
+                        "error": f"{record.exception_type}: {record.message}",
+                        "error_id": record.id,
+                        "suggested_action": record.suggested_action,
+                    }
+                )
+            )
+            _sys.exit(1)
+
         err = _Console(stderr=True)
         err.print(
             f"[red]hafiz hit an unexpected error:[/red] "
