@@ -313,6 +313,32 @@ def test_shipped_skills_version_is_readable():
     assert isinstance(v, int)
 
 
+def test_the_version_marker_agrees_with_the_heading():
+    """The two places the version is written must not drift apart.
+
+    This has already cost a release. The `<!-- SKILLS_VERSION: N -->` marker is
+    what `agent install` compares to decide whether an installed config is
+    stale; the `(vN)` in the H1 is what a human reads. When the heading was
+    bumped to v13 and the marker was left behind, `install` saw no upgrade and
+    the v13 content was never delivered to a single installed config — silently,
+    because both files looked right in isolation.
+
+    Only the marker is load-bearing, which is exactly why the heading is the one
+    that drifts.
+    """
+    import re
+
+    content = load_skills_content()
+    marker = current_skills_version()
+    heading = re.search(r"^#\s+.*\(v(\d+)\)\s*$", content, re.MULTILINE)
+    assert heading, "the H1 must carry a (vN) version for a reader"
+    assert int(heading.group(1)) == marker, (
+        f"SKILLS_VERSION marker is {marker} but the heading says "
+        f"v{heading.group(1)} — installed configs follow the marker, so the "
+        f"heading's version would never ship"
+    )
+
+
 def test_installed_skills_version_roundtrip(tmp_path: Path):
     target = tmp_path / "INSTRUCTIONS.md"
     content = load_skills_content()

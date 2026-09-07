@@ -247,6 +247,47 @@ hafiz observe "JWT preferred over sessions" --type decision
 hafiz graph impact AuthController
 ```
 
+### 7. Connect an agent
+
+Any agent that can run a shell command can use Hafiz. `hafiz agent install`
+writes the agent contract into its config, so it knows the commands and when
+to use them:
+
+```bash
+hafiz agent install claude-code --hooks   # --hooks also captures transcripts
+hafiz agent list
+```
+
+For agents that **cannot** shell out — a chat surface, a desktop or hosted
+client — the same knowledge layer is served over MCP. The `mcp` extra is not
+installed by default, because its SDK pulls in an HTTP server stack a stdio
+server never touches:
+
+```bash
+pipx install "hafiz[mcp]"
+```
+
+Then point the client at it. Transport is stdio only — no port, no listener:
+
+```json
+{
+  "mcpServers": {
+    "hafiz": {
+      "command": "hafiz",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Reads and writes are both available, so an agent can record decisions as well
+as search. Install, destructive and long-running commands (`init`, `hooks`,
+`config set`, `forget`, `prune`, `ingest`, `import`) are deliberately **not**
+exposed — an MCP client calls tools without asking anyone, and those belong
+where a human is present. Writes are attributed to the connecting client, so
+the audit trail records which agent wrote what. See
+[docs/commands.md](docs/commands.md) for the tool list.
+
 ## The Capture → Distill Loop
 
 Beyond indexing your codebase, Hafiz is a second brain for the work itself — raw thoughts, transcripts, decisions, and what replaced what. The loop is: **capture raw → review → distill into decisions → supersede when things change**.
