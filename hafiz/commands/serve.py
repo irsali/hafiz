@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 
 from rich.console import Console
 from rich.panel import Panel
@@ -46,10 +48,40 @@ def run_serve(*, idle_timeout: float, detach: bool, output_json: bool) -> None:
         )
 
     try:
-        asyncio.run(serve(idle_timeout=timeout))
+        served = asyncio.run(serve(idle_timeout=timeout))
     except KeyboardInterrupt:
         if not output_json:
             console.print("\n[dim]daemon stopped.[/dim]")
+        return
+
+    if not served:
+        # Lost the singleton lock — another daemon owns the socket. Idempotent
+        # rather than an error: "make sure one is running" is the intent, and
+        # one is.
+        from hafiz.core.daemon import _read_lock_pid
+
+        pid = _read_lock_pid()
+        if output_json:
+            console.print_json(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "started": False,
+                        "already_running": True,
+                        "pid": pid,
+                        "socket": str(socket_path()),
+                    }
+                )
+            )
+        else:
+            console.print(
+                f"[yellow]already running[/yellow] — another daemon owns "
+                f"{socket_path()}" + (f" (pid {pid})" if pid else "")
+            )
+        return
+
+    if output_json:
+        console.print_json(json.dumps({"ok": True, "started": True, "already_running": False}))
 
 
 def _spawn_detached(idle_timeout: float) -> None:
@@ -58,7 +90,6 @@ def _spawn_detached(idle_timeout: float) -> None:
     Mirrors the client's auto-spawn: run ``hafiz.core.daemon`` under the same
     interpreter with ``start_new_session`` so it outlives this command.
     """
-    import os
     import subprocess
     import sys
 
@@ -95,6 +126,10 @@ def run_status(*, output_json: bool) -> None:
                     "running": live,
                     "socket": str(sock),
                     "version": resp.get("version") if resp else None,
+                    # Which process is answering. Reported by the daemon
+                    # itself rather than read from the lock, so it is the
+                    # pid that actually served this ping.
+                    "pid": resp.get("pid") if resp else None,
                     # A consumer polling this needs to know whether "not
                     # running" means "will spawn on demand" or "will never
                     # spawn". Those are different operational states and the
@@ -121,6 +156,7 @@ def run_status(*, output_json: bool) -> None:
                 f"[bold green]running[/bold green]\n\n"
                 f"  Socket:   {sock}\n"
                 f"  Version:  {resp.get('version')}\n"
+                f"  Pid:      {resp.get('pid') or 'unknown'}\n"
                 f"  Idle timeout: {_idle_timeout_label()}",
                 border_style="green",
             )
@@ -161,31 +197,79 @@ def _idle_timeout_label() -> str:
 
 
 def run_stop(*, output_json: bool) -> None:
-    """Shut the daemon down by removing its socket; it exits on next idle tick.
+    """Signal the daemon to shut down, and confirm it actually did.
 
-    v1 doesn't track a pid, so ``stop`` unlinks the socket (forcing new
-    clients to spawn a fresh daemon) and the running daemon self-exits when
-    its idle timer fires or its socket vanishes. This is best-effort.
+    This used to unlink the socket and claim the daemon "self-exits when its
+    idle timer fires or its socket vanishes". Nothing watched for the socket
+    vanishing — only the idle timer fired — so ``stop`` left a live daemon
+    holding ~1 GB, unreachable, for up to 30 minutes. It reported success.
+
+    The daemon now records its pid in the singleton lock and handles SIGTERM,
+    so stopping is a real signal with a real confirmation. The socket unlink
+    stays as a fallback for a daemon predating this (its socket goes, so new
+    clients spawn a fresh one) and the return value says which path was used.
     """
-    from hafiz.core.daemon import socket_path
+    from hafiz.core.daemon import _read_lock_pid, socket_path
     from hafiz.core.daemon_client import _send_one
 
-    sock = socket_path()
-    was_live = bool(asyncio.run(_send_one({"op": "ping"}, timeout=2.0)))
+    async def _ping():
+        return await _send_one({"op": "ping"}, timeout=2.0)
+
+    resp = asyncio.run(_ping())
+    was_live = bool(resp and resp.get("pong"))
+    # Prefer the pid the daemon itself reported; fall back to the lock file for
+    # a daemon that is wedged enough not to answer a ping.
+    pid = (resp or {}).get("pid") or _read_lock_pid()
+
+    signalled = False
+    stopped = False
+    if was_live and pid:
+        try:
+            os.kill(int(pid), 15)  # SIGTERM → the same shutdown path as idle
+            signalled = True
+        except (OSError, ValueError):
+            pass
+
+    if signalled:
+        # Confirm rather than assume. Shutdown closes the server, unlinks the
+        # socket and closes the DB engine, so a successful stop stops
+        # answering pings.
+        for _ in range(20):  # ~2s
+            time.sleep(0.1)
+            if not asyncio.run(_ping()):
+                stopped = True
+                break
+
     removed = False
-    try:
-        sock.unlink()
-        removed = True
-    except OSError:
-        pass
+    if not stopped:
+        # Fallback for a pre-signal daemon, or one that ignored SIGTERM.
+        try:
+            socket_path().unlink()
+            removed = True
+        except OSError:
+            pass
 
     if output_json:
         console.print_json(
-            json.dumps({"ok": True, "was_running": was_live, "socket_removed": removed})
+            json.dumps(
+                {
+                    "ok": True,
+                    "was_running": was_live,
+                    "pid": pid,
+                    "signalled": signalled,
+                    "stopped": stopped,
+                    "socket_removed": removed,
+                }
+            )
         )
         return
 
-    if was_live:
-        console.print("[green]daemon stopping[/green] (socket removed).")
+    if stopped:
+        console.print(f"[green]daemon stopped[/green] (pid {pid}).")
+    elif was_live:
+        console.print(
+            "[yellow]daemon did not confirm shutdown[/yellow] — socket removed, so new "
+            "calls will start a fresh one."
+        )
     else:
         console.print("[dim]no daemon running.[/dim]")

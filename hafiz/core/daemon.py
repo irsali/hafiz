@@ -29,6 +29,7 @@ never worse than the plain CLI.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -84,6 +85,134 @@ def socket_path() -> Path:
     return runtime_dir() / "daemon.sock"
 
 
+def lock_path() -> Path:
+    """Absolute path to the daemon's singleton lock, beside its socket."""
+    return socket_path().with_name(socket_path().name + ".lock")
+
+
+# ---------------------------------------------------------------------------
+# Singleton lock
+# ---------------------------------------------------------------------------
+#
+# Observed 2026-09-08: four daemons on one host, 4.1 GB resident between them,
+# all started within a second, all bound to the same socket path — so three
+# were unreachable and had each paid a ~1 GB model load to become so. Nothing
+# serialized startup, and three separate places assumed sole ownership:
+#
+#   * the client's spawn path (fail to connect → unlink → spawn) has no lock,
+#     so N concurrent callers spawn N daemons;
+#   * ``serve`` unlinks the socket before binding, so a late daemon steals the
+#     path from a working one;
+#   * ``serve``'s shutdown unlinks *the path*, so a loser's idle timeout
+#     deletes the **winner's** socket and leaves a live daemon nothing can
+#     reach.
+#
+# One exclusive lock, held for the process lifetime, fixes all three: losers
+# exit in milliseconds instead of after a model load, and the two unlinks
+# become correct because only the owner can reach them.
+#
+# ``flock`` rather than a pidfile deliberately. The kernel releases it when the
+# holder exits for any reason, including SIGKILL, so there is no stale-lock
+# recovery path to get wrong — which is the objection the original "v1 doesn't
+# track a pid" note was really making. The pid is written *inside* the lock for
+# diagnosis, but ownership is the lock, never the file's contents.
+
+
+def _read_lock_pid() -> int | None:
+    """The pid recorded in the lock file, or None if unreadable/absent.
+
+    Advisory only — a pid here does **not** mean a daemon is live (that is
+    what the lock itself answers). Used for reporting and for ``serve stop``.
+    """
+    try:
+        raw = lock_path().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    try:
+        return int(raw.splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def acquire_singleton(*, _path: Path | None = None) -> int | None:
+    """Take the daemon lock, or return None when another daemon holds it.
+
+    Returns the open file descriptor on success; the caller must keep it open
+    for as long as it serves, because closing it releases the lock. Records
+    our pid in the file for diagnosis.
+    """
+    import fcntl
+
+    path = _path or lock_path()
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        os.fsync(fd)
+    except OSError:
+        pass  # the lock is what matters; the pid is a convenience
+    return fd
+
+
+def release_singleton(fd: int | None) -> None:
+    """Drop the daemon lock. Closing the descriptor is what releases it."""
+    if fd is None:
+        return
+    try:
+        os.ftruncate(fd, 0)
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+async def _another_daemon_answers(sock: Path) -> bool:
+    """True when something is already serving on ``sock``.
+
+    Belt and braces for the one case the lock alone cannot cover. ``flock``
+    guards an *inode*, not a name, so deleting the lock file while a daemon
+    holds it leaves that daemon locking an orphan — and a newcomer then
+    creates a fresh file at the same path and locks that quite happily. Two
+    daemons, one socket, exactly the bug the lock exists to prevent. Found by
+    deleting the lock file during verification of this very change, which is
+    how we know it is reachable rather than theoretical.
+
+    A live socket is the ground truth for "someone is already serving", so
+    ask it directly. Costs one failed connect on the normal path, because
+    there is no socket there to connect to.
+
+    Deliberately does not go through :mod:`hafiz.core.daemon_client` — that
+    module imports this one, and a lazy import to dodge the cycle would put
+    the client's auto-spawn logic on the daemon's own startup path.
+    """
+    if not sock.exists():
+        return False
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(str(sock)), timeout=1.0
+        )
+    except (TimeoutError, OSError):
+        return False  # stale socket file from a crashed daemon
+    try:
+        writer.write((json.dumps({"op": "ping", "version": PROTOCOL_VERSION}) + "\n").encode())
+        await writer.drain()
+        line = await asyncio.wait_for(reader.readline(), timeout=1.0)
+        return bool(line) and bool(json.loads(line).get("pong"))
+    except (TimeoutError, OSError, json.JSONDecodeError):
+        return False
+    finally:
+        writer.close()
+        with contextlib.suppress(OSError, TimeoutError):
+            await writer.wait_closed()
+
+
 # ---------------------------------------------------------------------------
 # Request dispatch — each op maps to the same core fn the CLI uses
 # ---------------------------------------------------------------------------
@@ -106,7 +235,15 @@ class _Server:
         op = req.get("op")
         try:
             if op == "ping":
-                return {"ok": True, "version": PROTOCOL_VERSION, "pong": True}
+                # The pid makes "which daemon is answering?" answerable. With
+                # four of them bound to one path and only one reachable, there
+                # was no way to tell them apart from the outside.
+                return {
+                    "ok": True,
+                    "version": PROTOCOL_VERSION,
+                    "pong": True,
+                    "pid": os.getpid(),
+                }
             if op == "context":
                 return await self._op_context(req)
             if op == "query_recall":
@@ -320,62 +457,105 @@ def _annotation_to_dict(ann) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def serve(*, idle_timeout: float = DEFAULT_IDLE_TIMEOUT) -> None:
+async def serve(*, idle_timeout: float = DEFAULT_IDLE_TIMEOUT) -> bool:
     """Run the daemon until idle-shutdown or the socket server is closed.
 
-    Warms the embedding model up front so the first real request is fast,
-    binds the Unix socket with 0600 perms, and serves until idle.
+    Takes the singleton lock, warms the embedding model, binds the Unix socket
+    with 0600 perms, and serves until idle.
+
+    Returns True if we served, False if another daemon already owns the
+    socket — the caller reports that rather than treating it as an error.
     """
     from hafiz.core.embeddings import get_embed_model
 
     sock = socket_path()
-    # Clean up a stale socket from a previous (crashed) daemon.
-    if sock.exists():
-        try:
-            sock.unlink()
-        except OSError:
-            pass
 
-    # Warm the model before binding so the first client request doesn't pay
-    # the cold-start cost we built this to avoid.
-    await asyncio.to_thread(get_embed_model)
-
-    # Warm the reranker too when enabled — otherwise the first recall pays the
-    # cross-encoder's cold load. Skip silently if it can't load (recall then
-    # falls back to vector order per the reranker's own contract).
-    from hafiz.core.reranker import rerank_enabled, warm_reranker
-
-    if rerank_enabled():
-        try:
-            await warm_reranker()
-        except Exception:  # noqa: BLE001 — degrade to vector-only, never block startup
-            logger.warning("reranker warm-up failed; recall will use vector order")
-
-    server = _Server(idle_timeout=idle_timeout, _embed_lock=asyncio.Lock())
-    server._loop = asyncio.get_running_loop()
-
-    aio_server = await asyncio.start_unix_server(server.handle, path=str(sock), limit=_RECV_LIMIT)
-    server._server = aio_server
-
-    # Lock the socket to owner-only (0600). start_unix_server honors umask,
-    # so set the bits explicitly rather than trusting the ambient umask.
-    os.chmod(sock, stat.S_IRUSR | stat.S_IWUSR)
-
-    server._bump_idle()
-    logger.info("hafiz daemon listening on %s (v%s)", sock, PROTOCOL_VERSION)
+    # Before anything expensive. A daemon that loses this race must cost
+    # milliseconds, not the ~1 GB embedding-model load it used to pay before
+    # discovering it was unreachable.
+    lock_fd = acquire_singleton()
+    if lock_fd is None:
+        logger.info("another hafiz daemon owns %s (pid %s) — exiting", sock, _read_lock_pid())
+        return False
 
     try:
-        async with aio_server:
-            await aio_server.wait_closed()
-    finally:
+        # The lock says no peer *started* after us; this says no peer is
+        # serving right now. Both are needed — see _another_daemon_answers.
+        if await _another_daemon_answers(sock):
+            logger.info("a daemon is already serving %s — exiting", sock)
+            return False
+
+        # Safe to clear now: we hold the lock and nothing answered on the
+        # socket, so a file here is a crashed daemon's leftover rather than a
+        # live one whose path we would be stealing.
         if sock.exists():
             try:
                 sock.unlink()
             except OSError:
                 pass
-        from hafiz.core.database import close_engine
 
-        await close_engine()
+        # Warm the model before binding so the first client request doesn't pay
+        # the cold-start cost we built this to avoid.
+        await asyncio.to_thread(get_embed_model)
+
+        # Warm the reranker too when enabled — otherwise the first recall pays
+        # the cross-encoder's cold load. Skip silently if it can't load (recall
+        # then falls back to vector order per the reranker's own contract).
+        from hafiz.core.reranker import rerank_enabled, warm_reranker
+
+        if rerank_enabled():
+            try:
+                await warm_reranker()
+            except Exception:  # noqa: BLE001 — degrade to vector-only, never block startup
+                logger.warning("reranker warm-up failed; recall will use vector order")
+
+        server = _Server(idle_timeout=idle_timeout, _embed_lock=asyncio.Lock())
+        server._loop = asyncio.get_running_loop()
+
+        aio_server = await asyncio.start_unix_server(
+            server.handle, path=str(sock), limit=_RECV_LIMIT
+        )
+        server._server = aio_server
+
+        # Lock the socket to owner-only (0600). start_unix_server honors umask,
+        # so set the bits explicitly rather than trusting the ambient umask.
+        os.chmod(sock, stat.S_IRUSR | stat.S_IWUSR)
+
+        # SIGTERM must reach the same shutdown path as the idle timer, so
+        # `serve stop` can end the process cleanly: close the server, let the
+        # `finally` below unlink the socket and close the DB engine. Without
+        # this, `stop` had nothing to ask for and fell back to unlinking the
+        # socket, which left the daemon alive and unreachable until it idled.
+        import signal
+
+        with contextlib.suppress(NotImplementedError, ValueError):
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                server._loop.add_signal_handler(sig, server._shutdown)
+
+        server._bump_idle()
+        logger.info(
+            "hafiz daemon listening on %s (v%s, pid %d)", sock, PROTOCOL_VERSION, os.getpid()
+        )
+
+        try:
+            async with aio_server:
+                await aio_server.wait_closed()
+        finally:
+            # Correct only because we hold the singleton lock: the path is ours,
+            # so unlinking it cannot delete a peer's live socket. It used to —
+            # a daemon that lost the startup race would idle out and take the
+            # winner's socket with it. Do not remove the lock and leave this.
+            if sock.exists():
+                try:
+                    sock.unlink()
+                except OSError:
+                    pass
+            from hafiz.core.database import close_engine
+
+            await close_engine()
+    finally:
+        release_singleton(lock_fd)
+    return True
 
 
 def main() -> None:

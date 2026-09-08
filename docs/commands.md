@@ -330,9 +330,9 @@ A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embeddi
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `serve` | Run the daemon (foreground). `--detach` backgrounds it; `--idle-timeout <secs>` sets auto-shutdown (default 1800). | Embed + DB | normally auto-spawned; run by hand to pre-warm | rich panel |
-| `serve status` | Report whether the daemon is live, its version, and whether it *would* spawn. | — | `--json` → `{"ok","running","socket","version","enabled","idle_timeout"}` | rich panel |
-| `serve stop` | Stop the running daemon (best-effort: removes the socket). | — | `--json` → `{"ok","was_running","socket_removed"}` | rich line |
+| `serve` | Run the daemon (foreground). `--detach` backgrounds it; `--idle-timeout <secs>` sets auto-shutdown (default 1800). Idempotent — if one is already serving it reports that instead of starting a second. `--json` → `{"ok","started","already_running","pid","socket"}`. | Embed + DB | normally auto-spawned; run by hand to pre-warm | rich panel |
+| `serve status` | Report whether the daemon is live, its version, its **pid**, and whether it *would* spawn. | — | `--json` → `{"ok","running","socket","version","pid","enabled","idle_timeout"}` | rich panel |
+| `serve stop` | SIGTERM the daemon and **confirm** it stopped; unlinking the socket is only the fallback. | — | `--json` → `{"ok","was_running","pid","signalled","stopped","socket_removed"}` | rich line |
 
 **Which commands use it:** `hafiz query --observations` and `hafiz context`. Both
 return identical results with or without a daemon — same objects, same `--json`,
@@ -342,6 +342,31 @@ same ordering. Writes (`observe` / `note` / `capture`) still run in-process.
 vs 1.8s cold**, because the warm path skips the fastembed model load (~0.9s).
 
 - **Transport:** Unix domain socket, **0600**, at `$XDG_RUNTIME_DIR/hafiz/daemon.sock` (falls back to `/tmp/hafiz-<uid>/daemon.sock`). Never a TCP port — a sovereign personal store stays off the network; filesystem permissions gate access. Override the path with `HAFIZ_DAEMON_SOCKET`.
+**One daemon per socket, enforced.** Observed on the author's machine: **four**
+daemons, 4.1 GB resident between them, all started within one second, all bound
+to the same socket path — so three were unreachable and had each paid a ~1 GB
+embedding-model load to become so. Nothing serialized startup, and three places
+assumed sole ownership: the client's spawn path had no lock, so N concurrent
+callers spawned N daemons; `serve` unlinked the socket before binding, stealing
+the path from a working daemon; and `serve`'s shutdown unlinked *the path*, so a
+loser's idle timeout deleted the **winner's** socket and left a live daemon
+nothing could reach.
+
+`serve` now takes an exclusive `flock` on `<socket>.lock` **before** loading any
+model, and holds it for the process lifetime. Losing costs milliseconds instead
+of a gigabyte, and both unlinks become correct because only the lock holder can
+reach them. `flock` rather than a pidfile deliberately: the kernel releases it
+when the holder exits for any reason, including SIGKILL, so there is no
+stale-lock recovery path to get wrong. The lock file also carries the holder's
+pid, which is what makes `serve stop` a real signal rather than a hopeful
+socket unlink.
+
+Because `flock` guards an *inode* and not a name, deleting the lock file while a
+daemon holds it would leave the holder locking an orphan and let a newcomer lock
+a fresh file at the same path. So after winning the lock, `serve` also pings the
+socket and exits if anything answers. Do not delete `<socket>.lock`; `serve
+stop` deliberately leaves it in place and empties it instead.
+
 - **On-demand:** clients auto-spawn the daemon if it's absent and **fall back to direct in-process execution** on any daemon error, so the daemon can only make things faster — never break a call that the plain CLI would have served. Disable entirely with `HAFIZ_NO_DAEMON=1`; `serve status --json` reports that as `enabled: false`.
 - **Idle shutdown:** the daemon exits after `idle_timeout` seconds of inactivity. Precedence is `--idle-timeout` → `HAFIZ_DAEMON_IDLE` → `[daemon] idle_timeout` in `hafiz.toml` → 1800. **Set it to `0` to keep the daemon hot indefinitely** — the right choice when another process consumes hafiz continuously, where a 30-minute shutdown means repaying the model-load cost after every quiet spell.
 - **Caching:** the daemon caches the embedding model and the DB pool, **never results**. Every op re-runs the query, so `forget` and `observe` from another process are visible immediately, and a redacted row can never be served from memory.
