@@ -8,7 +8,8 @@ Device selection is a three-tier decision, in precedence order:
    Env override: ``HAFIZ_EMBEDDING__DEVICE=cpu``.
 2. Sticky cache from a prior probe (`~/.cache/hafiz/device_state.json`).
    Written once per probe outcome, reused silently on subsequent runs.
-   Auto-invalidated when the stamped onnxruntime version changes.
+   Auto-invalidated when the host facts behind the verdict change — see
+   ``device_state.staleness_reason`` for what counts and why it is not a timer.
 3. Probe CUDA on first use; persist the verdict.
 
 Inspect or override via ``hafiz embedding status`` / ``hafiz embedding retry``.
@@ -30,6 +31,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from hafiz.core import device_state
+from hafiz.core.accelerators import AcceleratorFinding, diagnose_accelerators
 from hafiz.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -38,14 +40,19 @@ _console = Console(stderr=True)
 _embed_model: TextEmbedding | None = None
 
 
-def _cuda_available() -> bool:
-    """True if onnxruntime reports CUDAExecutionProvider in its provider list."""
+def _available_providers() -> list[str]:
+    """ONNX Runtime's provider list, or empty when onnxruntime is absent."""
     try:
         import onnxruntime as ort
 
-        return "CUDAExecutionProvider" in ort.get_available_providers()
+        return list(ort.get_available_providers())
     except ImportError:
-        return False
+        return []
+
+
+def _cuda_available() -> bool:
+    """True if onnxruntime reports CUDAExecutionProvider in its provider list."""
+    return "CUDAExecutionProvider" in _available_providers()
 
 
 def _gpu_name() -> str | None:
@@ -271,11 +278,7 @@ def _tensorrt_available() -> bool:
         import tensorrt  # noqa: F401
     except ImportError:
         return False
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        return False
-    return "TensorrtExecutionProvider" in ort.get_available_providers()
+    return "TensorrtExecutionProvider" in _available_providers()
 
 
 def _trt_cache_dir() -> Path:
@@ -338,6 +341,39 @@ def _announce_fallback(state: device_state.DeviceState, *, first_time: bool) -> 
         )
 
 
+def _shadowed_accelerator(gpu_name: str | None) -> AcceleratorFinding | None:
+    """The accelerator that is installed but shadowed, if any.
+
+    Reuses the diagnosis ``hafiz doctor`` runs. This path exists so the finding
+    reaches the user on the command they actually ran: ``doctor`` is where the
+    remedy lives, but nobody runs ``doctor`` to explain a slowness they haven't
+    noticed yet.
+    """
+    try:
+        findings = diagnose_accelerators(providers=_available_providers(), gpu_name=gpu_name)
+    except Exception as exc:  # a diagnosis must never break embedding
+        logger.debug("accelerator diagnosis skipped: %s", exc)
+        return None
+    return next((f for f in findings if f.state == "shadowed"), None)
+
+
+def _announce_shadowed(finding: AcceleratorFinding) -> None:
+    """Loud panel for hardware that is installed for, but not actually in use."""
+    _console.print(
+        Panel(
+            f"[yellow]{finding.hardware or finding.name} is present but "
+            f"not being used.[/yellow]\n"
+            f"{finding.detail}.\n"
+            f"Using [cyan]CPU[/cyan] for embeddings.\n\n"
+            f"Fix: [bold]{finding.fix}[/bold]\n"
+            f"hafiz re-probes on its own once that changes.",
+            title="Embedding device",
+            border_style="yellow",
+            padding=(0, 1),
+        )
+    )
+
+
 def probe_device(
     device: str,
     model_name: str,
@@ -397,14 +433,27 @@ def probe_device(
             device_state.save_state(state)
         return model, state
 
+    # No CUDA provider. Usually that just means the accelerator extras were
+    # never installed, and saying so on every fresh probe would be noise — the
+    # user never asked for GPU. "Installed but shadowed" is the opposite case:
+    # they did ask, paid for the wheel, and silently did not get it. That one
+    # is worth a panel, and it is the only one that gets one.
+    gpu_name = _gpu_name()
+    shadowed = _shadowed_accelerator(gpu_name)
     state = device_state.build_state(
         "cpu",
-        reason="CUDAExecutionProvider not available in this onnxruntime build.",
+        reason=(
+            f"{shadowed.detail}."
+            if shadowed is not None
+            else "CUDAExecutionProvider not available in this onnxruntime build."
+        ),
         category="provider_unavailable",
-        gpu_name=None,
+        gpu_name=gpu_name,
     )
     if persist:
         device_state.save_state(state)
+    if shadowed is not None:
+        _announce_shadowed(shadowed)
     return _build_cpu_model(model_name), state
 
 

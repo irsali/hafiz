@@ -37,7 +37,11 @@ def _describe(state: dstate.DeviceState | None, configured: str) -> dict:
             "probed_at": state.probed_at,
             "onnxruntime_version": state.onnxruntime_version,
             "gpu_name": state.gpu_name,
+            "probe_fingerprint": state.probe_fingerprint,
             "stale": dstate.is_stale(state),
+            # The cause, not just the flag: every reason here is something the
+            # user did and would recognise, so it is the actionable half.
+            "stale_reason": dstate.staleness_reason(state),
         }
         if state
         else None,
@@ -73,11 +77,9 @@ def run_embedding_status(*, output_json: bool = False) -> None:
             table.add_row("gpu", state.gpu_name)
         if state.onnxruntime_version:
             table.add_row("onnxruntime", state.onnxruntime_version)
-        if dstate.is_stale(state):
-            table.add_row(
-                "stale",
-                "[yellow]yes — ORT version changed; will reprobe on next use[/yellow]",
-            )
+        reason = dstate.staleness_reason(state)
+        if reason is not None:
+            table.add_row("stale", f"[yellow]yes — {reason}[/yellow]")
 
     console.print()
     console.print(table)

@@ -43,7 +43,7 @@ Config keys are resolved against the settings models rather than an allowlist, s
 | `agent uninstall <agent> --hooks` | Remove the capture hooks, leaving user-authored hooks intact. Already-captured transcripts are untouched. | — | same | rich output |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
 | `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage. `tree_sitter_js` (JS/TS) appears only when the optional `hafiz[js]` extra is installed. | — | `--json` | rich table |
-| `embedding status` | Show current embedding device + provenance (config / sticky cache / probe) | — | `--json` | rich table |
+| `embedding status` | Show current embedding device + provenance (config / sticky cache / probe). `--json` `sticky` object carries `probe_fingerprint`, `stale`, and `stale_reason`. | — | `--json` | rich table |
 | `embedding retry` | Clear sticky device cache and re-probe | Embed | `--json` | rich output |
 
 **First run is two commands, not a checklist.** `hafiz init` used to assume a
@@ -62,6 +62,41 @@ set. `load_settings` now drops keys that a `HAFIZ_<SECTION>__<KEY>` variable
 addresses before handing the rest over, letting the env source supply them. The
 defect was known: the test harness had been working around it with a patched
 `load_settings`, and its docstring named the cause.
+
+**The sticky device verdict expires when its cause changes, not on a timer.**
+`hafiz` remembers a GPU probe's outcome in `~/.cache/hafiz/device_state.json` so
+later runs skip the probe. That cache used to invalidate only when
+`onnxruntime.__version__` changed — and every rung of the GPU remediation ladder
+leaves the version untouched. Uninstalling the CPU wheel that was shadowing
+`onnxruntime-gpu` (the fix `hafiz doctor` prints) and `pip install tensorrt` (the
+fix the non-finite-output error prints) both changed nothing, so hafiz ignored
+its own advice and stayed on CPU. Staleness now compares a `probe_fingerprint`
+of the facts that can change a probe's outcome — ORT version, CUDA provider
+present, TensorRT provider present — rendered as `1.27.0|cuda|trt`.
+`embedding status --json` exposes it alongside `stale` and a human
+`stale_reason`; a state file written before the field existed loads with
+`probe_fingerprint: null` and re-probes once.
+
+A *timer* was rejected deliberately. Probing is neither cheap nor
+side-effect-free — it builds a GPU session and runs a real embed — so a timed
+re-probe would slow an arbitrary later command and, in the out-of-memory case,
+take VRAM from whatever process holds it, to re-learn something that cannot have
+changed. `out_of_memory` is the one exception and does also expire on time (24h):
+it means another process held the VRAM, which no fingerprint can observe and
+which resolves on its own.
+
+**Hardware you installed a wheel for but aren't using is announced, not
+inferred.** `onnxruntime`, `onnxruntime-gpu` and `onnxruntime-openvino` all
+install the same `onnxruntime` import package, so the last one installed wins
+and the others' providers vanish while their `.dist-info` remains. The result is
+indistinguishable from "no GPU on this host", which is why the CPU-fallback path
+was silent — correct for someone who never asked for GPU, wrong for someone who
+installed the extra and silently didn't get it. A fresh probe now runs the same
+diagnosis `hafiz doctor` does and prints a panel (stderr) with the remedy when it
+finds a *shadowed* accelerator; the detail is stored in the sticky `reason`, so
+`embedding status` can still explain the verdict days later. Only the `shadowed`
+state is announced — `missing` is an unexercised opportunity, not a broken
+install, and telling that user on every fresh probe would be noise.
 
 **Agent hooks are managed structurally, not by markers.** Instruction files are
 Markdown and use paired sentinel comments; an agent's `settings.json` is JSON, so

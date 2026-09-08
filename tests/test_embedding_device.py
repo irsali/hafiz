@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,8 +15,13 @@ from hafiz.cli import app
 from hafiz.core import config as cfg_mod
 from hafiz.core import device_state as dstate
 from hafiz.core import embeddings
+from hafiz.core.accelerators import AcceleratorFinding
 
 runner = CliRunner()
+
+#: Captured before any fixture stubs it, so the shadowed-accelerator tests can
+#: exercise the real filter while still inheriting ``fake_models``.
+_REAL_SHADOW_PROBE = embeddings._shadowed_accelerator
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +45,11 @@ def fake_models(monkeypatch):
     monkeypatch.setattr(embeddings, "_build_gpu_model", lambda _m: gpu)
     monkeypatch.setattr(embeddings, "_gpu_name", lambda: "FakeGPU 9999")
     monkeypatch.setattr(dstate, "_ort_version", lambda: "1.24.4")
+    # The shadow diagnosis reads the *real* venv's distribution metadata, so
+    # leaving it live would make these outcomes depend on whether the developer
+    # happens to have onnxruntime-gpu installed. TestShadowedAccelerator drives
+    # it deliberately instead.
+    monkeypatch.setattr(embeddings, "_shadowed_accelerator", lambda _gpu: None)
     return cpu, gpu
 
 
@@ -128,6 +139,163 @@ class TestStateFile:
         monkeypatch.setattr(dstate, "_ort_version", lambda: "1.24.4")
         state = dstate.build_state("gpu", reason=None, category=None, gpu_name=None)
         assert dstate.is_stale(state) is False
+
+
+# ─── staleness: cause, not clock ───────────────────────────────────────
+
+
+class TestStaleness:
+    """Invalidation tracks the *cause* of a verdict, not elapsed time.
+
+    The bug this class pins: every rung of the GPU remediation ladder is a
+    package change that leaves ``ort.__version__`` untouched. Under the old
+    version-only rule the sticky ``cpu`` verdict survived all of them, so hafiz
+    ignored the fix its own error message had recommended.
+    """
+
+    CUDA = "CUDAExecutionProvider"
+    TRT = "TensorrtExecutionProvider"
+
+    def _state(self, monkeypatch, *, providers=(), ort="1.24.4", category=None, age_hours=0.0):
+        """A state as it would have been written on a host with these facts."""
+        monkeypatch.setattr(dstate, "_ort_version", lambda: ort)
+        monkeypatch.setattr(dstate, "_provider_set", lambda: frozenset(providers))
+        state = dstate.build_state("cpu", reason="x", category=category, gpu_name=None)
+        if age_hours:
+            when = datetime.now(UTC) - timedelta(hours=age_hours)
+            state.probed_at = when.isoformat(timespec="seconds")
+        return state
+
+    @staticmethod
+    def _now(monkeypatch, *, providers=(), ort="1.24.4"):
+        """Re-point the host facts to what a *later* run would observe."""
+        monkeypatch.setattr(dstate, "_ort_version", lambda: ort)
+        monkeypatch.setattr(dstate, "_provider_set", lambda: frozenset(providers))
+
+    def test_unchanged_host_is_not_stale(self, monkeypatch):
+        state = self._state(monkeypatch, providers=(self.CUDA,))
+        assert dstate.staleness_reason(state) is None
+
+    def test_unshadowing_the_gpu_wheel_invalidates_the_cpu_verdict(self, monkeypatch):
+        """The exact bug: same ORT version, provider appears, verdict must drop.
+
+        ``pipx runpip hafiz uninstall onnxruntime`` un-shadows onnxruntime-gpu.
+        The version is identical before and after — only the provider list
+        moves — so version-only staleness said "not stale" and the user stayed
+        on CPU after doing precisely what ``hafiz doctor`` told them to.
+        """
+        state = self._state(monkeypatch, providers=(), ort="1.27.0")
+        self._now(monkeypatch, providers=(self.CUDA,), ort="1.27.0")
+        reason = dstate.staleness_reason(state)
+        assert reason is not None
+        assert "host changed" in reason
+
+    def test_installing_tensorrt_invalidates_the_verdict(self, monkeypatch):
+        """hafiz's own NaN message says `pip install tensorrt`; it must take effect."""
+        state = self._state(monkeypatch, providers=(self.CUDA,), category="non_finite_output")
+        self._now(monkeypatch, providers=(self.CUDA, self.TRT))
+        assert dstate.staleness_reason(state) is not None
+
+    def test_ort_upgrade_still_invalidates(self, monkeypatch):
+        state = self._state(monkeypatch, providers=(self.CUDA,), ort="1.24.4")
+        self._now(monkeypatch, providers=(self.CUDA,), ort="1.27.0")
+        assert dstate.is_stale(state) is True
+
+    def test_losing_a_provider_invalidates_a_gpu_verdict(self, monkeypatch):
+        """Shadowing can also happen *later* — a reinstall that puts the CPU wheel last."""
+        state = self._state(monkeypatch, providers=(self.CUDA,))
+        self._now(monkeypatch, providers=())
+        assert dstate.is_stale(state) is True
+
+    def test_a_state_without_a_fingerprint_reprobes_once(self, monkeypatch):
+        """Migration: files written before fingerprinting have unknown provenance."""
+        state = self._state(monkeypatch, providers=(self.CUDA,))
+        state.probe_fingerprint = None
+        reason = dstate.staleness_reason(state)
+        assert reason is not None
+        assert "before probe fingerprinting" in reason
+
+    def test_a_renamed_gpu_does_not_invalidate(self, monkeypatch):
+        """``gpu_name`` is deliberately outside the fingerprint — it costs nvidia-smi.
+
+        A different GPU under an unchanged provider list cannot change what the
+        probe would conclude, so paying a subprocess on every auto-device
+        invocation to notice it would buy nothing.
+        """
+        state = self._state(monkeypatch, providers=(self.CUDA,))
+        state.gpu_name = "some entirely different card"
+        assert dstate.is_stale(state) is False
+
+    # ── the one time-based rule ──
+
+    def test_vram_contention_expires_on_time(self, monkeypatch):
+        state = self._state(monkeypatch, category="out_of_memory", age_hours=25)
+        reason = dstate.staleness_reason(state)
+        assert reason is not None
+        assert "VRAM contention" in reason
+
+    def test_vram_contention_stands_inside_the_window(self, monkeypatch):
+        state = self._state(monkeypatch, category="out_of_memory", age_hours=23)
+        assert dstate.staleness_reason(state) is None
+
+    @pytest.mark.parametrize(
+        "category", ["provider_unavailable", "unsupported_arch", "non_finite_output", "unknown"]
+    )
+    def test_no_other_category_expires_on_time(self, monkeypatch, category):
+        """These need a package change, which the fingerprint already sees.
+
+        Re-probing them on a timer would rebuild a GPU session and run a real
+        embed to re-learn something that cannot have changed.
+        """
+        state = self._state(monkeypatch, category=category, age_hours=10_000)
+        assert dstate.staleness_reason(state) is None
+
+    def test_a_clock_skewed_future_probe_is_not_stale(self, monkeypatch):
+        state = self._state(monkeypatch, category="out_of_memory", age_hours=-500)
+        assert dstate.staleness_reason(state) is None
+
+    def test_an_unparseable_timestamp_does_not_crash(self, monkeypatch):
+        state = self._state(monkeypatch, category="out_of_memory")
+        state.probed_at = "not a timestamp"
+        assert dstate.staleness_reason(state) is None
+
+    # ── the fingerprint itself ──
+
+    def test_the_fingerprint_is_stable_across_calls(self, monkeypatch):
+        self._now(monkeypatch, providers=(self.CUDA,))
+        assert dstate.probe_fingerprint() == dstate.probe_fingerprint()
+
+    def test_the_fingerprint_names_what_it_found(self, monkeypatch):
+        self._now(monkeypatch, providers=(self.CUDA, self.TRT), ort="1.27.0")
+        assert dstate.probe_fingerprint() == "1.27.0|cuda|trt"
+        self._now(monkeypatch, providers=(), ort="1.27.0")
+        assert dstate.probe_fingerprint() == "1.27.0|-|-"
+
+    def test_a_round_trip_preserves_the_fingerprint(self, monkeypatch):
+        state = self._state(monkeypatch, providers=(self.CUDA,))
+        dstate.save_state(state)
+        assert dstate.load_state().probe_fingerprint == state.probe_fingerprint
+
+    def test_a_state_file_predating_the_field_still_loads(self):
+        """Rather than reading as corrupt and being deleted — see the field default."""
+        path = dstate.cache_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "device": "cpu",
+                    "reason": "CUDAExecutionProvider not available",
+                    "reason_category": "provider_unavailable",
+                    "probed_at": "2026-06-23T07:24:24+00:00",
+                    "onnxruntime_version": "1.27.0",
+                    "gpu_name": None,
+                }
+            )
+        )
+        loaded = dstate.load_state()
+        assert loaded is not None
+        assert loaded.probe_fingerprint is None
+        assert dstate.is_stale(loaded) is True
 
 
 # ─── _build_gpu_model probe validation ─────────────────────────────────
@@ -260,6 +428,114 @@ class TestProbeDevice:
         assert state.device == "cpu"
         assert state.reason_category == "out_of_memory"
         assert "VRAM" in state.reason
+
+
+# ─── shadowed accelerators ─────────────────────────────────────────────
+
+
+class TestShadowedAccelerator:
+    """Hardware bought and installed for, but silently unused, gets a panel.
+
+    ``onnxruntime``, ``onnxruntime-gpu`` and ``onnxruntime-openvino`` install
+    the same import package, so the last one installed wins and the others'
+    providers vanish while their metadata stays. The result reads exactly like
+    "no GPU here" — which is why this branch used to be silent, and why that
+    was wrong for the user who had paid for the wheel.
+    """
+
+    @staticmethod
+    def _finding(state: str) -> AcceleratorFinding:
+        return AcceleratorFinding(
+            name="cuda",
+            provider="CUDAExecutionProvider",
+            hardware="RTX 5060 Ti",
+            state=state,
+            detail="onnxruntime-gpu 1.27.0 is installed but the CPU wheel is shadowing it",
+            fix="pipx runpip hafiz uninstall -y onnxruntime",
+        )
+
+    @pytest.fixture
+    def cpu_host(self, fake_models, monkeypatch):
+        """An auto-device host with no CUDA provider — the branch under test."""
+        monkeypatch.setattr(embeddings, "_cuda_available", lambda: False)
+        return fake_models[0]
+
+    @pytest.fixture
+    def real_probe(self, monkeypatch):
+        """Undo ``fake_models``' hermetic stub so the real filter runs."""
+        monkeypatch.setattr(embeddings, "_shadowed_accelerator", _REAL_SHADOW_PROBE)
+
+    def test_shadowed_cuda_is_announced(self, cpu_host, monkeypatch, capsys):
+        monkeypatch.setattr(
+            embeddings, "_shadowed_accelerator", lambda _gpu: self._finding("shadowed")
+        )
+        _model, state = embeddings.probe_device("auto", "fake-model")
+        err = capsys.readouterr().err
+        assert "shadowing" in err
+        assert "uninstall" in err
+        assert state.device == "cpu"
+
+    def test_the_shadow_detail_lands_in_the_sticky_reason(self, cpu_host, monkeypatch):
+        """So `hafiz embedding status` can explain the CPU verdict days later."""
+        monkeypatch.setattr(
+            embeddings, "_shadowed_accelerator", lambda _gpu: self._finding("shadowed")
+        )
+        _model, state = embeddings.probe_device("auto", "fake-model")
+        assert "shadowing" in state.reason
+        assert state.reason_category == "provider_unavailable"
+
+    def test_the_panel_never_reaches_stdout(self, cpu_host, monkeypatch, capsys):
+        """`hafiz mcp` speaks JSON-RPC on stdout; one stray byte corrupts the stream."""
+        monkeypatch.setattr(
+            embeddings, "_shadowed_accelerator", lambda _gpu: self._finding("shadowed")
+        )
+        embeddings.probe_device("auto", "fake-model")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err != ""
+
+    @pytest.mark.parametrize("finding_state", ["missing", "active", "no-hardware"])
+    def test_only_the_shadowed_state_is_announced(
+        self, cpu_host, real_probe, monkeypatch, capsys, finding_state
+    ):
+        """`missing` is a user who never asked for GPU — telling them is noise.
+
+        This is the deliberate boundary: the panel fires for a broken install,
+        not for an unexercised opportunity.
+        """
+        monkeypatch.setattr(
+            embeddings, "diagnose_accelerators", lambda **_kw: [self._finding(finding_state)]
+        )
+        embeddings.probe_device("auto", "fake-model")
+        assert capsys.readouterr().err == ""
+
+    def test_the_filter_picks_shadowed_out_of_a_mixed_list(self, real_probe, monkeypatch):
+        findings = [self._finding("no-hardware"), self._finding("shadowed")]
+        monkeypatch.setattr(embeddings, "diagnose_accelerators", lambda **_kw: findings)
+        found = embeddings._shadowed_accelerator("RTX 5060 Ti")
+        assert found is not None
+        assert found.state == "shadowed"
+
+    def test_a_failing_diagnosis_does_not_break_embedding(
+        self, cpu_host, real_probe, monkeypatch, capsys
+    ):
+        """A diagnosis is a nicety; embedding is the job."""
+
+        def boom(**_kw):
+            raise RuntimeError("importlib.metadata blew up")
+
+        monkeypatch.setattr(embeddings, "diagnose_accelerators", boom)
+        model, state = embeddings.probe_device("auto", "fake-model")
+        assert model is cpu_host
+        assert state.device == "cpu"
+        assert capsys.readouterr().err == ""
+
+    def test_a_clean_cpu_only_host_stays_silent(self, cpu_host, real_probe, monkeypatch, capsys):
+        """No GPU, no wheels, nothing to say — the common case must not gain noise."""
+        monkeypatch.setattr(embeddings, "diagnose_accelerators", lambda **_kw: [])
+        _model, state = embeddings.probe_device("auto", "fake-model")
+        assert capsys.readouterr().err == ""
+        assert "not available in this onnxruntime build" in state.reason
 
 
 # ─── get_embed_model selection ─────────────────────────────────────────
