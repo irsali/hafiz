@@ -15,6 +15,7 @@ from rich.table import Table
 from hafiz.core.config import CONFIG_FILENAME, find_config_file, get_settings
 from hafiz.core.database import close_engine, create_tables, get_session_factory
 from hafiz.core.dialect import backend_of, db_file_path, is_embedded, table_list_sql
+from hafiz.core.redaction import redact_credentials
 
 console = Console()
 
@@ -59,7 +60,7 @@ def run_init(*, output_json: bool = False) -> None:
     result["config_created"] = created
 
     settings = get_settings()
-    result["database_url"] = settings.database.url
+    result["database_url"] = redact_credentials(settings.database.url)
     embedded = is_embedded(settings.database.url)
     result["backend"] = "sqlite" if embedded else "postgresql"
     if embedded:
@@ -78,6 +79,10 @@ def run_init(*, output_json: bool = False) -> None:
     error = asyncio.run(_init())
 
     if error is not None:
+        # A connection failure's text is the driver's, and SQLAlchemy puts the
+        # whole URL — password included — in it. Scrub once, here, so the JSON
+        # field and both human branches below are all safe.
+        error = redact_credentials(error)
         result["error"] = error
         # An embedded failure is not a "start your database" problem — there is
         # no server to start. It is a path, permission, or disk problem, and
@@ -99,7 +104,10 @@ def run_init(*, output_json: bool = False) -> None:
             raise SystemExit(1)
 
         console.print(f"[red]Could not reach the database.[/red]\n  [dim]{error}[/dim]\n")
-        console.print(f"Hafiz is configured to use:\n  [bold]{settings.database.url}[/bold]\n")
+        console.print(
+            f"Hafiz is configured to use:\n"
+            f"  [bold]{redact_credentials(settings.database.url)}[/bold]\n"
+        )
         console.print("Start one with Docker:")
         console.print(f"  [bold]{DOCKER_ONE_LINER}[/bold]\n")
         console.print(
@@ -123,7 +131,10 @@ def run_init(*, output_json: bool = False) -> None:
         console.print("  - sqlite-vec extension loaded")
         console.print("  - Single file, owner-only (0600) — back it up by copying it")
     else:
-        console.print(f"[green]Database initialized.[/green] [dim]{settings.database.url}[/dim]")
+        console.print(
+            f"[green]Database initialized.[/green] "
+            f"[dim]{redact_credentials(settings.database.url)}[/dim]"
+        )
         console.print("  - pgvector extension enabled")
     console.print(
         "  - Tables created: files, units, unit_revisions, embeddings, edges, annotations, commits"
@@ -338,6 +349,11 @@ def run_config_show(*, output_json: bool = False) -> None:
 
     if output_json:
         payload = json.loads(settings.model_dump_json())
+        # `model_dump_json` is a whole-settings dump, so it carries the raw
+        # database URL. An agent parsing this has no more business holding the
+        # password than an issue tracker does.
+        if isinstance(payload.get("database"), dict) and "url" in payload["database"]:
+            payload["database"]["url"] = redact_credentials(payload["database"]["url"])
         payload["tunables"] = tunable_rows
         console.print_json(json.dumps(payload))
         return
@@ -356,7 +372,7 @@ def run_config_show(*, output_json: bool = False) -> None:
     db_table = Table(title="Database", show_header=False, border_style="cyan")
     db_table.add_column("Key", style="bold")
     db_table.add_column("Value")
-    db_table.add_row("url", settings.database.url)
+    db_table.add_row("url", redact_credentials(settings.database.url))
     console.print(db_table)
 
     # Embedding
@@ -888,7 +904,10 @@ def run_doctor(
     _check(
         "Database URL valid",
         url_valid,
-        detail=db_url,
+        # `doctor` output is the single most-pasted thing hafiz prints.
+        # The `fix` string below keeps its `user:pass@host` placeholder —
+        # that teaches the format and contains no real secret.
+        detail=redact_credentials(db_url),
         fix="Set HAFIZ_DATABASE__URL or update hafiz.toml [database] section. "
         "Use sqlite:///<path>/hafiz.db or postgresql+asyncpg://user:pass@host/db.",
     )
@@ -1245,9 +1264,57 @@ def run_doctor(
         _check(
             "Recent errors",
             False,
-            detail=str(e)[:120],
+            detail=redact_credentials(str(e)[:120]),
             fix="Error log unreadable — run `hafiz errors clear` to reset.",
         )
+
+    # 12. Is the error log safe to hand someone?
+    #
+    # Two ways it might not be, and both are one-time states a *new* log
+    # cannot reach — records are redacted on write, and `append` chmods 0600.
+    # This is for the log you already have:
+    #
+    #   - content: a record written before redaction existed can still hold a
+    #     credential on disk, even though `errors list` no longer shows it;
+    #   - permissions: a log created before hardening stays group/world
+    #     readable until the next error happens to be logged. That is not
+    #     hypothetical — a traceback from a failed INSERT carries the
+    #     statement's parameters, and the author's own 0664 log held their
+    #     email address and commit metadata that way.
+    #
+    # Reported, not fixed: the log is the user's audit trail, and clearing it
+    # is their call, not an agent's.
+    try:
+        from hafiz.core import error_log
+        from hafiz.core.redaction import contains_credential
+
+        log_path = error_log.log_file_path()
+        if not log_path.is_file():
+            _check("Error log is private", True, detail="no log yet")
+        else:
+            raw = log_path.read_text(encoding="utf-8", errors="replace")
+            leaking = sum(1 for line in raw.splitlines() if contains_credential(line))
+            mode = log_path.stat().st_mode & 0o777
+            problems: list[str] = []
+            fixes: list[str] = []
+            if leaking:
+                # Never echo the secret itself — the count *is* the finding.
+                problems.append(f"{leaking} record(s) still contain a database password")
+                fixes.append(
+                    "hafiz errors clear  (removes them from disk — discards the "
+                    "whole log, so it is your call)"
+                )
+            if mode & 0o077:
+                problems.append(f"mode {mode:04o} is readable beyond the owner")
+                fixes.append(f"chmod 600 {log_path}  (hafiz also does this on its next write)")
+            _check(
+                "Error log is private",
+                not problems,
+                detail="; ".join(problems) if problems else f"clean, owner-only ({mode:04o})",
+                fix="  ·  ".join(fixes),
+            )
+    except Exception as e:
+        _check("Error log is private", True, detail=f"not checked: {str(e)[:80]}")
 
     # Host probe + tuning (phase 2 of the tunable-registry work item).
     # Host probe is cheap (/proc/meminfo + nvidia-smi); tuning

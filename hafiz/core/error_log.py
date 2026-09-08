@@ -20,6 +20,31 @@ Design invariants:
   branch + hafiz version + host fingerprint. We do **not** record
   environment variables, file contents, or arbitrary argument values
   that might embed tokens (same hygiene as annotations).
+
+  The invariant had a hole, because a secret need not arrive as an
+  "argument value": a SQLAlchemy ``OperationalError`` embeds the entire
+  connection URL in its message, so ``str(exc)`` and the formatted traceback
+  would carry the database password verbatim. That is exactly the failure
+  :func:`_recognize_db_connectivity` exists to recognise, so any log is one
+  connection failure away from it. Captured text is now scrubbed through
+  :mod:`hafiz.core.redaction` at **both** ends —
+
+  * on write, so nothing new lands on disk with a secret in it;
+  * on read, so records written *before* this existed stop leaking through
+    ``errors list`` / ``errors show`` without anyone having to destroy their
+    own audit trail first.
+
+  Only fields carrying text from outside are scrubbed (``message``,
+  ``traceback``, ``argv``, ``context``). ``suggested_action`` is hafiz-authored
+  prose containing deliberate ``user:pass@host`` *placeholders*, and redacting
+  those would damage the advice to protect a secret that was never there.
+
+- **Owner-only on disk.** The log is chmod'd ``0600`` on every append,
+  including logs created before that was true — the author's own was
+  ``0664``. This is not hypothetical hygiene: a traceback from a failed
+  ``INSERT`` includes the statement's *parameters*, and the log inspected on
+  2026-09-08 held the user's email address and commit metadata that way.
+  Group- and world-readable was wrong independent of any credential.
 - **Rotation at write time.** When a fresh append would push the log
   past its caps, we rewrite keeping the newest ``MAX_ENTRIES`` and
   discard older records. FIFO, no journaling. Simple.
@@ -37,6 +62,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from hafiz.core.redaction import redact_credentials, redact_deep
 
 logger = logging.getLogger(__name__)
 
@@ -390,21 +417,28 @@ def build_record(
     branch, dirty = _git_context()
     suggestion, ctx = _suggest_action(exc, argv=argv, traceback_text=tb_s)
 
+    # Recognizers get the *unredacted* text above — they match on error
+    # wording, and one of them would stop firing if a URL it inspects were
+    # rewritten mid-match. Redaction happens here, once, on the way to disk.
     return ErrorRecord(
         id=str(uuid.uuid4()),
         timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
-        command=command,
-        argv=argv,
+        # `command` is not just the subcommand name — `_command_from_argv`
+        # joins every leading non-flag argument, so `hafiz migrate-backend
+        # postgresql://u:secret@h/db` puts the URL in here too. Missed on the
+        # first pass; the write-path test caught it.
+        command=redact_credentials(command),
+        argv=redact_deep(argv),
         exception_type=type(exc).__name__,
-        message=str(exc)[:500] or type(exc).__name__,
-        traceback=tb_s,
+        message=redact_credentials(str(exc)[:500]) or type(exc).__name__,
+        traceback=redact_credentials(tb_s),
         cwd=str(Path.cwd()),
         hafiz_version=_hafiz_version(),
         git_branch=branch,
         git_dirty=dirty,
         host_fingerprint=_host_fingerprint(),
         suggested_action=suggestion,
-        context=ctx,
+        context=redact_deep(ctx),
     )
 
 
@@ -432,10 +466,26 @@ def append(record: ErrorRecord) -> bool:
         _rotate_if_needed(path, incoming_bytes=len(line.encode("utf-8")))
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
+        _harden(path)
         return True
     except OSError as exc:
         logger.warning("Could not append error record at %s: %s", path, exc)
         return False
+
+
+def _harden(path: Path) -> None:
+    """Make the log owner-only.
+
+    Unconditional rather than create-time, so a log that predates this — the
+    author's own was ``0664`` — is tightened on the next append instead of
+    staying world-readable until it happens to be recreated. Best-effort: a
+    filesystem that refuses chmod must not cost us the record.
+    """
+    try:
+        if (path.stat().st_mode & 0o777) != 0o600:
+            os.chmod(path, 0o600)
+    except OSError as exc:
+        logger.debug("Could not tighten permissions on %s: %s", path, exc)
 
 
 def _rotate_if_needed(path: Path, *, incoming_bytes: int) -> None:
@@ -477,21 +527,26 @@ def _parse_line(line: str) -> ErrorRecord | None:
     if not isinstance(data, dict) or "id" not in data:
         return None
     try:
+        # Redact on the way *out* as well as in. Records written before
+        # scrubbing existed still hold credentials, and every consumer —
+        # `errors list`, `errors show`, an agent parsing --json — reads
+        # through here. This stops those leaking today, without requiring
+        # the user to delete their own history first.
         return ErrorRecord(
             id=data["id"],
             timestamp=data.get("timestamp", ""),
-            command=data.get("command", ""),
-            argv=list(data.get("argv", [])),
+            command=redact_credentials(data.get("command", "")),
+            argv=redact_deep(list(data.get("argv", []))),
             exception_type=data.get("exception_type", ""),
-            message=data.get("message", ""),
-            traceback=data.get("traceback", ""),
+            message=redact_credentials(data.get("message", "")),
+            traceback=redact_credentials(data.get("traceback", "")),
             cwd=data.get("cwd", ""),
             hafiz_version=data.get("hafiz_version"),
             git_branch=data.get("git_branch"),
             git_dirty=data.get("git_dirty"),
             host_fingerprint=data.get("host_fingerprint"),
             suggested_action=data.get("suggested_action"),
-            context=dict(data.get("context", {}) or {}),
+            context=redact_deep(dict(data.get("context", {}) or {})),
         )
     except (KeyError, TypeError):
         return None

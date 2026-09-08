@@ -15,6 +15,7 @@ from rich.table import Table
 
 from hafiz.core.config import get_settings
 from hafiz.core.migrate import MigrationError, migrate_backend
+from hafiz.core.redaction import redact_credentials
 
 console = Console()
 
@@ -31,10 +32,14 @@ def run_migrate_backend(
     try:
         result = asyncio.run(migrate_backend(source_url=source, target_url=target, dry_run=dry_run))
     except MigrationError as e:
+        # Migration failures wrap driver errors, which carry the connection
+        # URL — this is the command whose traceback was found holding a live
+        # password in the error log.
+        message = redact_credentials(str(e))
         if output_json:
-            print(json.dumps({"ok": False, "error": str(e)}, indent=2))
+            print(json.dumps({"ok": False, "error": message}, indent=2))
         else:
-            console.print(Panel(str(e), title="Migration stopped", border_style="red"))
+            console.print(Panel(message, title="Migration stopped", border_style="red"))
         raise typer.Exit(code=1) from e
 
     if output_json:
@@ -72,6 +77,10 @@ def run_migrate_backend(
     if result.vector_check:
         console.print(f"  [green]Vectors verified[/green] [dim]({result.vector_check})[/dim]")
 
+    # `target_url` is left verbatim on purpose: this is a command to copy and
+    # run, and `hafiz config set database.url postgresql://u:***@h/db` would
+    # write a literal `***` as the password. It is the argument the user just
+    # supplied, not a secret being disclosed to them.
     console.print(
         f"\n  [green]Migration complete.[/green] The source database was not modified.\n"
         f"  [dim]Point hafiz at the new store:  hafiz config set database.url {result.target_url}\n"
@@ -82,7 +91,13 @@ def run_migrate_backend(
 def _confirm(source: str, target: str) -> bool:
     console.print(
         Panel(
-            f"Copy every row from\n  [bold]{source}[/bold]\ninto\n  [bold]{target}[/bold]\n\n"
+            # `source` comes from config — it is the credential the user may
+            # not remember and the one that shows up in shared diagnostics, so
+            # it is redacted. `target` is what they typed on this command line
+            # seconds ago; masking it would stop them verifying the thing they
+            # are being asked to confirm, and reveals nothing new.
+            f"Copy every row from\n  [bold]{redact_credentials(source)}[/bold]\n"
+            f"into\n  [bold]{target}[/bold]\n\n"
             "The source is opened read-only and will not be modified.\n"
             "The target must be empty; this copies, it does not merge.",
             title="Migrate backend",
