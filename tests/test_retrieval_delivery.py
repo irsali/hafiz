@@ -209,7 +209,7 @@ def test_md_emits_nothing_when_a_floor_filters_everything_out(capsys, monkeypatc
         return []
 
     monkeypatch.setattr("hafiz.core.annotations.search_annotations", _none)
-    monkeypatch.setattr(observe, "close_engine", _none)
+    monkeypatch.setattr("hafiz.core.database.close_engine", _none)
     observe.run_recall("nothing on topic here", output_format=OutputFormat.MD)
     assert capsys.readouterr().out == ""
 

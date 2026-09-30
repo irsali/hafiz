@@ -25,14 +25,17 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from fastembed import TextEmbedding
 from rich.console import Console
 from rich.panel import Panel
 
 from hafiz.core import device_state
 from hafiz.core.accelerators import AcceleratorFinding, diagnose_accelerators
 from hafiz.core.config import get_settings
+
+if TYPE_CHECKING:
+    from fastembed import TextEmbedding
 
 logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
@@ -238,6 +241,27 @@ def announce_download(cache_dir: Path, model_name: str, *, purpose: str) -> None
     )
 
 
+def _fastembed_class():
+    """fastembed's ``TextEmbedding``, imported on first use.
+
+    The import alone is ~130 ms, and a CLI call answered by the warm daemon
+    never builds a model — it only needs this module for its types. Tests patch
+    ``embeddings.TextEmbedding``; that lands in module globals, which wins here.
+    """
+    cls = globals().get("TextEmbedding")
+    if cls is None:
+        import fastembed
+
+        cls = globals()["TextEmbedding"] = fastembed.TextEmbedding
+    return cls
+
+
+def __getattr__(name: str):
+    if name == "TextEmbedding":
+        return _fastembed_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def _text_embedding(model_name: str, providers: list[str]) -> TextEmbedding:
     """Construct a fastembed model against the persistent cache.
 
@@ -253,7 +277,9 @@ def _text_embedding(model_name: str, providers: list[str]) -> TextEmbedding:
     if not model_is_cached(cache_dir, model_name):
         announce_download(cache_dir, model_name, purpose="embedding")
     try:
-        return TextEmbedding(model_name=model_name, providers=providers, cache_dir=str(cache_dir))
+        return _fastembed_class()(
+            model_name=model_name, providers=providers, cache_dir=str(cache_dir)
+        )
     except Exception as exc:
         raise RuntimeError(
             f"Failed to load embedding model '{model_name}' from {cache_dir}: "

@@ -202,19 +202,41 @@ async def context(query: str, **kwargs):
     return await build_context(query, **kwargs)
 
 
-async def query_recall(query: str, **kwargs) -> list:
+async def query_recall(query: str, *, snippet_budget: int = 0, **kwargs) -> list:
     """``AnnotationResult`` objects (daemon-first, direct fallback).
 
     Objects, not dicts, for the same reason as :func:`context` — callers
     render ``.snippet`` and read ``.metadata``, and a dict has neither.
+
+    ``snippet_budget > 0`` also picks an excerpt for each oversized row. That
+    scoring uses the cross-encoder, so it runs where the model is already warm:
+    done client-side it cost every compact/md recall ~0.4s and ~200 MB to load
+    a model the daemon was holding. A daemon too old to know the field doesn't
+    echo ``snippets``, and the client then picks them itself.
     """
-    from hafiz.core.annotations import AnnotationResult, search_annotations
+    from hafiz.core.annotation_result import AnnotationResult
     from hafiz.core.wire import from_wire
 
-    resp = await request({"op": "query_recall", "query": query, "kwargs": kwargs})
+    resp = await request(
+        {"op": "query_recall", "query": query, "kwargs": kwargs, "snippet_budget": snippet_budget}
+    )
     if resp and resp.get("ok"):
-        return [from_wire(AnnotationResult, r) for r in resp["results"]]
-    return await search_annotations(query, **kwargs)
+        results = [from_wire(AnnotationResult, r) for r in resp["results"]]
+        if resp.get("snippets"):
+            return results
+    else:
+        from hafiz.core.annotations import search_annotations
+
+        results = await search_annotations(query, **kwargs)
+    await _attach_snippets(query, results, snippet_budget)
+    return results
+
+
+async def _attach_snippets(query: str, results: list, budget: int) -> None:
+    if budget > 0 and results:
+        from hafiz.core.snippets import attach_snippets
+
+        await attach_snippets(query, results, budget=budget)
 
 
 async def observe(content: str, **kwargs) -> dict:

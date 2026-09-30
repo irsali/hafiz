@@ -286,9 +286,14 @@ class _Server:
         from hafiz.core.wire import to_wire
 
         kwargs = _supported_kwargs(search_annotations, req.get("kwargs") or {})
+        budget = int(req.get("snippet_budget") or 0)
         async with self._embed_lock:
             results = await search_annotations(req["query"], **kwargs)
-        return {"ok": True, "results": [to_wire(r) for r in results]}
+            if budget > 0 and results:
+                from hafiz.core.snippets import attach_snippets
+
+                await attach_snippets(req["query"], results, budget=budget)
+        return {"ok": True, "results": [to_wire(r) for r in results], "snippets": True}
 
     async def _op_observe(self, req: dict) -> dict:
         from hafiz.core.annotations import store_annotation

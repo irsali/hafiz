@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import UTC, datetime
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from hafiz.core.database import close_engine
 from hafiz.core.durations import age_label, parse_duration
 from hafiz.core.formats import OutputFormat, annotation_compact, annotation_md
 from hafiz.core.session import resolve_session_tag
@@ -136,6 +136,8 @@ def run_observe(
                 dedupe_silently=not detect_duplicates,
             )
         finally:
+            from hafiz.core.database import close_engine
+
             await close_engine()
 
     try:
@@ -397,8 +399,18 @@ def run_recall(
                     "hafiz.core.context is rewired (Phase 3b). "
                     "Falling back to --project filter.[/yellow]"
                 )
+            # Only the two formats that exist to be injected into a prompt get
+            # trimmed; `json` and `rich` keep the full record, so nothing is
+            # ever unreachable. Best-effort — a failure leaves `snippet` unset
+            # and the caller renders full content.
+            budget = 0
+            if output_format in (OutputFormat.COMPACT, OutputFormat.MD):
+                from hafiz.core.config import load_settings
+
+                budget = load_settings().annotations.snippet_chars
             results = await query_recall(
                 query,
+                snippet_budget=budget,
                 limit=limit,
                 project=search_project,
                 kind=kind,
@@ -408,20 +420,12 @@ def run_recall(
                 rerank=rerank,
                 min_score=min_score,
             )
-            # Only the two formats that exist to be injected into a prompt get
-            # trimmed; `json` and `rich` keep the full record, so nothing is
-            # ever unreachable. Best-effort — a failure here leaves `snippet`
-            # unset and the caller renders full content.
-            if output_format in (OutputFormat.COMPACT, OutputFormat.MD):
-                from hafiz.core.config import load_settings
-                from hafiz.core.snippets import attach_snippets
-
-                await attach_snippets(
-                    query, results, budget=load_settings().annotations.snippet_chars
-                )
             return results
         finally:
-            await close_engine()
+            # A daemon-served recall never loads the DB layer; don't import it
+            # just to close an engine that was never opened.
+            if db := sys.modules.get("hafiz.core.database"):
+                await db.close_engine()
 
     results = asyncio.run(_search())
 
