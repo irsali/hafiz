@@ -121,6 +121,19 @@ hafiz ingest . --project hafiz --prune
 hafiz status --diagnose
 ```
 
+Hafiz alone is a Python-only, single-project corpus — it never exercises the other parsers,
+cross-project scoping, or large-repo behaviour. The dev machine usually has other real projects
+indexed (`hafiz status --json` → `by_project` / `staleness`); use them:
+
+- **Pick 1–2 projects that match what changed** — the language whose parser you touched, several
+  repos for `--workspace` / scoping changes, the largest repo for performance, a repo with
+  `commits_behind > 0` for diff-driven re-ingest and staleness.
+- **Read-only by default.** `query`, `context`, `graph`, and `status` against another project are
+  safe. That DB is the user's live second brain — **ask before re-ingesting any project other
+  than hafiz**, and only when the change is to ingest or parsing.
+- **Machine-specific picks go in `CLAUDE.local.md`** (gitignored). Never name non-hafiz projects in
+  this file — it ships with the public repo.
+
 ## Work Items & Backlog Continuity
 
 Multi-step work, deferred decisions, and "let's come back to this" ideas live in `workitems/` as individual markdown files. **Nothing discussed in one session should be lost by the next.**

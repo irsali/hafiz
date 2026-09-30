@@ -36,6 +36,7 @@ hafiz.toml
 # Claude Code (keep .claude/commands/ tracked)
 .claude/*
 !.claude/commands/
+CLAUDE.local.md
 
 # OS
 .DS_Store
