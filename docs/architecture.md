@@ -105,7 +105,7 @@ flowchart TB
 
 **Three load-bearing invariants** ([CLAUDE.md](../CLAUDE.md), [core/database.py:1-23](../hafiz/core/database.py#L1-L23)):
 
-1. **Identity / body / embedding are separate.** `units` carry stable identity; `unit_revisions` carry append-only bodies; `embeddings` carry vectors. A renamed function and a re-flowed paragraph survive without orphaning their annotations.
+1. **Identity / body / embedding are separate.** `units` carry stable identity; `unit_revisions` carry append-only bodies; `embeddings` carry vectors. A renamed function and a re-flowed paragraph survive without orphaning their annotations. Vectors exist only for *current* revisions: superseding a revision keeps its body and drops its vectors, since search never reads them and no revision is ever un-superseded (migration `0009` cleared the backlog).
 2. **Parsers own structure; agents own meaning.** The check constraints `ck_unit_revisions_source` and `ck_edges_source` ([database.py:199-203](../hafiz/core/database.py#L199-L203), [database.py:296-300](../hafiz/core/database.py#L296-L300)) enforce the split at the DB layer.
 3. **Async end-to-end.** Every DB-touching function is `async def`; commands wrap with `asyncio.run(...)`. No blocking calls inside the loop ([CLAUDE.md "Conventions"](../CLAUDE.md)).
 

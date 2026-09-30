@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hafiz.core.chunker import (
@@ -140,6 +140,20 @@ async def _current_revision(session: AsyncSession, unit_id: uuid.UUID) -> UnitRe
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _supersede(session: AsyncSession, revision: UnitRevision, now: datetime) -> None:
+    """Retire ``revision`` and drop its vectors.
+
+    Bodies are canonical, embeddings are an index: the old body stays in
+    ``unit_revisions`` for history, but search only reads current revisions and
+    nothing ever un-supersedes one — a unit that comes back gets a fresh
+    revision with fresh vectors. Kept, these were dead weight: on one store
+    97k of 180k embeddings (≈500 MB) belonged to superseded revisions, and every
+    unit search still scanned past them.
+    """
+    revision.superseded_at = now
+    await session.execute(delete(Embedding).where(Embedding.unit_revision_id == revision.id))
 
 
 async def _upsert_unit(
@@ -354,7 +368,7 @@ async def index_file(
             # partial unique index (unit_id) WHERE superseded_at IS NULL sees
             # two current revisions for a moment and rejects the insert.
             if current is not None:
-                current.superseded_at = now
+                await _supersede(session, current, now)
                 await session.flush()
 
             new_rev = UnitRevision(
@@ -417,7 +431,7 @@ async def index_file(
             # Also supersede its current revision so searches skip it.
             current = await _current_revision(session, v.id)
             if current is not None:
-                current.superseded_at = now
+                await _supersede(session, current, now)
             units_tombstoned += 1
 
         # Edges — same-file resolution, append-only with supersession.

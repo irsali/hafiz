@@ -196,6 +196,56 @@ async def test_deleted_unit_is_tombstoned():
         assert revs[0].superseded_at is not None
 
 
+_ORPHAN_VECTORS = (
+    "unit_revision_id IN (SELECT id FROM unit_revisions WHERE superseded_at IS NOT NULL)"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_revision_keeps_its_body_but_drops_its_vectors():
+    """Search only reads current revisions and nothing un-supersedes one, so a
+    superseded revision's vectors are unreachable. Keeping them grew one store
+    to 54% dead embeddings. The body is history and stays."""
+    abs_path = Path("/tmp/mod.py")
+    await index_file(abs_path, "def f():\n    return 1\n", project="t", embed_fn=mock_embed)
+    await index_file(abs_path, "def f():\n    return 2\n", project="t", embed_fn=mock_embed)
+
+    assert await _count("unit_revisions", where="superseded_at IS NOT NULL") == 2
+    assert await _count("embeddings", where=_ORPHAN_VECTORS) == 0
+    # Every current revision is still searchable.
+    assert (
+        await _count(
+            "unit_revisions",
+            where="superseded_at IS NULL AND id NOT IN (SELECT unit_revision_id FROM embeddings)",
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_vanished_unit_drops_its_vectors_and_comes_back_searchable():
+    abs_path = Path("/tmp/mod.py")
+    both = "def keeper():\n    return 1\n\ndef goner():\n    return 2\n"
+    await index_file(abs_path, both, project="t", embed_fn=mock_embed)
+    await index_file(abs_path, "def keeper():\n    return 1\n", project="t", embed_fn=mock_embed)
+    assert await _count("embeddings", where=_ORPHAN_VECTORS) == 0
+
+    # Same body as before it vanished: it must not count as "unchanged" and
+    # come back without vectors.
+    await index_file(abs_path, both, project="t", embed_fn=mock_embed)
+    factory = get_session_factory()
+    async with factory() as s:
+        goner = (await s.execute(select(Unit).where(Unit.name == "goner"))).scalar_one()
+        current = (
+            await s.execute(
+                select(UnitRevision)
+                .where(UnitRevision.unit_id == goner.id)
+                .where(UnitRevision.superseded_at.is_(None))
+            )
+        ).scalar_one()
+    assert await _count("embeddings", where=f"unit_revision_id = '{current.id}'") >= 1
+
+
 @pytest.mark.asyncio
 async def test_partial_edit_in_long_doc_reembeds_only_changed_parts():
     """A Markdown document larger than the per-part max should split
@@ -307,7 +357,8 @@ async def test_every_embedding_belongs_to_its_own_revision_body():
         assert revisions, "the fixture produced no revisions"
 
         # Two headings sharing an identity means one Unit and two revisions:
-        # the second supersedes the first. Both must carry their own text.
+        # the second supersedes the first. The superseded one keeps its body
+        # but no vectors; the current one must carry its *own* text.
         for rev in revisions:
             parts = (
                 (
@@ -320,6 +371,9 @@ async def test_every_embedding_belongs_to_its_own_revision_body():
                 .scalars()
                 .all()
             )
+            if rev.superseded_at is not None:
+                assert not parts, f"superseded revision {rev.id} kept its vectors"
+                continue
             assert parts, f"revision {rev.id} has no embedding"
             joined = "".join(p.content for p in parts)
             assert joined in rev.content or rev.content in joined, (
