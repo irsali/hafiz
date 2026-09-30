@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from hafiz.core.database import close_engine
 from hafiz.core.formats import OutputFormat, chunk_compact, chunk_md
-from hafiz.core.search import vector_search
 
 console = Console()
 query_app = typer.Typer(name="query", help="Search indexed content")
@@ -62,7 +61,11 @@ def _run_query(
                     "hafiz.core.context is rewired (Phase 3b). "
                     "Falling back to --project filter.[/yellow]"
                 )
-            results = await vector_search(
+            # Daemon-first, with an in-process fallback; either way the same
+            # results plus freshness for the projects the hits came from.
+            from hafiz.core.daemon_client import query_units
+
+            results, staleness = await query_units(
                 text,
                 limit=limit,
                 project=search_project,
@@ -83,22 +86,11 @@ def _run_query(
                 transcript_hits = [
                     (r, score) for r, score in rows if min_score is None or score >= min_score
                 ]
-            # Freshness of the projects these results came from — scoped to
-            # those projects, not the whole store, so it costs a few ms rather
-            # than ~40. Without it a caller cannot tell a current result from a
-            # 28-commit-stale one, and the only safe policy is to distrust the
-            # whole index (which a real integrator adopted).
-            from hafiz.core.freshness import index_staleness, stale_projects
-
-            try:
-                staleness = stale_projects(
-                    await index_staleness(sorted({r.project for r in results if r.project}))
-                )
-            except Exception:  # noqa: BLE001 — a git hiccup must not fail a search
-                staleness = {}
             return results, transcript_hits, staleness
         finally:
-            await close_engine()
+            # A daemon-served query never loads the DB layer.
+            if db := sys.modules.get("hafiz.core.database"):
+                await db.close_engine()
 
     results, transcript_hits, staleness = asyncio.run(_search())
 

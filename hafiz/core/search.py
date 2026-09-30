@@ -9,7 +9,6 @@ history but don't pollute retrieval.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 from sqlalchemy import func, not_, or_, select
 
@@ -23,6 +22,7 @@ from hafiz.core.database import (
 )
 from hafiz.core.dialect import cosine_distance, similarity
 from hafiz.core.embeddings import embed_query
+from hafiz.core.results import SearchResult  # re-exported
 
 
 def _normalize_domains(domains: list[str] | None) -> list[str]:
@@ -139,26 +139,6 @@ async def prepare_query(text: str | None, *, telemetry_command: str | None) -> s
     if skipped and telemetry_command:
         await telemetry.record_skip(command=telemetry_command, wrapper=skipped)
     return None if skipped else query
-
-
-@dataclass
-class SearchResult:
-    """A single search result. Fields are populated from the joined
-    ``embeddings`` → ``unit_revisions`` → ``units`` → ``files`` row."""
-
-    id: str  # embedding row id
-    unit_id: str
-    unit_name: str
-    kind: str  # namespaced: code.function, doc.heading, file.raw, …
-    content: str  # the embedded part (may be a slice of the unit body)
-    source_file: str
-    line_start: int | None
-    line_end: int | None
-    language: str | None
-    project: str | None
-    part_index: int
-    score: float
-    is_neighbor: bool = False
 
 
 # How far to over-fetch when collapsing duplicates, so the caller still gets
@@ -317,6 +297,27 @@ async def vector_search(
         )
 
     return final
+
+
+async def search_with_staleness(query: str, **kwargs) -> tuple[list[SearchResult], dict]:
+    """:func:`vector_search`, plus freshness for the projects the hits came from.
+
+    Scoped to those projects, not the whole store, so it costs a few ms rather
+    than ~40. Without it a caller cannot tell a current result from a
+    28-commit-stale one, and the only safe policy is to distrust the whole
+    index (which a real integrator adopted). One function so the daemon and
+    the in-process fallback cannot disagree.
+    """
+    from hafiz.core.freshness import index_staleness, stale_projects
+
+    results = await vector_search(query, **kwargs)
+    try:
+        staleness = stale_projects(
+            await index_staleness(sorted({r.project for r in results if r.project}))
+        )
+    except Exception:  # noqa: BLE001 — a git hiccup must not fail a search
+        staleness = {}
+    return results, staleness
 
 
 async def count_embeddings(project: str | None = None) -> int:

@@ -202,6 +202,20 @@ async def context(query: str, **kwargs):
     return await build_context(query, **kwargs)
 
 
+async def query_units(query: str, **kwargs) -> tuple[list, dict]:
+    """``(SearchResult list, staleness)`` for ``hafiz query`` (daemon-first,
+    direct fallback)."""
+    from hafiz.core.results import SearchResult
+    from hafiz.core.wire import from_wire
+
+    resp = await request({"op": "query", "query": query, "kwargs": kwargs})
+    if resp and resp.get("ok"):
+        return [from_wire(SearchResult, r) for r in resp["results"]], resp.get("staleness") or {}
+    from hafiz.core.search import search_with_staleness
+
+    return await search_with_staleness(query, **kwargs)
+
+
 async def query_recall(query: str, *, snippet_budget: int = 0, **kwargs) -> list:
     """``AnnotationResult`` objects (daemon-first, direct fallback).
 
@@ -214,7 +228,7 @@ async def query_recall(query: str, *, snippet_budget: int = 0, **kwargs) -> list
     a model the daemon was holding. A daemon too old to know the field doesn't
     echo ``snippets``, and the client then picks them itself.
     """
-    from hafiz.core.annotation_result import AnnotationResult
+    from hafiz.core.results import AnnotationResult
     from hafiz.core.wire import from_wire
 
     resp = await request(

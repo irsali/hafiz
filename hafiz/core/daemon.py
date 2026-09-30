@@ -248,6 +248,8 @@ class _Server:
                 return await self._op_context(req)
             if op == "query_recall":
                 return await self._op_query_recall(req)
+            if op == "query":
+                return await self._op_query(req)
             if op == "observe":
                 return await self._op_observe(req)
             if op == "capture":
@@ -264,6 +266,17 @@ class _Server:
         async with self._embed_lock:
             bundle = await build_context(req["query"], **kwargs)
         return {"ok": True, "bundle": bundle.to_wire()}
+
+    async def _op_query(self, req: dict) -> dict:
+        """Unit search (``hafiz query``). Without it every call loaded the
+        embedding model in-process: 1.86s and ~1 GB RSS per query."""
+        from hafiz.core.search import search_with_staleness, vector_search
+        from hafiz.core.wire import to_wire
+
+        kwargs = _supported_kwargs(vector_search, req.get("kwargs") or {})
+        async with self._embed_lock:
+            results, staleness = await search_with_staleness(req["query"], **kwargs)
+        return {"ok": True, "results": [to_wire(r) for r in results], "staleness": staleness}
 
     async def _op_query_recall(self, req: dict) -> dict:
         """Recall, with every caller argument forwarded.

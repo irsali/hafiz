@@ -334,12 +334,21 @@ A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embeddi
 | `serve status` | Report whether the daemon is live, its version, its **pid**, and whether it *would* spawn. | — | `--json` → `{"ok","running","socket","version","pid","enabled","idle_timeout"}` | rich panel |
 | `serve stop` | SIGTERM the daemon and **confirm** it stopped; unlinking the socket is only the fallback. | — | `--json` → `{"ok","was_running","pid","signalled","stopped","socket_removed"}` | rich line |
 
-**Which commands use it:** `hafiz query --observations` and `hafiz context`. Both
-return identical results with or without a daemon — same objects, same `--json`,
-same ordering. Writes (`observe` / `note` / `capture`) still run in-process.
+**Which commands use it:** `hafiz query`, `hafiz query --observations` and
+`hafiz context`. All return identical results with or without a daemon — same
+objects, same `--json`, same ordering. The daemon also picks the `compact`/`md`
+excerpts (under its warm cross-encoder) and computes `query`'s `staleness`, so a
+served call loads neither fastembed nor the DB layer client-side. Writes
+(`observe` / `note` / `capture`) and `--include-transcripts` still run in-process.
 
-**Measured** on a 1,900-annotation / 154k-embedding store: recall is **0.8s warm
-vs 1.8s cold**, because the warm path skips the fastembed model load (~0.9s).
+**Measured** on a 2,100-annotation / 83k-embedding store, daemon warm:
+
+| Call | Before | After |
+|---|---|---|
+| `query --observations --format md` | 1.35s, 324 MB | 0.67s, 44 MB |
+| `query --format compact` (units) | 1.86s, 1 GB | 0.30s, 32 MB |
+
+Most of what remains of a recall is the cross-encoder rerank (~0.3s).
 
 - **Transport:** Unix domain socket, **0600**, at `$XDG_RUNTIME_DIR/hafiz/daemon.sock` (falls back to `/tmp/hafiz-<uid>/daemon.sock`). Never a TCP port — a sovereign personal store stays off the network; filesystem permissions gate access. Override the path with `HAFIZ_DAEMON_SOCKET`.
 **One daemon per socket, enforced.** Observed on the author's machine: **four**

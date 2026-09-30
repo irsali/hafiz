@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from hafiz.core import telemetry
-from hafiz.core.annotation_result import AnnotationResult  # re-exported
 from hafiz.core.database import (
     Annotation,
     AnnotationTarget,
@@ -48,6 +47,7 @@ from hafiz.core.dialect import (
 )
 from hafiz.core.embeddings import embed_query
 from hafiz.core.git_context import current_git_context
+from hafiz.core.results import AnnotationResult  # re-exported
 
 
 async def _classify_target_kind(target_uuid: uuid.UUID) -> str | None:

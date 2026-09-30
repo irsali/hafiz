@@ -1,9 +1,9 @@
-"""The annotation search result, importable without the database layer.
+"""Search result types, importable without the database layer.
 
 The warm daemon returns these over its socket, so a CLI call it serves only
-needs the dataclass — not SQLAlchemy, pgvector and fastembed, which
-:mod:`hafiz.core.annotations` pulls in and which cost ~0.3s per hook-driven
-recall before any work was done.
+needs the dataclasses — not SQLAlchemy, pgvector and fastembed, which
+:mod:`hafiz.core.annotations` and :mod:`hafiz.core.search` pull in and which
+cost ~0.3s per hook-driven call before any work was done.
 """
 
 from __future__ import annotations
@@ -51,3 +51,23 @@ class AnnotationResult:
     def ranking_score(self) -> float:
         """The score this row was actually ordered by — rerank if it ran."""
         return self.score if self.rerank_score is None else self.rerank_score
+
+
+@dataclass
+class SearchResult:
+    """A single search result. Fields are populated from the joined
+    ``embeddings`` → ``unit_revisions`` → ``units`` → ``files`` row."""
+
+    id: str  # embedding row id
+    unit_id: str
+    unit_name: str
+    kind: str  # namespaced: code.function, doc.heading, file.raw, …
+    content: str  # the embedded part (may be a slice of the unit body)
+    source_file: str
+    line_start: int | None
+    line_end: int | None
+    language: str | None
+    project: str | None
+    part_index: int
+    score: float
+    is_neighbor: bool = False
