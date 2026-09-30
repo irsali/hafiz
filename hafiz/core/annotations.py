@@ -1059,9 +1059,11 @@ async def search_annotations(
     """
     from hafiz.core.config import load_settings
     from hafiz.core.reranker import rerank_scored
-    from hafiz.core.search import require_query
+    from hafiz.core.search import prepare_query
 
-    query = require_query(query)
+    query = await prepare_query(query, telemetry_command=telemetry_command)
+    if query is None:
+        return []
     rerank_cfg = load_settings().rerank
     do_rerank = rerank_cfg.enabled if rerank is None else rerank
     # Over-fetch candidates for the reranker to reorder; it can only improve on

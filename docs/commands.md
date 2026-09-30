@@ -433,6 +433,17 @@ query rather than returning confidently-scored noise. Same guard on the write
 side: `observe` / `note` refuse blank content, because such a row would then
 score near-perfectly against every future query — a permanent noise magnet.
 
+**Harness messages are skipped, not searched.** Agent harnesses put text into the
+conversation that the user never typed, and a per-prompt recall hook forwards it.
+A prompt that *starts with* `<task-notification>` (a sub-agent's final report —
+an answer, not a question; 88% of such recalls came back empty) returns an empty
+result set with exit `0`, is not embedded, and is logged in `retrievals` as the
+marker `[skipped] <task-notification>` rather than the full text. Editor
+preambles at the front of a real prompt — `<ide_opened_file>`, `<ide_selection>`,
+`<system-reminder>` blocks — are stripped and the rest is searched; a prompt that
+is *only* preamble is skipped the same way. Only these leading tags count: a
+prompt that merely mentions one, or starts with any other tag, is searched as-is.
+
 **Reranking** (on `query --observations`): vector similarity compresses relevant rows and near-random noise into a narrow band; a cross-encoder re-scores the top `limit × rerank.candidate_multiplier` candidates against the query and reorders them, then returns the top `limit`. On by default (`rerank.enabled` config); `--no-rerank` skips it. The reranker model (`Xenova/ms-marco-MiniLM-L-6-v2`, ~90 MB) ships with fastembed — no extra dependency — and loads lazily, cached alongside the embedding model. Reranking is strictly a reordering: if the model is unavailable it falls back to vector order. Warm via the daemon it adds ~300-400ms; the gain is sharp signal/noise separation. Disable on constrained hosts with `hafiz config set rerank.enabled false`.
 
 **Pinning vs. ranking** (`--tags` on `query --observations`): some sets are
@@ -853,7 +864,7 @@ One append-only source-layer table, one INSERT per search.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `retrievals` | Never-recalled knowledge, most-recalled rows, per-entry-point usage, and queries that returned nothing. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, by_command[], empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], telemetry_started, enabled}` | rich tables |
+| `retrievals` | Never-recalled knowledge, most-recalled rows, per-entry-point usage, and queries that returned nothing. Skipped harness messages are counted in `skipped` and left out of every other figure. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, skipped, by_command[], empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], telemetry_started, enabled}` | rich tables |
 
 - **Recorded in `hafiz/core/`, not the commands layer.** `hafiz/core/daemon.py` calls `search_annotations` directly, so command-layer telemetry would silently miss every warm request — the exact failure class this audit kept finding. `vector_search` / `search_annotations` default `telemetry_command` to their label, so a *new* caller is recorded without knowing telemetry exists; pass `None` to opt a call out.
 - **Never fails a search.** Recording is best-effort and swallows everything. A memory layer that can break the read path gets removed.

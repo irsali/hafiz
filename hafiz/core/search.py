@@ -8,6 +8,7 @@ history but don't pollute retrieval.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import func, not_, or_, select
@@ -89,6 +90,57 @@ def require_query(
     return cleaned
 
 
+# Agent harnesses feed text into the conversation that the user never typed, and
+# a per-prompt recall hook forwards it verbatim. Two shapes, handled differently:
+#
+# * A *preamble* is context glued to the front of a real prompt ("The user opened
+#   file X…"). The prompt behind it is genuine, so the block is stripped and the
+#   rest searched.
+# * A *message* is the whole turn — a sub-agent's final report arriving as a
+#   task notification. It is an answer, not a question: across 468 recorded
+#   recalls, 88% came back empty, and they were the single largest source of
+#   "unanswered" noise in the retrieval log. Searching it is skipped outright.
+#
+# Only *leading* tags count, and only these names: text that merely mentions a
+# tag, or starts with an unknown one, is searched as-is.
+_HARNESS_PREAMBLES = frozenset({"ide_opened_file", "ide_selection", "system-reminder"})
+_HARNESS_MESSAGES = frozenset({"task-notification"})
+_LEADING_BLOCK = re.compile(r"<([a-z][\w-]*)>.*?</\1>\s*", re.DOTALL)
+_LEADING_TAG = re.compile(r"<([a-z][\w-]*)>")
+
+
+def strip_harness_wrappers(text: str) -> tuple[str, str | None]:
+    """Return ``(query, skipped)`` for a stripped, non-blank ``text``.
+
+    ``skipped`` names the harness wrapper (``"<task-notification>"``) when there
+    is nothing of the user's left to search; ``query`` is then ``""``.
+    """
+    rest, last = text, None
+    while (m := _LEADING_BLOCK.match(rest)) and m.group(1) in _HARNESS_PREAMBLES:
+        rest, last = rest[m.end() :], m.group(1)
+    rest = rest.strip()
+    m = _LEADING_TAG.match(rest)
+    if m and m.group(1) in _HARNESS_MESSAGES:
+        return "", f"<{m.group(1)}>"
+    if not rest:
+        return "", f"<{last}>"  # the prompt was nothing but preamble
+    return rest, None
+
+
+async def prepare_query(text: str | None, *, telemetry_command: str | None) -> str | None:
+    """:func:`require_query`, then drop harness wrappers.
+
+    Returns the text to embed, or ``None`` when the caller should return an
+    empty result set. A skip is ordinary — hooks see it on every sub-agent
+    completion — so it is not an error, and it is logged as a one-line marker
+    rather than the full message, which the retrieval log has no use for.
+    """
+    query, skipped = strip_harness_wrappers(require_query(text))
+    if skipped and telemetry_command:
+        await telemetry.record_skip(command=telemetry_command, wrapper=skipped)
+    return None if skipped else query
+
+
 @dataclass
 class SearchResult:
     """A single search result. Fields are populated from the joined
@@ -165,10 +217,12 @@ async def vector_search(
     Raises:
         EmptyQueryError: if ``query`` is blank.
     """
-    query = require_query(query)
     inc = _normalize_domains(include_domains)
     exc = _normalize_domains(exclude_domains)
     _validate_domain_filters(inc, exc)
+    query = await prepare_query(query, telemetry_command=telemetry_command)
+    if query is None:
+        return []
     query_embedding = await embed_query(query)
 
     similarity_expr = similarity(Embedding.embedding, query_embedding)

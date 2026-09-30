@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 17 -->
-# Hafiz — Workspace Intelligence (v17)
+<!-- SKILLS_VERSION: 18 -->
+# Hafiz — Workspace Intelligence (v18)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just code indexing. It tracks
@@ -197,6 +197,12 @@ tell reranked output from vector output.
 with `{"ok": false, "error": ...}` on blank input. If you build a query by
 interpolating a variable, check the exit code — an unset variable is a bug in
 your hook, and hafiz will no longer paper over it with confidently-scored noise.
+
+**Harness messages are skipped, not searched.** A prompt that *is* a harness
+message (`<task-notification>` — a sub-agent's final report) returns no results
+and exits `0`; editor preambles at the front of a prompt (`<ide_opened_file>`,
+`<ide_selection>`, `<system-reminder>`) are stripped and the rest is searched.
+A recall hook can forward the harness prompt as-is.
 
 **`--format md` on an empty result set prints nothing at all** — no placeholder
 line. Under a floor, "no rows" is the ordinary answer to an off-topic prompt, so

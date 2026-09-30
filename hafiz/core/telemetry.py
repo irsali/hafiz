@@ -109,6 +109,23 @@ async def record_retrieval(
         logger.debug("retrieval telemetry skipped (%s)", exc)
 
 
+#: ``query_text`` of a search skipped because the prompt was a harness message.
+SKIPPED_PREFIX = "[skipped] "
+#: Rows written before skipping existed, carrying the whole message as the query.
+_LEGACY_SKIPPABLE = "<task-notification>"
+
+
+async def record_skip(*, command: str, wrapper: str) -> None:
+    """Log that ``command`` skipped a harness message — the marker, not the text."""
+    await record_retrieval(
+        command=command, query=SKIPPED_PREFIX + wrapper, filters={"skipped": wrapper}
+    )
+
+
+def _is_skip(column):
+    return column.startswith(SKIPPED_PREFIX) | column.startswith(_LEGACY_SKIPPABLE)
+
+
 async def _ambient_session_id() -> uuid.UUID | None:
     """The current session's uuid, if a cursor is open. None on any problem."""
     try:
@@ -141,12 +158,21 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
     from hafiz.core.dialect import backend_of, most_recalled_sql, unnest_ids
 
     since = datetime.now(UTC) - timedelta(days=since_days)
+    # Skipped harness messages are not questions the store failed to answer, so
+    # they would only inflate the empty rate and bury the real blind spots.
+    window = (Retrieval.at >= since) & ~_is_skip(Retrieval.query_text)
     factory = get_session_factory()
     async with factory() as session:
         first_row = (await session.execute(select(func.min(Retrieval.at)))).scalar()
         total = (
+            await session.execute(select(func.count()).select_from(Retrieval).where(window))
+        ).scalar() or 0
+        skipped = (
             await session.execute(
-                select(func.count()).select_from(Retrieval).where(Retrieval.at >= since)
+                select(func.count())
+                .select_from(Retrieval)
+                .where(Retrieval.at >= since)
+                .where(_is_skip(Retrieval.query_text))
             )
         ).scalar() or 0
 
@@ -176,7 +202,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
         unanswered = (
             await session.execute(
                 select(Retrieval.query_text, func.count().label("n"), func.max(Retrieval.at))
-                .where(Retrieval.at >= since)
+                .where(window)
                 .where(Retrieval.n_results == 0)
                 .group_by(Retrieval.query_text)
                 .order_by(desc(literal_column("n")))
@@ -196,7 +222,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
                 select(
                     func.count().label("n"),
                     func.sum(cast(and_(Retrieval.n_results == 0), Integer)).label("empty"),
-                ).where(Retrieval.at >= since)
+                ).where(window)
             )
         ).one()
 
@@ -213,7 +239,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
                     func.sum(cast(and_(Retrieval.n_results == 0), Integer)).label("empty"),
                     func.avg(Retrieval.top_score).label("avg_top"),
                 )
-                .where(Retrieval.at >= since)
+                .where(window)
                 .group_by(Retrieval.command)
                 .order_by(desc(literal_column("n")))
             )
@@ -223,6 +249,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
         "since_days": since_days,
         "telemetry_started": first_row.isoformat() if first_row else None,
         "retrievals": total,
+        "skipped": skipped,
         "by_command": [
             {
                 "command": c,
