@@ -50,6 +50,11 @@ model = "Xenova/ms-marco-MiniLM-L-6-v2"  # ~80 MB ONNX cross-encoder
 # Over-fetch this multiple of the requested limit before reranking, so the
 # cross-encoder has real candidates to reorder.
 candidate_multiplier = 3
+# Clean long or dictated queries (fillers, pasted page dumps, code, URLs) and
+# search a long one as its whole plus its key sentences, keeping each row's
+# best score. Short, clean queries are searched exactly as given.
+# Env override: HAFIZ_RERANK__CONDENSE_QUERIES=false
+condense_queries = true
 
 [dedup]
 # Near-duplicate detection on `observe` (not `note`). Before writing, Hafiz

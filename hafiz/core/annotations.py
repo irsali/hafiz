@@ -1018,7 +1018,6 @@ async def search_annotations(
         EmptyQueryError: if ``query`` is blank.
     """
     from hafiz.core.config import load_settings
-    from hafiz.core.reranker import rerank_scored
     from hafiz.core.search import prepare_query
 
     query = await prepare_query(query, telemetry_command=telemetry_command)
@@ -1030,6 +1029,75 @@ async def search_annotations(
     # what vector recall surfaced, so a wider net helps. Pure-vector path keeps
     # the tight limit.
     fetch_limit = max(limit * rerank_cfg.candidate_multiplier, limit) if do_rerank else limit
+
+    # A long or dictated prompt is searched as its cleaned whole plus its key
+    # sentences, merged by each row's best score; a short clean one is searched
+    # as-is. If cleaning leaves nothing, the original text is searched.
+    searched = [query]
+    if rerank_cfg.condense_queries:
+        from hafiz.core.condense import segments
+
+        searched = segments(query) or [query]
+
+    pool: dict[str, AnnotationResult] = {}
+    for text in searched:
+        for r in await _ranked_candidates(
+            text,
+            fetch_limit=fetch_limit,
+            do_rerank=do_rerank,
+            project=project,
+            kind=kind,
+            source=source,
+            tags=tags,
+            active_only=active_only,
+        ):
+            if r.id not in pool or r.ranking_score > pool[r.id].ranking_score:
+                pool[r.id] = r
+    candidates = sorted(pool.values(), key=lambda r: r.ranking_score, reverse=True)
+
+    if min_score is not None:
+        candidates = [r for r in candidates if r.ranking_score >= min_score]
+    final = candidates[:limit]
+
+    # Recorded here rather than in the CLI: hafiz/core/daemon.py calls this
+    # function directly, so command-layer telemetry would silently miss every
+    # warm request.
+    if telemetry_command:
+        await telemetry.record_retrieval(
+            command=telemetry_command,
+            query=query,
+            result_ids=[r.id for r in final],
+            top_score=final[0].ranking_score if final else None,
+            reranked=any(r.rerank_score is not None for r in final),
+            filters={
+                "project": project,
+                "kind": kind,
+                "source": source,
+                "tags": tags,
+                "limit": limit,
+                "min_score": min_score,
+                "include_superseded": None if active_only else True,
+                # How many texts were actually searched, when it wasn't just the
+                # query as given — so condensing can be judged from the log.
+                "segments": len(searched) if searched != [query] else None,
+            },
+        )
+    return final
+
+
+async def _ranked_candidates(
+    query: str,
+    *,
+    fetch_limit: int,
+    do_rerank: bool,
+    project: str | list[str] | None,
+    kind: str | None,
+    source: str | None,
+    tags: list[str] | None,
+    active_only: bool,
+) -> list[AnnotationResult]:
+    """One text's vector candidates, cross-encoder reranked when asked, best first."""
+    from hafiz.core.reranker import rerank_scored
 
     query_embedding = await embed_query(query)
 
@@ -1091,32 +1159,7 @@ async def search_annotations(
         ):
             result.rerank_score = rerank_score
         candidates.sort(key=lambda r: r.ranking_score, reverse=True)
-
-    if min_score is not None:
-        candidates = [r for r in candidates if r.ranking_score >= min_score]
-    final = candidates[:limit]
-
-    # Recorded here rather than in the CLI: hafiz/core/daemon.py calls this
-    # function directly, so command-layer telemetry would silently miss every
-    # warm request.
-    if telemetry_command:
-        await telemetry.record_retrieval(
-            command=telemetry_command,
-            query=query,
-            result_ids=[r.id for r in final],
-            top_score=final[0].ranking_score if final else None,
-            reranked=any(r.rerank_score is not None for r in final),
-            filters={
-                "project": project,
-                "kind": kind,
-                "source": source,
-                "tags": tags,
-                "limit": limit,
-                "min_score": min_score,
-                "include_superseded": None if active_only else True,
-            },
-        )
-    return final
+    return candidates
 
 
 async def list_annotations(
