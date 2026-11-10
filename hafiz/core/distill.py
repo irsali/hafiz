@@ -685,6 +685,9 @@ async def _fetch_message_candidates(
             )
             .where(CommunicationMessage.ts >= start)
             .where(CommunicationMessage.ts <= end)
+            # System rows are hook injections — copies of existing memories.
+            # Distilling them would propose the store's own knowledge back to it.
+            .where(CommunicationMessage.role != "system")
             .where(Communication.valid_until.is_(None))
             .where(
                 or_(

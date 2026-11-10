@@ -22,7 +22,10 @@ Selective embedding policy (from
 :mod:`hafiz.core.communications`) is enforced at write time: short
 turns and pure tool-result echoes don't get embedded. Non-message
 records (queue-operation, attachment, file-history-snapshot) are
-skipped — anything that is not a user / assistant / system turn.
+skipped — with one exception: the output of a **hafiz** hook (the
+memories a recall hook injected) is kept as a ``role='system'`` turn,
+because it is the only record of what the agent was shown, and without
+it "did recall help?" cannot be measured. See :mod:`hafiz.core.delivery`.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from hafiz.core.communications import MessageInput
+from hafiz.core.delivery import INJECTION_KIND
 from hafiz.core.importers.base import (
     ImportSummary,
     ParsedConversation,
@@ -147,6 +151,31 @@ def _extract_text_and_tools(
     return text, (tools if tools else None), thinking
 
 
+def _hafiz_injection(record: dict) -> tuple[str, dict] | None:
+    """``(text, metadata)`` when ``record`` is a hafiz hook's injected output.
+
+    Claude Code logs a hook's stdout as an ``attachment`` of type
+    ``hook_success``. Only hooks that run hafiz and printed something count:
+    other hooks are the user's business, and an empty stdout injected nothing.
+    ``stdout`` is used rather than ``content``, which Claude Code truncates
+    to a preview for large outputs.
+    """
+    att = record.get("attachment")
+    if not isinstance(att, dict) or att.get("type") != "hook_success":
+        return None
+    if "hafiz" not in str(att.get("command") or ""):
+        return None
+    text = str(att.get("stdout") or "").strip()
+    if not text:
+        return None
+    meta: dict[str, Any] = {"kind": INJECTION_KIND, "hook_event": att.get("hookEvent")}
+    try:
+        meta["duration_ms"] = int(att.get("durationMs"))
+    except (TypeError, ValueError):
+        pass
+    return text, meta
+
+
 def _classify_role(record: dict, tools: list[dict] | None) -> str:
     """Map a Claude Code JSONL record onto our role enum.
 
@@ -201,7 +230,8 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
             if not isinstance(rec, dict):
                 continue
             rtype = rec.get("type")
-            if rtype not in _MESSAGE_TYPES:
+            injection = _hafiz_injection(rec) if rtype == "attachment" else None
+            if rtype not in _MESSAGE_TYPES and injection is None:
                 continue
             sid = rec.get("sessionId")
             if sid and external_id is None:
@@ -215,9 +245,13 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
             ended_at = ts
 
             message = rec.get("message") or {}
-            content_blocks = message.get("content") or []
-            text, tools, thinking = _extract_text_and_tools(content_blocks)
-            role = _classify_role(rec, tools)
+            if injection is not None:
+                text, tools, thinking = injection[0], None, None
+                role = "system"
+            else:
+                content_blocks = message.get("content") or []
+                text, tools, thinking = _extract_text_and_tools(content_blocks)
+                role = _classify_role(rec, tools)
 
             # Drop empty rows: no text, no tool calls. They're usually
             # control / metadata events that slipped through.
@@ -239,6 +273,8 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
                 "version": version,
                 "model": message.get("model"),
             }
+            if injection is not None:
+                metadata.update(injection[1])
             if thinking:
                 # Stash thinking in metadata. It's high-value for
                 # debugging but should not pollute the embedding

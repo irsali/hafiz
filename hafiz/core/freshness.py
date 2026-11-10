@@ -247,6 +247,9 @@ async def embed_coverage(*, since_days: int = 30) -> dict:
             .join(Communication, Communication.id == CommunicationMessage.communication_id)
             .where(CommunicationMessage.ts >= start)
             .where(CommunicationMessage.ts <= now)
+            # Hook injections are never embedded by design; counting them would
+            # read as a coverage gap that isn't one.
+            .where(CommunicationMessage.role != "system")
             .where(live)
         )
         total = (await session.execute(base)).scalar() or 0

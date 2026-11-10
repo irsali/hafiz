@@ -92,6 +92,11 @@ def should_embed_message(
     """
     if marked_salient:
         return True
+    if role == "system":
+        # Harness/hook text — today, the memories a recall hook injected. It is
+        # a copy of annotations already searchable on their own; embedding it
+        # would make transcript search answer with echoes of the wisdom layer.
+        return False
     if not content or not content.strip():
         return False
     if _approx_token_count(content) < EMBED_MIN_TOKENS:

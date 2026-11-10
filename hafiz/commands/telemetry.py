@@ -107,6 +107,8 @@ def run_retrievals(
             )
         console.print(usage)
 
+    _print_delivery(report.get("delivery") or {})
+
     if report["unanswered"]:
         console.print()
         gaps = Table(
@@ -128,3 +130,58 @@ def run_retrievals(
         for row in report["most_recalled"]:
             top.add_row(row["kind"], row["preview"].replace("\n", " ")[:90], str(row["hits"]))
         console.print(top)
+
+
+def _print_delivery(delivery: dict) -> None:
+    """What recall hooks showed agents, and whether agents seemed to use it."""
+    if delivery.get("error"):
+        console.print(f"\n[dim]Delivery report unavailable: {delivery['error']}[/dim]")
+        return
+    if not delivery.get("injections"):
+        console.print(
+            "\n[dim]No captured hook injections yet — re-run [bold]hafiz import "
+            "claude-code[/bold] to backfill them from existing sessions.[/dim]"
+        )
+        return
+    console.print()
+    table = Table(
+        title=f"Shown to agents — {delivery['injections']} injections, "
+        f"{delivery['sessions']} sessions",
+        border_style="cyan",
+    )
+    table.add_column("Hook")
+    table.add_column("Memories shown", justify="right")
+    table.add_column("Likely used", justify="right")
+    table.add_column("Avg size", justify="right")
+    table.add_column("p50 / p95 ms", justify="right")
+    for row in delivery["by_event"]:
+        rate = row["used_rate"]
+        used = (
+            f"{row['likely_used']} of {row['scorable']} ({rate:.0%})"
+            if rate is not None
+            else "[dim]—[/dim]"
+        )
+        table.add_row(
+            row["event"],
+            str(row["memories_shown"]),
+            used,
+            f"{row['avg_chars']} ch" if row["avg_chars"] else "—",
+            f"{row['p50_ms'] or '—'} / {row['p95_ms'] or '—'}",
+        )
+    console.print(table)
+    console.print(f"[dim]Estimate is {delivery['method']}.[/dim]")
+    for title, key, style in (
+        ("Used most", "most_used", "green"),
+        ("Shown often, never used — reword, retarget or unpin", "shown_never_used", "yellow"),
+    ):
+        rows = delivery.get(key) or []
+        if not rows:
+            continue
+        console.print()
+        t = Table(title=title, border_style=style)
+        t.add_column("Memory")
+        t.add_column("Shown", justify="right")
+        t.add_column("Used", justify="right")
+        for r in rows:
+            t.add_row(r["preview"][:90], str(r["shown"]), str(r["used"]))
+        console.print(t)

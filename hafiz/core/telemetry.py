@@ -245,8 +245,19 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
             )
         ).all()
 
+    # What was *shown* to agents and whether they used it — the half of the
+    # question the retrieval log can't answer. Secondary: a failure here costs
+    # this one section, never the report.
+    from hafiz.core.delivery import delivery_report
+
+    try:
+        delivery = await delivery_report(since_days=since_days, limit=min(limit, 10))
+    except Exception as exc:  # noqa: BLE001
+        delivery = {"error": str(exc)}
+
     return {
         "since_days": since_days,
+        "delivery": delivery,
         "telemetry_started": first_row.isoformat() if first_row else None,
         "retrievals": total,
         "skipped": skipped,
