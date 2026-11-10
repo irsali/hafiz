@@ -707,3 +707,34 @@ async def test_source_message_id_is_stored_for_every_imported_turn(jsonl_session
     values = [v for (v,) in ids]
     assert all(v for v in values), "every claude-code turn carries its source uuid"
     assert len(set(values)) == len(values), "and they are distinct"
+
+
+def test_record_types_that_are_not_turns_are_skipped(tmp_path: Path):
+    """Claude Code keeps adding record types. ``api-request-blob`` carries a
+    ``message`` payload without being a turn; importing it used the type name as
+    the role, broke the role CHECK constraint, and failed the whole session."""
+    sid = str(uuid.uuid4())
+    ts = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+    lines = [
+        _record(
+            record_type="user",
+            session_id=sid,
+            rec_uuid=str(uuid.uuid4()),
+            text="look up the second subscription",
+            timestamp=ts,
+        ),
+        json.dumps(
+            {
+                "type": "api-request-blob",
+                "sessionId": sid,
+                "hash": "x",
+                "message": {"role": "user", "content": [{"type": "text", "text": "copy"}]},
+            }
+        ),
+        json.dumps({"type": "ai-title", "sessionId": sid, "aiTitle": "Subscriptions"}),
+        json.dumps({"type": "some-future-type", "sessionId": sid, "message": {"content": "?"}}),
+    ]
+    path = tmp_path / f"{sid}.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    parsed = parse_jsonl_file(path)
+    assert [m.role for m in parsed.messages] == ["user"]

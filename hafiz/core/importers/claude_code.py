@@ -22,7 +22,7 @@ Selective embedding policy (from
 :mod:`hafiz.core.communications`) is enforced at write time: short
 turns and pure tool-result echoes don't get embedded. Non-message
 records (queue-operation, attachment, file-history-snapshot) are
-skipped.
+skipped — anything that is not a user / assistant / system turn.
 """
 
 from __future__ import annotations
@@ -45,10 +45,14 @@ from hafiz.core.importers.base import (
 CLAUDE_CODE_AGENT = "claude-code"
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
-# Records with these top-level "type" values are not turn-shaped and
-# get dropped during parse. The remaining rows are user / assistant
-# (and sometimes tool, modeled below by inspecting content blocks).
-_NON_MESSAGE_TYPES = {"queue-operation", "attachment", "file-history-snapshot"}
+# The only top-level "type" values that are turns (tool results arrive as
+# "user" and are re-tagged below). An allow-list, not a deny-list: Claude Code
+# keeps adding record types, and some carry a ``message`` payload without being
+# a turn — ``api-request-blob`` is a copy of what was sent to the API. Under the
+# old deny-list each new type was imported with its type name as the role,
+# tripped the role CHECK constraint, and failed the whole session's import
+# (silently, under a hook).
+_MESSAGE_TYPES = {"user", "assistant", "system"}
 
 
 @dataclass
@@ -197,7 +201,7 @@ def parse_jsonl_file(path: Path) -> ParsedFile | None:
             if not isinstance(rec, dict):
                 continue
             rtype = rec.get("type")
-            if rtype in _NON_MESSAGE_TYPES:
+            if rtype not in _MESSAGE_TYPES:
                 continue
             sid = rec.get("sessionId")
             if sid and external_id is None:
