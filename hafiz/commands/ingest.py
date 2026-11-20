@@ -81,6 +81,17 @@ async def _do_ingest(
     settings = get_settings()
     ignore_patterns = settings.workspace.ignore
 
+    if project:
+        # A synonym or case/spacing variant indexes under the main name rather
+        # than starting a second, shadow index. Anything unclear keeps the name
+        # as given — git hooks pin it, and refusing would silently stop them.
+        from hafiz.core.projects import UnknownProjectError, canonical_project
+
+        try:
+            project = await canonical_project(project)
+        except UnknownProjectError:
+            pass
+
     if not target.exists():
         if output_json:
             _emit({"event": "error", "message": f"Path not found: {target}"})

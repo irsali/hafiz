@@ -88,6 +88,7 @@ def run_observe(
     derived_from: str | None = None,
     allow_duplicate: bool = False,
     detect_duplicates: bool = True,
+    new_project: bool = False,
     output_json: bool = False,
 ) -> None:
     """Store an annotation and print confirmation.
@@ -116,11 +117,20 @@ def run_observe(
         try:
             from hafiz.core.annotations import store_annotation_checked
 
+            filed_under = project
+            # An agent's note with no project is invisible to project-scoped
+            # search; the repo it was written in is the honest default. A
+            # user's own notes stay unscoped — preferences usually span projects.
+            if not filed_under and (source or "").startswith("agent:"):
+                from hafiz.core.projects import project_from_cwd
+
+                filed_under = await project_from_cwd()
             return await store_annotation_checked(
                 text,
                 kind=kind,
                 source=source,
-                project=project,
+                project=filed_under,
+                new_project=new_project,
                 tags=tags,
                 confidence=confidence,
                 valid_until=valid_until,
@@ -140,6 +150,8 @@ def run_observe(
 
             await close_engine()
 
+    from hafiz.core.projects import UnknownProjectError
+
     try:
         from hafiz.core.annotations import (
             DuplicateAnnotationError,
@@ -153,6 +165,13 @@ def run_observe(
         raise SystemExit(2)
     except DuplicateAnnotationError as e:
         _report_strict_block(e.duplicates, output_json)
+        raise SystemExit(2)
+    except UnknownProjectError as e:
+        if output_json:
+            payload = {"ok": False, "error": str(e), "candidates": e.candidates}
+            console.print_json(json.dumps(payload))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(2)
     except ValueError as e:
         # Blank content, a missing --supersedes target, etc. Agents parse
@@ -330,6 +349,7 @@ def run_note(
     session_key: str | None = None,
     supersedes: str | None = None,
     derived_from: str | None = None,
+    new_project: bool = False,
     output_json: bool = False,
 ) -> None:
     """Low-bar capture — stores as ``kind="note"``.
@@ -352,6 +372,7 @@ def run_note(
         supersedes=supersedes,
         derived_from=derived_from,
         detect_duplicates=False,
+        new_project=new_project,
         output_json=output_json,
     )
 

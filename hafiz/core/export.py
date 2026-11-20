@@ -371,6 +371,9 @@ async def export_brain(
             "error": f"unknown format {fmt!r}; expected one of {', '.join(VALID_FORMATS)}",
         }
 
+    from hafiz.core.projects import resolve_project
+
+    project = await resolve_project(project)
     generated_at = datetime.now(UTC)
     out_path = Path(out_dir).expanduser().resolve()
     tmp_path = out_path.with_name(out_path.name + ".tmp")

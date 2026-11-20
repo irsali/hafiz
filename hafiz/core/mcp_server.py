@@ -115,6 +115,15 @@ async def call_tool(name: str, arguments: dict[str, Any], *, client: str | None 
         if not kwargs.get("source") and client:
             kwargs["source"] = f"agent:{client}"
 
+    # An agent's note with no project is invisible to every project-scoped
+    # search. The repo the server was launched in is the honest default; a
+    # user's own notes stay unscoped, since preferences usually span projects.
+    if spec.writes and "project" in {p.name for p in spec.exposed()}:
+        if not kwargs.get("project") and str(kwargs.get("source") or "").startswith("agent:"):
+            from hafiz.core.projects import project_from_cwd
+
+            kwargs["project"] = await project_from_cwd()
+
     fn = spec.resolve()
     result = fn(**kwargs)
     if inspect.isawaitable(result):

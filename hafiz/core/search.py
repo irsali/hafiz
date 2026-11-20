@@ -201,6 +201,10 @@ async def vector_search(
     exc = _normalize_domains(exclude_domains)
     _validate_domain_filters(inc, exc)
     query = await prepare_query(query, telemetry_command=telemetry_command)
+    if query is not None:
+        from hafiz.core.projects import resolve_projects
+
+        project = await resolve_projects(project)
     if query is None:
         return []
     query_embedding = await embed_query(query)

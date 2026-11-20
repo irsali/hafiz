@@ -108,6 +108,9 @@ async def build_journal(
     ``session_id`` / ``task`` filter both annotations and captures to items
     tagged with the given thread of work.
     """
+    from hafiz.core.projects import resolve_projects
+
+    project = await resolve_projects(project)
     now = datetime.now(UTC)
     if day is not None:
         start = day.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)

@@ -107,6 +107,9 @@ async def run_review(project: str | None = None) -> ReviewReport:
     - Graph coverage: orphan units (no edges)
     - Index coverage: projects with units but no edges (graph not built)
     """
+    from hafiz.core.projects import resolve_project
+
+    project = await resolve_project(project)
     report = ReviewReport()
     session_factory = get_session_factory()
 

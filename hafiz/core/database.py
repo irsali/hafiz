@@ -649,6 +649,22 @@ class Retrieval(Base):
     )
 
 
+class ProjectName(Base):
+    """A project name and the project it means — see :mod:`hafiz.core.projects`.
+
+    ``name == project`` is a project's own row (where ``retired_at`` lives);
+    ``name != project`` declares ``name`` a synonym. Small and hand-curated:
+    names get here only when someone declares a synonym or retires a project.
+    """
+
+    __tablename__ = "project_names"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    project: Mapped[str] = mapped_column(Text, nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(ts_col(), default=lambda: datetime.now(UTC))
+
+
 # ---------------------------------------------------------------------------
 # Transition stubs — Phase 3 removes these
 # ---------------------------------------------------------------------------

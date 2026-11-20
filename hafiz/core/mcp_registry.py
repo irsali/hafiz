@@ -169,7 +169,11 @@ def _render(annotation: Any) -> str:
 #: Shared descriptions. Several core functions take the same scoping
 #: parameters, and a model comparing two tools should not see two different
 #: explanations of ``project``.
-_PROJECT = "Restrict to one indexed project. Omit to search everything."
+_PROJECT = (
+    "Restrict to one project. Synonyms and case/spacing variants resolve to the "
+    "project's main name; an unknown or ambiguous name is an error listing the "
+    "closest names. Omit to search everything."
+)
 _LIMIT = "Maximum rows to return."
 _MIN_SCORE = (
     "Relevance floor, 0-1, applied to the score results are ranked by. "
@@ -194,7 +198,12 @@ _OBSERVE_PARAMS = {
         "Who is writing: 'agent:<name>' or 'user:<name>'. Defaults to the "
         "connected MCP client's own name."
     ),
-    "project": _PROJECT,
+    "project": (
+        "Project to file under. Omit to use the repo the server runs in. A synonym "
+        "files under the main name; a new name that looks like an existing one is "
+        "refused unless new_project is true."
+    ),
+    "new_project": "True only when project is genuinely new, not a variant of an existing one.",
     "tags": "Categorisation tags.",
     "confidence": "Confidence 0.0-1.0.",
     "valid_until": "Expiry timestamp. Expired rows drop out of recall by default.",

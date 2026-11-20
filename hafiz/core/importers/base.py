@@ -114,6 +114,13 @@ async def store_conversation(
     * a turn appearing in two files (a resumed session replays earlier
       turns) counts once — matching what the real write does.
     """
+    if project:
+        from hafiz.core.projects import UnknownProjectError, canonical_project
+
+        try:
+            project = await canonical_project(project)
+        except UnknownProjectError:
+            pass  # an import must not stop over a name; keep it as given
     if dry_run:
         if previewed is None:
             previewed = {}

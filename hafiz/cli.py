@@ -995,7 +995,12 @@ def observe(
     source: str | None = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:bilal, user:manual)."
     ),
-    project: str | None = typer.Option(None, "--project", "-p", help="Tag with a project name."),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Project to file under (synonyms resolve). Agent writes default to the current repo.",
+    ),
     tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
     confidence: float = typer.Option(1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."),
     expires_in: str | None = typer.Option(
@@ -1040,6 +1045,11 @@ def observe(
             "(only relevant under strict dedup; surface-only mode never blocks)."
         ),
     ),
+    new_project: bool = typer.Option(
+        False,
+        "--new-project",
+        help="--project names a genuinely new project (one that only looks like an existing name).",
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Store a fact, decision, or learning as an observation.
@@ -1067,6 +1077,7 @@ def observe(
         supersedes=supersedes,
         derived_from=derived_from,
         allow_duplicate=allow_duplicate,
+        new_project=new_project,
         output_json=json_output,
     )
 
@@ -1167,7 +1178,12 @@ def note(
     source: str | None = typer.Option(
         None, "--source", "-s", help="Origin (e.g. agent:claude-code, user:you)."
     ),
-    project: str | None = typer.Option(None, "--project", "-p", help="Tag with a project name."),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Project to file under (synonyms resolve). Agent writes default to the current repo.",
+    ),
     tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags."),
     confidence: float = typer.Option(1.0, "--confidence", "-c", help="Confidence score 0.0–1.0."),
     expires_in: str | None = typer.Option(
@@ -1201,6 +1217,11 @@ def note(
         "--derived-from",
         help="Comma-separated UUIDs this note was distilled from.",
     ),
+    new_project: bool = typer.Option(
+        False,
+        "--new-project",
+        help="--project names a genuinely new project (one that only looks like an existing name).",
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
     """Capture a raw thought as a note — low-bar lane, distill later."""
@@ -1220,6 +1241,7 @@ def note(
         session_key=session_key,
         supersedes=supersedes,
         derived_from=derived_from,
+        new_project=new_project,
         output_json=json_output,
     )
 
@@ -1515,6 +1537,78 @@ def extract_import_cmd(
     from hafiz.commands.extract import run_extract_import
 
     run_extract_import(file, project=project)
+
+
+# ─── PROJECTS ──────────────────────────────────────────────────────
+
+projects_app = typer.Typer(
+    name="projects",
+    help="Project names: list them, declare synonyms, retire old ones, merge spellings.",
+    invoke_without_command=True,
+)
+app.add_typer(projects_app)
+
+
+@projects_app.callback()
+def projects_list_cmd(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Every project name with its row count, synonyms and retirement, plus
+    look-alike names that are not declared the same."""
+    if ctx.invoked_subcommand is None:
+        from hafiz.commands.projects import run_list
+
+        run_list(output_json=json_output)
+
+
+@projects_app.command("alias")
+def projects_alias_cmd(
+    alias: str = typer.Argument(..., help="The other name, e.g. an id agents use."),
+    project: str = typer.Argument(..., help="The project's main name."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Declare ALIAS a synonym of PROJECT. Reads and writes through ALIAS land on
+    PROJECT from now on; rows already filed under ALIAS move with `merge`."""
+    from hafiz.commands.projects import run_alias
+
+    run_alias(alias, project, output_json=json_output)
+
+
+@projects_app.command("unalias")
+def projects_unalias_cmd(
+    alias: str = typer.Argument(..., help="The synonym to remove."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Stop treating ALIAS as a synonym. Rows already merged stay where they are."""
+    from hafiz.commands.projects import run_unalias
+
+    run_unalias(alias, output_json=json_output)
+
+
+@projects_app.command("retire")
+def projects_retire_cmd(
+    project: str = typer.Argument(..., help="The project to mark retired."),
+    undo: bool = typer.Option(False, "--undo", help="Mark it active again."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Mark a project retired. Its rows stay searchable; when a name fits a
+    retired and an active project, the active one wins."""
+    from hafiz.commands.projects import run_retire
+
+    run_retire(project, undo=undo, output_json=json_output)
+
+
+@projects_app.command("merge")
+def projects_merge_cmd(
+    apply: bool = typer.Option(False, "--apply", help="Move the rows (default: preview)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Move rows filed under a declared synonym to the main name — notes,
+    transcripts and sessions; never the code index. Preview unless --apply."""
+    from hafiz.commands.projects import run_merge
+
+    run_merge(apply=apply, output_json=json_output)
 
 
 # ─── HOOKS ─────────────────────────────────────────────────────────
@@ -2096,6 +2190,8 @@ def _wants_json(argv: list[str]) -> bool:
 def main() -> None:
     import sys as _sys
 
+    from hafiz.core.projects import UnknownProjectError
+
     try:
         app()
     except SystemExit:
@@ -2103,6 +2199,16 @@ def main() -> None:
     except KeyboardInterrupt:
         # User-initiated — don't log, don't decorate; just exit quietly.
         _sys.exit(130)
+    except UnknownProjectError as exc:
+        # Bad input, not a crash: no error-log entry, exit 2 like any usage
+        # error, and the candidates so a caller can retry with the right name.
+        if _wants_json(_sys.argv[1:]):
+            import json as _json
+
+            print(_json.dumps({"ok": False, "error": str(exc), "candidates": exc.candidates}))
+        else:
+            print(f"Error: {exc}", file=_sys.stderr)
+        _sys.exit(2)
     except Exception as exc:  # noqa: BLE001 — this is the backstop
         from rich.console import Console as _Console
 

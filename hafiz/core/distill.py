@@ -217,7 +217,9 @@ async def find_distill_candidates(
     on it — see ``hafiz distill --brief``.
     """
     from hafiz.core.config import load_settings
+    from hafiz.core.projects import resolve_projects
 
+    project = await resolve_projects(project)
     cfg = load_settings().distill
     msg_limit = cfg.message_limit if message_limit is None else message_limit
     corpus_limit = cfg.theme_corpus_limit if theme_corpus_limit is None else theme_corpus_limit

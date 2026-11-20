@@ -231,7 +231,26 @@ class _Server:
 
         Errors are returned as ``{"ok": False, "error": ...}`` rather than
         raised, so a single bad request never tears the daemon down.
+
+        Notices meant for the person who asked — a project name corrected to
+        the closest one — ride back as ``notices``; logged here, they would
+        land in the daemon's log, where nobody who typed the name will look.
         """
+        from hafiz.core.projects import notices
+
+        token = notices.set([])
+        try:
+            resp = await self._dispatch(req)
+        finally:
+            said = notices.get()
+            notices.reset(token)
+        if said:
+            resp["notices"] = said
+        return resp
+
+    async def _dispatch(self, req: dict) -> dict:
+        from hafiz.core.projects import UnknownProjectError
+
         op = req.get("op")
         try:
             if op == "ping":
@@ -255,6 +274,10 @@ class _Server:
             if op == "capture":
                 return await self._op_capture(req)
             return {"ok": False, "error": f"unknown op: {op!r}"}
+        except UnknownProjectError as e:
+            # The caller's input, not a daemon fault: no traceback in the log.
+            # The client falls back in-process and raises it where it was asked.
+            return {"ok": False, "error": str(e)}
         except Exception as e:  # noqa: BLE001 — daemon must survive any handler error
             logger.exception("daemon op %r failed", op)
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}

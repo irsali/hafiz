@@ -50,6 +50,7 @@ from hafiz.core.database import (
     Edge,
     Embedding,
     File,
+    ProjectName,
     Retrieval,
     Unit,
     UnitRevision,
@@ -81,6 +82,7 @@ COPY_ORDER: tuple[type[Base], ...] = (
     CommunicationMessage,
     AnnotationTarget,
     Retrieval,
+    ProjectName,
 )
 
 #: Columns that point at another row of the *same* table. Dependency order

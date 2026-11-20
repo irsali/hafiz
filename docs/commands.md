@@ -581,11 +581,22 @@ relevant rows.
 
 | Flag | Scope | How it works |
 |------|-------|-------------|
-| `--project X` | Single named project | Filters queries to `files.project = X` |
+| `--project X` | Single named project | Resolves `X` to a project on file (below), then filters to it |
 | `--workspace` | Sibling projects | Resolves directories in parent of cwd, matches to DB project tags (normalized) |
 | _(neither)_ | Everything | No filter |
 
 `--project` and `--workspace` are mutually exclusive.
+
+**How a project name resolves** — on every command, the daemon and MCP alike (`hafiz/core/projects.py`):
+
+1. The exact name on file, or a **declared synonym** (`hafiz projects alias`).
+2. The same name ignoring case, spaces, `_` and `-` (`account api` → `Account API`).
+3. A near-certain typo (similarity ≥ 0.9, clear of the runner-up) — corrected on read with a one-line notice on stderr. Names differing only in a number (`…-v3` / `…-v4`) are siblings, never typos.
+4. Several projects still fit → the one not **retired** wins; if that doesn't settle it, or nothing fits, exit `2` with `{"ok": false, "error": ..., "candidates": [...]}`. A misspelt project used to return an empty result indistinguishable from "nothing known".
+
+Writes (`observe`, `note`, `capture`, `extract import`) apply 1–2 and file under the main name. A **new** name that is a near-certain typo of an existing one is refused unless `--new-project`; anything else is a new project. `ingest` and the importers never refuse — an unclear name is kept as given, because git hooks pin it. Agent writes with no `--project` (`--source agent:*`, and MCP `hafiz_observe`/`hafiz_note`) file under the project of the working directory: the closer of the indexed tree that holds it and its git repo's folder name. A user's own notes stay unscoped.
+
+Spellings that merely look alike are never merged automatically — two repos can be one key apart (a retired v1 and its replacement). See `projects` below.
 
 **Domain filters** (on `context`, `query`): toggle whole data domains on/off without losing the rest of your index.
 
@@ -618,6 +629,11 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 | `observe "<text>"` | Embed and store a fact / decision / learning / pattern / warning / note | Embed | `--json` | rich panel |
 | `note "<text>"` | Shortcut for `observe --type note` — low-bar raw capture lane (skips *near*-duplicate detection; still collapses byte-identical writes) | Embed | `--json` | rich panel |
 | `reconcile` | Read-only sweep: cluster near-duplicate **live** annotations and propose a resolution to run | Embed | `--json` | rich panels |
+| `projects` | Every project name with its row count, synonyms and retirement, plus undeclared look-alikes (same name ignoring case/spacing, different project) | — | `--json` → `{"projects":[{"name","rows","retired","aliases":[...],"unmerged_alias_rows"}],"look_alikes":[[name,...]]}` | rich table |
+| `projects alias ALIAS PROJECT` | Declare a synonym: reads and writes through `ALIAS` land on `PROJECT` from now on. Stored in the `project_names` table, so every entry point sees it. | — | `--json` → `{"ok":true,"alias","project"}` | one line |
+| `projects unalias ALIAS` | Remove a synonym; rows already merged stay put | — | `--json` → `{"ok":true,"alias","removed":bool}` | one line |
+| `projects retire PROJECT [--undo]` | Mark a project retired: still searchable, but loses to an active project when a name fits both | — | `--json` → `{"ok":true,"project","retired":bool}` | one line |
+| `projects merge [--apply]` | Move rows filed under a declared synonym to its main name — notes, transcripts, sessions. Never the code index (git hooks pin its name; the synonym already routes reads to it), and never an undeclared look-alike. Preview unless `--apply`. | — | `--json` → `{"ok":true,"applied":bool,"moves":[{"alias","project","rows":{table:n}}],"skipped":[{"alias","project","reason"}]}` | per-synonym lines |
 | `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables · `--format mermaid` |
 | `distill` | Surface the promotable backlog — recent notes + transcript turns, grouped into themes (scanner, not promoter) | Embed | `--json` · `--brief` | rich panels |
 

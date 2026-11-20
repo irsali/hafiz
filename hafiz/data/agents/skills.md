@@ -193,6 +193,13 @@ floor applies to cosine, where the useful band is ~`0.5`–`0.65`.
 when reranking didn't run), plus a top-level `reranked` boolean — that's how you
 tell reranked output from vector output.
 
+**An unknown project is an error, not an empty result.** `--project` accepts
+synonyms and case/spacing variants (`account-api` finds `Account API`); a name
+that fits nothing, or several projects, exits `2` with `candidates` to retry
+with. On writes, a new name that is a near-certain typo of an existing project
+is refused unless `--new-project`. Omit `--project` on your own writes and the
+current repo is used. `hafiz projects --json` lists the names on file.
+
 **A blank query is an error, not an empty result.** `query` / `context` exit `2`
 with `{"ok": false, "error": ...}` on blank input. If you build a query by
 interpolating a variable, check the exit code — an unset variable is a bug in

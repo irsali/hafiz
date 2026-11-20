@@ -93,6 +93,9 @@ async def store_transcript(
     selective-embed policy from :mod:`hafiz.core.communications` applies —
     short turns and pure tool-result echoes are stored but not embedded.
     """
+    from hafiz.core.projects import canonical_project
+
+    project = await canonical_project(project)
     turns = split_transcript(text)
     if not turns:
         raise ValueError("Transcript is empty after splitting — nothing to store.")

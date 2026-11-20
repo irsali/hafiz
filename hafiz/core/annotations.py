@@ -288,6 +288,7 @@ async def store_annotation(
     supersedes_id: str | None = None,
     derived_from: list[str] | None = None,
     metadata: dict | None = None,
+    new_project: bool = False,
 ) -> Annotation:
     """Store a new annotation with its embedding.
 
@@ -295,7 +296,8 @@ async def store_annotation(
         content: The annotation text.
         kind: fact, decision, learning, pattern, warning, note, …
         source: Origin (e.g. ``"agent:claude-code"``, ``"user:you"``).
-        project: Project name.
+        project: Project name. Synonyms and case/spacing variants are filed under
+            the project's main name (:func:`hafiz.core.projects.canonical_project`).
         tags: Categorization tags.
         confidence: Confidence score 0.0–1.0.
         valid_from: When the annotation becomes valid (default: now).
@@ -329,9 +331,11 @@ async def store_annotation(
         extractor, daemon) must stay fast and unconditional. The ``observe``
         command runs :func:`find_near_duplicates` itself before calling this.
     """
+    from hafiz.core.projects import canonical_project
     from hafiz.core.search import require_query
 
     content = require_query(content, what="annotation content", hint="nothing to store")
+    project = await canonical_project(project, new_project=new_project)
     embedding = await embed_query(content)
 
     merged_metadata = dict(metadata or {})
@@ -450,6 +454,7 @@ async def store_annotation_checked(
     allow_duplicate: bool = False,
     detect_near: bool = True,
     dedupe_silently: bool = False,
+    new_project: bool = False,
     **kwargs,
 ) -> StoreResult:
     """Check for duplicates, then store — the ``observe`` / ``note`` entry point.
@@ -483,7 +488,11 @@ async def store_annotation_checked(
     :func:`store_annotation` directly — they must stay fast and unconditional.
     """
     from hafiz.core.config import load_settings
+    from hafiz.core.projects import canonical_project
 
+    # Resolved first: the duplicate checks compare project, and a synonym must
+    # find the row filed under the main name.
+    project = await canonical_project(project, new_project=new_project)
     dedup_cfg = load_settings().dedup
     near_duplicates: list[NearDuplicate] = []
 
@@ -512,6 +521,7 @@ async def store_annotation_checked(
         source=source,
         project=project,
         supersedes_id=supersedes_id,
+        new_project=True,  # already resolved above
         **kwargs,
     )
     return StoreResult(annotation=ann, near_duplicates=near_duplicates)
@@ -744,6 +754,9 @@ async def reconcile_duplicates(
     reported cluster count trustworthy. When a cap does bite, the report says
     so via ``truncated`` — a partial sweep is never silent.
     """
+    from hafiz.core.projects import resolve_project
+
+    project = await resolve_project(project)
     from hafiz.core.config import load_settings
 
     cfg = load_settings().dedup
@@ -1023,6 +1036,9 @@ async def search_annotations(
     query = await prepare_query(query, telemetry_command=telemetry_command)
     if query is None:
         return []
+    from hafiz.core.projects import resolve_projects
+
+    project = await resolve_projects(project)
     rerank_cfg = load_settings().rerank
     do_rerank = rerank_cfg.enabled if rerank is None else rerank
     # Over-fetch candidates for the reranker to reorder; it can only improve on
@@ -1170,6 +1186,9 @@ async def list_annotations(
     offset: int = 0,
 ) -> list[Annotation]:
     """List annotations with optional filters, newest first."""
+    from hafiz.core.projects import resolve_project
+
+    project = await resolve_project(project)
     session_factory = get_session_factory()
     async with session_factory() as session:
         stmt = select(Annotation).order_by(Annotation.valid_from.desc()).limit(limit).offset(offset)

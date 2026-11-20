@@ -177,6 +177,8 @@ async def request(req: dict) -> dict | None:
         if resp is None:
             return None
 
+    for notice in resp.get("notices") or []:
+        print(notice, file=sys.stderr)
     return resp
 
 

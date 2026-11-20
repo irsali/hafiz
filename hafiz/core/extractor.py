@@ -311,6 +311,9 @@ async def store_extraction(
     ``unit_id=None`` on annotations or ``target_unit_id=None`` on
     edges.
     """
+    from hafiz.core.projects import canonical_project
+
+    project = await canonical_project(project)
     ann_written = 0
     edge_written = 0
     unresolved = 0
