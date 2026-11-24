@@ -6,7 +6,7 @@ going**.
 
 | File | What it is | Read when… |
 |---|---|---|
-| [architecture.md](architecture.md) | Five-level view of the system (context, architecture+ingest, module map, seven-table data model, key flows), plus a code-grounded analysis of what Hafiz captures today and where the gaps are. | You want to understand how Hafiz works end-to-end, or decide where to fill a capability gap. |
+| [architecture.md](architecture.md) | Five-level view of the system (context, architecture+ingest, module map, knowledge-layer data model, key flows), plus a code-grounded analysis of what Hafiz captures today and where the gaps are. | You want to understand how Hafiz works end-to-end, or decide where to fill a capability gap. |
 | [commands.md](commands.md) | Authoritative command reference — flags, `--json` shapes, brain types, agent-vs-human surfaces. | You're adding a command, wiring an agent, or parsing `--json` output. |
 | [roadmap.md](roadmap.md) | Product vision, shipped phases, open work, design principles. | You want to know *why* Hafiz is shaped the way it is, or what's coming next. |
 | [agents.md](agents.md) | Legacy agent-integration playbook. **Stale** — predates the Structural Grounding rewrite. | Only for historical context. The live agent contract is [`../hafiz/data/agents/skills.md`](../hafiz/data/agents/skills.md); the live architecture is [architecture.md](architecture.md). |

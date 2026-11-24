@@ -32,11 +32,8 @@ dependencies = [
     "alembic>=1.13",
     "tomli-w>=1.0",
     "aiofiles>=24.1",
-    "anthropic>=0.40",
     "watchdog>=6.0",
     "pathspec>=0.12",
-    "networkx>=3.3",
-    "scipy>=1.12",
 ]
 
 [project.urls]
@@ -88,14 +85,6 @@ openvino = [
     # idle, not because it is known to help. Benchmark before adopting.
     "onnxruntime-openvino>=1.20 ; sys_platform != 'darwin'",
 ]
-js = [
-    # JavaScript / TypeScript AST parser. Optional so the base install stays
-    # lean — the tree_sitter_js parser self-registers only when these import.
-    # Prebuilt wheels (no compiler needed) on CPython for Linux/macOS/Windows.
-    "tree-sitter>=0.23",
-    "tree-sitter-javascript>=0.23",
-    "tree-sitter-typescript>=0.23",
-]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -106,14 +95,9 @@ dev = [
     "ruff>=0.15,<0.16",
     # The MCP SDK, so CI actually builds the server rather than skipping the
     # one test that validates every generated schema against the SDK's own
-    # validation. Mirrors the `mcp` extra, for the same reason as the JS deps
-    # below: an extra that CI never installs is an extra CI never tests.
+    # validation. Mirrors the `mcp` extra: an extra that CI never installs is
+    # an extra CI never tests.
     "mcp>=2.0",
-    # JS/TS parser deps so the test suite + CI exercise tree_sitter_js
-    # instead of skipping it. Mirrors the `js` extra.
-    "tree-sitter>=0.23",
-    "tree-sitter-javascript>=0.23",
-    "tree-sitter-typescript>=0.23",
 ]
 
 [tool.ruff]
@@ -122,11 +106,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-
-[tool.ruff.lint.pep8-naming]
-# `G` is the idiomatic NetworkX graph variable across the ecosystem and its
-# docs; lowercasing it everywhere would hurt readability, not help it.
-extend-ignore-names = ["G"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

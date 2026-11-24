@@ -20,23 +20,22 @@ flowchart LR
     db[("PostgreSQL<br>+ pgvector")]
 
     user -->|"observe / note / journal / query / distill / review"| cli
-    agent -->|"context / query --observations / observe / extract import"| cli
+    agent -->|"context / query --observations / observe / note"| cli
     git -.->|"auto re-ingest on commit"| cli
     cli -->|"walk + parse"| fs
-    cli <-->|"7-table model<br>+ vector search"| db
+    cli <-->|"knowledge tables<br>+ vector search"| db
 ```
 
 **What it does for users today (grounded in shipped commands):**
 
 | Surface | What it gives |
 |---|---|
-| **Index** — `ingest`, `hooks install` | Parses code (Python AST), prose (Markdown/RST/TXT), and any other file (whole-file fallback) into stable units + embeddings. Diff-driven on re-runs ([commands/ingest.py:110-122](../hafiz/commands/ingest.py#L110-L122)). |
-| **Recall** — `query`, `query --observations`, `context` | Vector search over indexed bodies; vector search over annotations (`--observations`, formerly `--recall`); combined "context bundle" of chunks + graph neighborhood + annotations for a task ([core/context.py:175-186](../hafiz/core/context.py#L175-L186)). |
-| **Reason** — `graph deps/impact/path/rank/show/stats` | Walks the AST-derived edge table to answer blast-radius and dependency questions. |
+| **Index** — `ingest`, `hooks install` | Parses Markdown/prose into `doc.*` units and everything else (including code) as whole-file `file.raw` units + embeddings. Diff-driven on re-runs ([commands/ingest.py:110-122](../hafiz/commands/ingest.py#L110-L122)). |
+| **Recall** — `query`, `query --observations`, `context` | Vector search over indexed bodies; vector search over annotations (`--observations`); combined "context bundle" of indexed content + annotations for a task ([core/context.py](../hafiz/core/context.py)). |
 | **Remember** — `observe`, `note`, `capture` | Persists decisions, learnings, warnings, raw notes; auto-tags git commit, branch, session, task. |
 | **Curate** — `journal`, `distill`, `review` | Time-windowed digests of what was recorded; surfaces promotable notes; (Layer 2 self-review is still a stub). |
 | **Operate** — `doctor`, `config`, `errors`, `embedding` | Self-tuning per host, sovereign error log, embedding device fallback. |
-| **Integrate** — `agent install`, `extract export/import` | Splices the canonical `skills.md` into agent configs; lets agents bulk-attach annotations + semantic edges to the AST graph. |
+| **Integrate** — `agent install` | Splices the canonical `skills.md` into agent configs. |
 
 The user is rarely "using Hafiz" in isolation. The intended loop is: **agent reads context → agent writes work → agent observes decisions → user reviews via journal/distill → user supersedes when things change.** The CLI is the contract; the database is the state; the `skills.md` is the protocol.
 
@@ -56,28 +55,24 @@ flowchart TB
         ingest_c["ingest"]
         query_c["query / context"]
         observe_c["observe / note / capture"]
-        graph_c["graph"]
-        extract_c["extract export/import"]
         ops_c["doctor / config / errors / journal / distill / review"]
     end
 
     subgraph core["Core — async business logic, no Typer"]
         chunker["chunker.py<br>walk + ignore"]
         registry["parsers/__init__.py<br>extension registry"]
-        parsers_box["parsers/<br>python_ast • prose • whole_file<br>tree_sitter_js (opt: hafiz[js])<br>+ entry-point plugins"]
+        parsers_box["parsers/<br>prose • whole_file<br>+ entry-point plugins"]
         embed["embeddings.py<br>fastembed nomic-embed-text-v1.5<br>768-dim ONNX, CPU/GPU sticky"]
-        store["store.py<br>upsert files/units/revisions/edges<br>+ tombstone vanished"]
+        store["store.py<br>upsert files/units/revisions<br>+ tombstone vanished"]
         search["search.py<br>vector ⨝ revisions ⨝ units ⨝ files"]
         ann["annotations.py<br>store + recall + supersede"]
-        ctx["context.py<br>chunks + graph + annotations bundle"]
-        graph_an["graph_analysis.py<br>NetworkX deps/impact/path"]
-        ext["extractor.py<br>v2 contract validation"]
+        ctx["context.py<br>chunks + annotations bundle"]
         sess["session.py<br>per-TTY JSON state"]
         gitctx["git_context.py<br>HEAD / branch / dirty / hooks"]
     end
 
     subgraph data["Data Layer"]
-        db[("Postgres + pgvector<br>7 tables, Alembic-managed")]
+        db[("Postgres + pgvector<br>knowledge tables, Alembic-managed")]
     end
 
     entry --> cmd
@@ -92,21 +87,16 @@ flowchart TB
     query_c --> search --> db
     query_c --> ctx --> search
     ctx --> ann --> db
-    ctx --> graph_an --> db
 
     observe_c --> ann --> embed
     observe_c --> sess
     observe_c --> gitctx
-
-    graph_c --> graph_an
-    extract_c --> ext --> store
-    extract_c --> ext --> ann
 ```
 
 **Three load-bearing invariants** ([CLAUDE.md](../CLAUDE.md), [core/database.py:1-23](../hafiz/core/database.py#L1-L23)):
 
-1. **Identity / body / embedding are separate.** `units` carry stable identity; `unit_revisions` carry append-only bodies; `embeddings` carry vectors. A renamed function and a re-flowed paragraph survive without orphaning their annotations. Vectors exist only for *current* revisions: superseding a revision keeps its body and drops its vectors, since search never reads them and no revision is ever un-superseded (migration `0009` cleared the backlog).
-2. **Parsers own structure; agents own meaning.** The check constraints `ck_unit_revisions_source` and `ck_edges_source` ([database.py:199-203](../hafiz/core/database.py#L199-L203), [database.py:296-300](../hafiz/core/database.py#L296-L300)) enforce the split at the DB layer.
+1. **Identity / body / embedding are separate.** `units` carry stable identity; `unit_revisions` carry append-only bodies; `embeddings` carry vectors. A renamed heading and a re-flowed paragraph survive without orphaning their annotations. Vectors exist only for *current* revisions: superseding a revision keeps its body and drops its vectors, since search never reads them and no revision is ever un-superseded (migration `0009` cleared the backlog).
+2. **Parsers own indexed content; agents own meaning.** Parsers write units/revisions at ingest; agents write annotations via `observe` / `note`.
 3. **Async end-to-end.** Every DB-touching function is `async def`; commands wrap with `asyncio.run(...)`. No blocking calls inside the loop ([CLAUDE.md "Conventions"](../CLAUDE.md)).
 
 ---
@@ -129,17 +119,14 @@ flowchart LR
         c_obs["observe.py"]
         c_note["(observe also handles note)"]
         c_cap["capture.py"]
-        c_grp["graph.py"]
         c_jrn["journal.py"]
         c_dst["distill.py"]
-        c_ext["extract.py"]
         c_ses["session.py"]
         c_hk["hooks.py"]
         c_mnt["maintenance.py<br>(init/status/doctor/config)"]
         c_err["errors.py"]
         c_emb["embedding.py"]
         c_prs["parsers.py"]
-        c_chk["chunks.py"]
         c_prn["prune.py"]
         c_rvw["review.py — Layer 2"]
         c_wch["watch.py"]
@@ -149,7 +136,7 @@ flowchart LR
     subgraph cores["hafiz/core/<br>(async business logic, no Typer)"]
         direction TB
         co_chk["chunker.py"]
-        co_prs["parsers/<br>python_ast • prose • whole_file • tree_sitter_js"]
+        co_prs["parsers/<br>prose • whole_file"]
         co_emb["embeddings.py"]
         co_str["store.py"]
         co_srch["search.py"]
@@ -157,8 +144,6 @@ flowchart LR
         co_ctx["context.py"]
         co_jrn["journal.py"]
         co_dst["distill.py"]
-        co_ext["extractor.py"]
-        co_grp["graph_analysis.py"]
         co_ses["session.py"]
         co_git["git_context.py"]
         co_gh["git_hooks.py"]
@@ -195,17 +180,15 @@ The split is defended in code:
 
 ---
 
-## Level 4 — Data Model (the seven tables)
+## Level 4 — Data Model (knowledge-layer tables)
 
-The schema is intentionally narrow. Everything Hafiz knows lives here.
+The schema is intentionally narrow. Everything Hafiz knows in the knowledge layer lives here (six tables). Migration `0011` dropped the former `edges` table and deleted stored `code.*` units.
 
 ```mermaid
 erDiagram
     files ||--o{ units : "contains"
     units ||--o{ unit_revisions : "versions"
     unit_revisions ||--o{ embeddings : "vector parts (1:N for oversized)"
-    units ||--o{ edges : "source_unit"
-    units |o--o{ edges : "target_unit (nullable for unresolved)"
     units |o--o{ annotations : "annotates (optional FK)"
     annotations }o--|| annotations : "supersedes"
     unit_revisions }o--|| unit_revisions : "superseded_by"
@@ -233,7 +216,7 @@ erDiagram
     units {
         uuid id PK
         uuid file_id FK
-        text kind "code.function | doc.heading | file.raw | mail.message | chat.turn ..."
+        text kind "doc.heading | doc.paragraph | file.raw | mail.message ..."
         text name
         text parent_name
         text identity_key UK "sha256(project+path+kind+name+parent)"
@@ -247,7 +230,7 @@ erDiagram
         int line_start
         int line_end
         text commit_hash
-        text source "ck: ast | parser | agent | user"
+        text source "ck: parser | agent | user"
         timestamptz observed_at
         timestamptz superseded_at
         uuid superseded_by FK
@@ -262,20 +245,6 @@ erDiagram
         vector_768 embedding
         int token_span_start
         int token_span_end
-    }
-    edges {
-        uuid id PK
-        uuid source_unit_id FK
-        uuid target_unit_id FK "nullable for external refs"
-        text target_name "kept for unresolved"
-        text relation "calls | imports | inherits | implements_pattern | ..."
-        text source "ck: ast | agent | user"
-        text evidence
-        float weight
-        text commit_hash
-        timestamptz observed_at
-        timestamptz superseded_at
-        jsonb metadata
     }
     annotations {
         uuid id PK
@@ -299,10 +268,10 @@ erDiagram
 
 A few things worth saying out loud about the schema as it stands:
 
-- **Project is the only first-class scope.** It's a string column on `files`, `units` (via `file_id`), `commits`, and `annotations`. There is no `solution`, `workspace`, `team`, `person`, `credential`, or `task_definition` table. This is a deliberate choice (parsers own structure, agents own meaning) — but it means anything that isn't a unit or an annotation has to live in `metadata` JSONB, in `tags[]`, or as a string in `source`/`task`.
+- **Project is the only first-class scope.** It's a string column on `files`, `units` (via `file_id`), `commits`, and `annotations`. There is no `solution`, `workspace`, `team`, `person`, `credential`, or `task_definition` table. This is a deliberate choice (parsers own indexed content, agents own meaning) — but it means anything that isn't a unit or an annotation has to live in `metadata` JSONB, in `tags[]`, or as a string in `source`/`task`.
 - **Temporal axes are first-class.** `valid_until` (tombstone), `superseded_at` / `superseded_by` (revision history), `valid_from` / `valid_until` / `supersedes_id` (annotation history), `rewritten_at` / `rewritten_to` (commit rewrites). Hafiz never deletes; it tombstones. Time-travel queries are possible without a separate audit table.
 - **`metadata` JSONB is the escape hatch.** Used today on annotations to carry `derived_from`, branch info, dirty state. Anything we want to capture that isn't already a column lands here — which is fine for low-volume agent metadata, but a poor substitute for first-class storage when the field becomes load-bearing.
-- **Old tables are gone, not deprecated.** `chunks`, `entities`, `relations`, `observations` were dropped in migration 0005 ([alembic/versions/0005_structural_grounding.py](../alembic/versions/0005_structural_grounding.py)). The class names exist as `_RemovedInV5` stubs ([core/database.py:374-400](../hafiz/core/database.py#L374-L400)) that raise loudly if instantiated. Don't reach for them.
+- **Old tables are gone, not deprecated.** `chunks`, `entities`, `relations`, `observations` were dropped in migration 0005 ([alembic/versions/0005_structural_grounding.py](../alembic/versions/0005_structural_grounding.py)). The `edges` table and `code.*` units were removed in migration `0011`. Don't reach for them.
 
 ---
 
@@ -319,17 +288,16 @@ flowchart TB
     B -->|"no / first run"| D["walk_files gitignore-aware<br>core/chunker.py"]
     C --> E["per file"]
     D --> E
-    E --> F["registry.parser_for(ext)<br>core/parsers/__init__.py:105"]
-    F --> G["parser.parse → ParseResult<br>(units[], edges[], language)"]
-    G --> H["upsert files row<br>store.py:211"]
+    E --> F["registry.parser_for(ext)<br>core/parsers/__init__.py"]
+    F --> G["parser.parse → ParseResult<br>(units[], language)"]
+    G --> H["upsert files row<br>store.py"]
     H --> I["loop ParsedUnit"]
     I --> J{"hash != current<br>unit_revisions row?"}
-    J -->|yes| K["INSERT unit_revisions<br>(content, content_hash, line spans, commit_hash, source='ast'/'parser')"]
+    J -->|yes| K["INSERT unit_revisions<br>(content, content_hash, line spans, commit_hash, source='parser')"]
     K --> L["UPDATE old revision<br>set superseded_at = now, superseded_by = new.id"]
     L --> M["embed via fastembed<br>split → embeddings rows (1:N)"]
     J -->|no| N["skip — unchanged"]
-    I --> O["sync edges<br>source='ast'<br>resolve same-file targets to unit_id<br>others stay as target_name"]
-    O --> P["tombstone units in DB but not in parse<br>valid_until = now"]
+    I --> P["tombstone units in DB but not in parse<br>valid_until = now"]
     P --> Q["next file"]
     Q --> R["tombstone vanished files<br>(only on full walks)"]
     R --> S["upsert commits row<br>(hash, project, author, summary)"]
@@ -349,19 +317,17 @@ Key code references:
 
 ```mermaid
 flowchart TB
-    A["hafiz context 'task'<br>commands/context.py:17"] --> B["resolve scope<br>--project string OR --workspace<br>(workspace = filesystem siblings ⨝ indexed projects)"]
+    A["hafiz context 'task'<br>commands/context.py"] --> B["resolve scope<br>--project string OR --workspace<br>(workspace = filesystem siblings ⨝ indexed projects)"]
     B --> C["embed query text<br>core/embeddings.embed_query"]
-    C --> D["VECTOR SEARCH<br>embeddings ⨝ unit_revisions(superseded_at IS NULL)<br>⨝ units(valid_until IS NULL)<br>⨝ files(valid_until IS NULL)<br>ORDER BY cosine, LIMIT k<br>core/search.py:45-118"]
-    D --> E["seed graph from result files"]
-    E --> F["WALK edges(superseded_at IS NULL)<br>NetworkX multi-digraph<br>depth ≤ 3 hops, cap 25 nodes<br>compute pagerank"]
-    F --> G["RECALL annotations<br>cosine on annotations.embedding<br>+ project filter<br>+ valid_until IS NULL OR > now"]
-    G --> H["assemble ContextBundle<br>chunks + entities + annotations<br>+ project_distribution"]
+    C --> D["VECTOR SEARCH<br>embeddings ⨝ unit_revisions(superseded_at IS NULL)<br>⨝ units(valid_until IS NULL)<br>⨝ files(valid_until IS NULL)<br>ORDER BY cosine, LIMIT k<br>core/search.py"]
+    D --> G["RECALL annotations<br>cosine on annotations.embedding<br>+ project filter<br>+ valid_until IS NULL OR > now"]
+    G --> H["assemble ContextBundle<br>chunks + annotations<br>+ project_distribution"]
     H --> I["render markdown OR --json"]
 ```
 
-Key code: [core/context.py:175-186](../hafiz/core/context.py#L175-L186), [core/search.py:45-118](../hafiz/core/search.py#L45-L118), [core/annotations.py:143-200](../hafiz/core/annotations.py#L143-L200), [core/context.py:225-258](../hafiz/core/context.py#L225-L258) (workspace resolution).
+Key code: [core/context.py](../hafiz/core/context.py), [core/search.py](../hafiz/core/search.py), [core/annotations.py](../hafiz/core/annotations.py) (workspace resolution lives in context).
 
-**Relevance is purely vector cosine** today — no keyword fallback, no recency boost, no usage signal. Project filtering is an exact-string match.
+**Relevance is purely vector cosine** today — no keyword fallback, no recency boost, no usage signal. Project filtering is an exact-string match. There is no Knowledge Graph section and no `entities` key in `--json`.
 
 ### 5.3 Observe → Distill → Supersede
 
@@ -488,30 +454,30 @@ If you wanted to record "the steps I take every Monday to triage PRs," today you
 Without prescribing solutions, the matrix groups the gaps into three tiers by how much new schema they need:
 
 **Tier 1 — Composable on existing schema (cheap):**
-- **People as a typed entity.** A `units` row of `kind="person.identity"` plus aliases in `metadata` would normalize source strings and commit authors, with zero new tables. Annotations and edges work as-is.
-- **Solutions as a unit kind.** `kind="solution.scope"` units, with `edges(relation="contained_in_solution")` from project units, would give cross-project grouping without a new table.
-- **Workspace as a stored unit.** Promote workspaces from filesystem heuristic to `kind="workspace.scope"` units, with explicit `member_of` edges to projects. The heuristic stays as a *bootstrap* path, not the source of truth.
+- **People as a typed entity.** A `units` row of `kind="person.identity"` plus aliases in `metadata` would normalize source strings and commit authors, with zero new tables. Annotations work as-is.
+- **Solutions as a unit kind.** `kind="solution.scope"` units (with membership recorded in metadata or annotations) would give cross-project grouping without a new table.
+- **Workspace as a stored unit.** Promote workspaces from filesystem heuristic to `kind="workspace.scope"` units. The heuristic stays as a *bootstrap* path, not the source of truth.
 
 **Tier 2 — Wants real schema, fits existing patterns (medium):**
-- **Runbooks / repeatable tasks** as a unit kind (`kind="runbook.definition"`), with revisions for versioning and edges (`runbook.uses_resource`, `runbook.depends_on`). The `task` column on annotations stays as the *invocation* label that ties observations to a *run* of a runbook.
+- **Runbooks / repeatable tasks** as a unit kind (`kind="runbook.definition"`), with revisions for versioning. The `task` column on annotations stays as the *invocation* label that ties observations to a *run* of a runbook.
 - **Reports as persisted snapshots.** A `kind="report.snapshot"` unit captures the rendered output at a moment in time, while still letting `journal/distill/review` generate live views by default.
-- **Process / workflow state.** Either: (a) extend the session JSON model into a DB table with multi-step state, or (b) treat workflows as a sequence of `kind="workflow.step"` units linked by `next_step` edges, with state-tracking annotations.
+- **Process / workflow state.** Either: (a) extend the session JSON model into a DB table with multi-step state, or (b) treat workflows as a sequence of `kind="workflow.step"` units with state-tracking annotations.
 
 **Tier 3 — Cross-cutting, needs care (expensive):**
 - **Credentials handling** — not "store credentials," but the *opposite*: an opt-in redaction layer in the parser/ingest pipeline so secrets never land in `unit_revisions.content` or `embeddings.content` in the first place. This is closer to a security work item than a schema one.
 - **Person ↔ commit-author normalization.** Even with a person unit kind, mapping git authors to person identities is a fuzzy-matching problem. Tractable but not a one-day fix.
 
-The shape of all three tiers is the same: **lean on the existing seven-table model — units carry typed identities, revisions carry bodies, edges carry relations, annotations carry meaning** — rather than adding domain-specific tables. The schema invariants ([Level 4](#level-4--data-model-the-seven-tables)) were designed exactly for this kind of extension. The hard work is mostly about (a) deciding what `kind` namespaces to spend, (b) deciding what relations are agent-writable vs parser-only, and (c) building the small amount of CLI ergonomic on top — not about reworking the foundation.
+The shape of all three tiers is the same: **lean on the existing knowledge-layer model — units carry typed identities, revisions carry bodies, annotations carry meaning** — rather than adding domain-specific tables. The schema invariants ([Level 4](#level-4--data-model-knowledge-layer-tables)) were designed exactly for this kind of extension. The hard work is mostly about (a) deciding what `kind` namespaces to spend and (b) building the small amount of CLI ergonomic on top — not about reworking the foundation.
 
 ---
 
 ## Storage layers — knowledge vs source
 
-The Tier-1/2/3 framing above absorbs almost every domain into the seven-table knowledge model. But there is one shape it absorbs *poorly*: **high-volume, time-series, immutable streams** — agent transcripts, chat threads, terminal events, tool-call traces. Forcing those into `units` + `unit_revisions` works mechanically but fights the model: revisions never revise, embedding-first access is the wrong primary index, and the wisdom layer drowns under firehose volume.
+The Tier-1/2/3 framing above absorbs almost every domain into the knowledge-layer model. But there is one shape it absorbs *poorly*: **high-volume, time-series, immutable streams** — agent transcripts, chat threads, terminal events, tool-call traces. Forcing those into `units` + `unit_revisions` works mechanically but fights the model: revisions never revise, embedding-first access is the wrong primary index, and the wisdom layer drowns under firehose volume.
 
 So Hafiz commits to **two storage layers**, not one:
 
-| | **Knowledge layer** *(the seven tables)* | **Source layer** *(promoted dedicated tables)* |
+| | **Knowledge layer** *(six tables)* | **Source layer** *(promoted dedicated tables)* |
 |---|---|---|
 | Examples | functions, docs, people, projects, decisions, learnings, patterns, runbooks | conversations, messages, events, traces |
 | Volume | low–mid (1K–100K rows / project) | high (1M+ rows / project) |

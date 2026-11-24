@@ -67,9 +67,11 @@ def run_init(*, output_json: bool = False) -> None:
         path = db_file_path(settings.database.url)
         result["database_path"] = str(path) if path else None
 
+    reingest: list[str | None] = []
+
     async def _init() -> str | None:
         try:
-            await create_tables()
+            reingest.extend(await create_tables())
             return None
         except Exception as exc:  # noqa: BLE001 — turned into guidance below
             return str(exc)
@@ -118,6 +120,9 @@ def run_init(*, output_json: bool = False) -> None:
         raise SystemExit(1)
 
     result["ok"] = True
+    # The code index was removed: its units are gone, and code comes back as
+    # plain text only once each of these projects is ingested again.
+    result["reingest_projects"] = reingest
     if output_json:
         console.print_json(json.dumps(result))
         return
@@ -137,7 +142,7 @@ def run_init(*, output_json: bool = False) -> None:
         )
         console.print("  - pgvector extension enabled")
     console.print(
-        "  - Tables created: files, units, unit_revisions, embeddings, edges, annotations, commits"
+        "  - Tables created: files, units, unit_revisions, embeddings, annotations, commits"
     )
     console.print(
         "\nNext:\n"
@@ -145,6 +150,15 @@ def run_init(*, output_json: bool = False) -> None:
         "  [bold]hafiz status --diagnose[/bold]           check everything is wired\n"
         "  [bold]hafiz agent install claude-code[/bold]   teach your agent to use hafiz"
     )
+    if reingest:
+        names = ", ".join(p if p is not None else "(no project)" for p in reingest)
+        console.print(
+            "\n[yellow]Code files are now indexed as plain text.[/yellow] The old "
+            "function-level code index was removed, so code in these projects is out "
+            f"of search until you ingest them again:\n  [bold]{names}[/bold]\n"
+            "  [dim]hafiz ingest <repo> --project <name>  (re-reads every file once; "
+            "unchanged docs are skipped)[/dim]"
+        )
 
     # Said only on the first run of an embedded install, which is exactly when
     # someone could be surprised: hafiz defaulted to Postgres before
@@ -219,7 +233,6 @@ def run_status(*, output_json: bool = False) -> None:
         f"{stats['revisions_current']} current / {stats['revisions_total']} total",
     )
     table.add_row("Embeddings", str(stats["embeddings"]))
-    table.add_row("Edges (current)", str(stats["edges"]))
     table.add_row("Annotations", str(stats["annotations"]))
     table.add_row("Commits (indexed)", str(stats["commits"]))
     overdue = stats["retention"]["overdue"]
@@ -385,15 +398,6 @@ def run_config_show(*, output_json: bool = False) -> None:
     emb_table.add_row("dimensions", str(settings.embedding.dimensions))
     emb_table.add_row("device", settings.embedding.device)
     console.print(emb_table)
-
-    # LLM
-    console.print()
-    llm_table = Table(title="LLM", show_header=False, border_style="cyan")
-    llm_table.add_column("Key", style="bold")
-    llm_table.add_column("Value")
-    llm_table.add_row("provider", settings.llm.provider)
-    llm_table.add_row("model", settings.llm.model)
-    console.print(llm_table)
 
     # Workspace
     console.print()
@@ -922,7 +926,6 @@ def run_doctor(
             from hafiz.core.database import (
                 Annotation,
                 Commit,
-                Edge,
                 Embedding,
                 File,
                 Unit,
@@ -991,7 +994,6 @@ def run_doctor(
                 "units",
                 "unit_revisions",
                 "embeddings",
-                "edges",
                 "annotations",
                 "commits",
             }
@@ -1039,13 +1041,6 @@ def run_doctor(
                     emb_count = (
                         await session.execute(select(func.count()).select_from(Embedding))
                     ).scalar() or 0
-                    edge_count = (
-                        await session.execute(
-                            select(func.count())
-                            .select_from(Edge)
-                            .where(Edge.superseded_at.is_(None))
-                        )
-                    ).scalar() or 0
                     ann_count = (
                         await session.execute(select(func.count()).select_from(Annotation))
                     ).scalar() or 0
@@ -1059,7 +1054,7 @@ def run_doctor(
                     detail=(
                         f"files={files_count}, units={units_count}, "
                         f"revisions={rev_count}, embeddings={emb_count}, "
-                        f"edges={edge_count}, annotations={ann_count}, "
+                        f"annotations={ann_count}, "
                         f"commits={commit_count}"
                     ),
                 )
@@ -1194,8 +1189,6 @@ def run_doctor(
     #     command. Only the deps we've actually seen break in the wild
     #     are checked; keep the list small on purpose.
     _critical_runtime_modules = [
-        "scipy",
-        "networkx",
         "fastembed",
         "sqlalchemy",
         "pgvector",

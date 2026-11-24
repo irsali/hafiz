@@ -8,8 +8,8 @@
 > - [`../hafiz/data/agents/skills.md`](../hafiz/data/agents/skills.md) — the
 >   agent contract (installed by `hafiz agent install` into every agent's
 >   config). Source of truth for what agents read/write.
-> - [`architecture.md`](architecture.md) — current system, seven-table data
->   model, key flows, and capture-coverage analysis.
+> - [`architecture.md`](architecture.md) — current system, data model, key
+>   flows, and capture-coverage analysis.
 >
 > Kept below for continuity; treat details as possibly outdated.
 
@@ -21,10 +21,9 @@ Hafiz as a workspace intelligence layer.
 ## What is Hafiz?
 
 Hafiz is a CLI tool that indexes your entire workspace into PostgreSQL + pgvector. It provides:
-- **Semantic code search** across all projects
-- **Entity & relationship graph** (classes, functions, modules, and how they connect)
+- **Semantic search** across docs and files in all projects
 - **Observations store** for decisions, facts, learnings, warnings, and patterns
-- **Context synthesis** that combines all of the above into a single bundle
+- **Context synthesis** that combines indexed content and observations into a single bundle
 
 ## Setup
 
@@ -45,38 +44,33 @@ hafiz <command>
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz query "<text>"` | Semantic search over code and docs | `--type`, `--project`, `--limit`, `--json` |
+| `hafiz query "<text>"` | Semantic search over docs and files | `--type`, `--project`, `--limit`, `--json` |
 | `hafiz context "<task>"` | Full context bundle for a task | `--project`, `--json` |
-| `hafiz query "<query>" --observations` | Search observations only (was `--recall`) | `--type`, `--project`, `--limit`, `--json` |
+| `hafiz query "<query>" --observations` | Search observations only | `--type`, `--project`, `--limit`, `--json` |
 | `hafiz observe "<text>"` | Store a decision/fact/learning | `--type`, `--source`, `--project`, `--tags`, `--confidence`, `--json` |
-| `hafiz graph show <name>` | Entity and its connections | `--project`, `--json` |
-| `hafiz graph deps <name>` | What this entity depends on | `--project`, `--json` |
-| `hafiz graph dependents <name>` | What depends on this entity | `--project`, `--json` |
-| `hafiz ingest <path>` | Index files into knowledge base | `--project`, `--no-extract`, `--git-hook`, `--json` |
-| `hafiz extract export` | Export chunks as JSON | `--project`, `--path`, `--limit`, `--offset` |
-| `hafiz extract import` | Import extraction results | `--file`, `--project` |
+| `hafiz ingest <path>` | Index files into knowledge base | `--project`, `--git-hook`, `--json` |
 | `hafiz agent install <name>` | Install hafiz skills for an agent | `--local`, `--path`, `--file` |
 | `hafiz status` | Database statistics | `--json` |
 | `hafiz status --diagnose` | System diagnostics | `--json` |
 
 ### Type values
 
-- **Query types** (`--type` for `query`): `code`, `doc`, `note`, `decision`
+- **Query types** (`--type` for `query`): `doc.heading`, `doc.paragraph`, `file.raw`, …
 - **Observation types** (`--type` for `observe` / `query --observations`): `fact`, `decision`, `learning`, `pattern`, `warning`
-- **Source** (`--source` for `observe`): `agent:aider`, `agent:claude-code`, `agent:codex`, `user:irshad`
+- **Source** (`--source` for `observe`): `agent:aider`, `agent:claude-code`, `agent:codex`, `user:<name>`
 
 ## Copy-Paste System Prompt Snippet
 
 Add this to any agent's system prompt or instructions:
 
 ```
-You have access to a workspace intelligence tool called `hafiz` that indexes the entire
-codebase with semantic search, entity graphs, and an observations store.
+You have access to a workspace intelligence tool called `hafiz` that indexes the
+workspace with semantic search and an observations store.
 
-Before starting any task, gather context:
+When a task needs prior docs or decisions, gather context:
   hafiz context "<task description>" --json
 
-To search for relevant code:
+To search indexed content:
   hafiz query "<question>" --json
 
 To check past decisions and known gotchas:
@@ -84,10 +78,6 @@ To check past decisions and known gotchas:
 
 After making architectural decisions, record them:
   hafiz observe "<decision and reasoning>" --type decision --source agent:<your-name>
-
-To understand code structure and dependencies:
-  hafiz graph deps <EntityName> --json
-  hafiz graph dependents <EntityName> --json
 
 Always use --json flag when parsing output programmatically.
 ```
@@ -102,9 +92,8 @@ Always use --json flag when parsing output programmatically.
 
 ### During implementation
 
-1. Run `hafiz query "<specific question>" --type code --json` to find relevant code
-2. Run `hafiz graph deps <Entity>` to understand what a component depends on
-3. Run `hafiz graph dependents <Entity>` before refactoring to assess impact
+1. Run `hafiz query "<specific question>" --json` to find relevant indexed content
+2. Prefer reading the working tree (and git) for the file you are actively editing
 
 ### After completing work
 
@@ -123,10 +112,10 @@ Rich terminal formatting (good for human reading, bad for parsing).
 Workspace Files
       |
       v
-  Chunker (LlamaIndex) --> Chunks table (text + vector embeddings)
+  Parsers (prose + whole-file) --> units / revisions / embeddings
       |
       v
-  Extractor (Claude LLM) --> Entities table + Relations table
+  Agent observe/note --> annotations
       |
       v
   PostgreSQL + pgvector
@@ -137,5 +126,4 @@ Workspace Files
 
 - **Embeddings**: nomic-embed-text-v1.5 via fastembed (local ONNX, no API key)
 - **Database**: PostgreSQL + pgvector (768-dim vectors)
-- **LLM**: Anthropic Claude (for entity extraction only)
-- **Tables**: chunks, entities, relations, observations
+- **Tables**: files, units, unit_revisions, embeddings, annotations, commits (+ source layer)

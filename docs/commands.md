@@ -1,7 +1,7 @@
 # Hafiz Command Map
 
 > Source of truth for all hafiz commands. Update this file when commands change.
-> Post-structural-grounding: parsers own structure, agents own meaning — see skills.md v4 (adds self-tuning and error reporting to the agent contract).
+> Parsers own indexed content; agents own meaning — see skills.md (Layer 1 agent contract).
 
 ## Brain Types
 
@@ -10,7 +10,7 @@
 | **—** | No model needed, pure DB/filesystem operations | Free | — |
 | **Embed** | fastembed (nomic-embed-text-v1.5), runs locally via ONNX | Free | `[embedding]` in hafiz.toml |
 | **Agent** | The LLM in conversation (Claude Code, Cursor, Copilot) or piped via CLI | Already paying for the session | N/A — agent reads CLI output and acts |
-| **Parser** | Deterministic AST / prose parser loaded at ingest time | Free | `[parsers]` via entry points |
+| **Parser** | Deterministic prose / whole-file parser loaded at ingest time | Free | `[parsers]` via entry points |
 
 ## Command Reference
 
@@ -18,8 +18,8 @@
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `init` | Write a starter `hafiz.toml` if none exists, then create the seven tables + pgvector extension. Never overwrites an existing config; an unreachable database exits 1 with the `docker run` line to fix it. | — | `--json` → `{ok, config_path, config_created, database_url}` | rich output |
-| `status` | Count files / units / unit_revisions / embeddings / edges / annotations / commits, broken down by project and kind, plus **index freshness per project**, the **retention-overdue count**, and **transcript-capture freshness** | — | `--json` | rich output |
+| `init` | Write a starter `hafiz.toml` if none exists, then create the knowledge-layer tables (files, units, unit_revisions, embeddings, annotations, commits) plus source-layer tables and the pgvector extension. Never overwrites an existing config; an unreachable database exits 1 with the `docker run` line to fix it. | — | `--json` → `{ok, config_path, config_created, database_url, backend, reingest_projects}` — `reingest_projects` lists projects whose old code units were just removed (re-ingest them so code is searchable as plain text again) | rich output |
+| `status` | Count files / units / unit_revisions / embeddings / annotations / commits, broken down by project and kind, plus **index freshness per project**, the **retention-overdue count**, and **transcript-capture freshness** | — | `--json` | rich output |
 | `status --diagnose` | Config / DB / pgvector / embeddings / parser-registry health | — | `--json` | rich output |
 | `doctor` | Install health + host capabilities (RAM, CPU, GPU, onnxruntime) + tunable registry. Stable `--json` shape with `checks` / `host` / `tuning` keys. | — | `--json` | rich tables |
 | `doctor --probe` | Same as `doctor`, plus runs per-tunable probers to recommend values for this host. Slow (loads the embedding model, runs several forward passes). | Embed | `--json` | rich tables |
@@ -42,7 +42,7 @@ Config keys are resolved against the settings models rather than an allowlist, s
 | `agent uninstall` | Remove the spliced `skills.md` block | — | same | same |
 | `agent uninstall <agent> --hooks` | Remove the capture hooks, leaving user-authored hooks intact. Already-captured transcripts are untouched. | — | same | rich output |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
-| `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage. `tree_sitter_js` (JS/TS) appears only when the optional `hafiz[js]` extra is installed. | — | `--json` | rich table |
+| `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage. In-tree: prose (Markdown) and whole-file fallback. | — | `--json` | rich table |
 | `embedding status` | Show current embedding device + provenance (config / sticky cache / probe). `--json` `sticky` object carries `probe_fingerprint`, `stale`, and `stale_reason`. | — | `--json` | rich table |
 | `embedding retry` | Clear sticky device cache and re-probe | Embed | `--json` | rich output |
 
@@ -301,7 +301,7 @@ For agents that **cannot shell out** — Cursor chat, desktop and hosted clients
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `mcp` | Serve the knowledge layer over MCP on **stdio**. Normally launched by the client, not by hand. | Embed + DB | 14 tools, see below | — (speaks JSON-RPC on stdout) |
+| `mcp` | Serve the knowledge layer over MCP on **stdio**. Normally launched by the client, not by hand. | Embed + DB | 13 tools, see below | — (speaks JSON-RPC on stdout) |
 | `mcp --list` | Print the tool surface and exit. Exits **1** on registry drift. | — | `--json` → `{"ok","transport","count","drift","tools":[{"name","summary","writes","target","input_schema"}]}` | rich table |
 
 Client config:
@@ -312,13 +312,13 @@ Client config:
 
 Needs the optional extra — `pipx inject hafiz mcp`, or `pip install 'hafiz[mcp]'`. It is an extra because the SDK pulls 19 transitive packages (starlette, uvicorn, sse-starlette, a compiled `cryptography`) — an entire HTTP server stack this stdio-only transport never touches.
 
-**The 14 tools.** Read: `hafiz_context`, `hafiz_query`, `hafiz_recall_observations`, `hafiz_recall_session`, `hafiz_graph`, `hafiz_journal`, `hafiz_distill`, `hafiz_reconcile`, `hafiz_retrievals`, `hafiz_status`. Write: `hafiz_observe`, `hafiz_note`, `hafiz_capture`, `hafiz_session`.
+**The 13 tools.** Read: `hafiz_context`, `hafiz_query`, `hafiz_recall_observations`, `hafiz_recall_session`, `hafiz_journal`, `hafiz_distill`, `hafiz_reconcile`, `hafiz_retrievals`, `hafiz_status`. Write: `hafiz_observe`, `hafiz_note`, `hafiz_capture`, `hafiz_session`.
 
 `hafiz_status` defaults to `verbose=false`, which reports the same fields as `hafiz status --json` but names only the projects actually behind their repo, plus a `staleness_summary` count of what was checked — so an empty staleness map cannot be misread as "never checked". `verbose=true` returns the full CLI payload. `retention`, `capture` and `embed_coverage` are never trimmed: they are the "is retention being enforced", "is anything still arriving" and "is what arrives still being indexed" signals. `embed_coverage` reports `{window_days, messages, embedded, ratio}` over live communications in the window; `ratio` is `null` rather than `0.0` on an empty window, because "no turns arrived" and "turns arrived and none were embedded" are different problems. A low ratio is normal — selective embedding declines short turns and tool-result echoes by design, leaving roughly 8% — so the human warning fires only on zero-with-traffic, which is unambiguously an embedder fault.
 
 Parity is of **capability**, not of command count: every flag on a covered command survives as a tool parameter, so `hafiz_query(observations=true, kind="decision")` covers `query --observations --type decision`. Schemas are generated from the same core function signatures the CLI calls, so the two surfaces cannot drift — a parameter added to a core function fails the build until it is described.
 
-**Deliberately absent**, and staying CLI-only: install/admin (`init`, `hooks`, `agent`, `config set`, `embedding`, `serve`, `watch`), destructive (`forget`, `prune`) and long-running ingest paths (`ingest`, `import`, `extract`, `review`). An MCP client calls tools without asking anyone; anything irreversible or environment-mutating needs a human present.
+**Deliberately absent**, and staying CLI-only: install/admin (`init`, `hooks`, `agent`, `config set`, `embedding`, `serve`, `watch`), destructive (`forget`, `prune`) and long-running ingest paths (`ingest`, `import`, `review`). An MCP client calls tools without asking anyone; anything irreversible or environment-mutating needs a human present.
 
 **Attribution.** A write with no explicit `source` is attributed to the connecting client — `agent:cursor-ide`, from what it sends at `initialize` — so the audit trail records which client wrote what rather than a uniform `agent:mcp`.
 
@@ -326,7 +326,7 @@ Parity is of **capability**, not of command count: every flag on a covered comma
 
 ### Daemon (warm serving)
 
-A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embedding-model load + DB connect) before any search runs. The **warm daemon** loads the model + pooled DB engine **once** and answers many requests over a Unix socket, dropping per-call latency to the actual vector op (~15ms recall, ~400ms graph-context) plus cheap local IPC.
+A plain `hafiz` call re-pays ~1.3–1.7s of cold start (process launch + embedding-model load + DB connect) before any search runs. The **warm daemon** loads the model + pooled DB engine **once** and answers many requests over a Unix socket, dropping per-call latency to the actual vector op (~15ms recall, ~400ms context) plus cheap local IPC.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
@@ -383,56 +383,13 @@ stop` deliberately leaves it in place and empties it instead.
 
 **Rewrite resilience:** reconcile pass on every ingest marks commits that are no longer reachable in git as `commits.rewritten_at = now`. The installed `post-rewrite` hook triggers a fresh ingest automatically after an amend / rebase.
 
-### Extraction (agent contract v2)
-
-Parsers own structural facts (entities, calls, imports, inherits) — agents no longer write them. The extract pipeline is narrower and semantic-only.
-
-| Step | Command | Brain | What happens |
-|------|---------|:-----:|-------------|
-| 1. Export | `extract export --project X` | — | Emits the AST-known units (with stable `identity_key`) + structural edges so the agent knows what already exists. |
-| 2. Analyze | _(agent reads the output)_ | Agent | Decides which units deserve annotations (decisions / patterns / warnings) and which semantic edges to draw. |
-| 3. Import | `extract import --project X` | — | Validates the v2 payload (rejects v1 / AST-territory) and writes annotations + semantic edges. |
-| 4. Verify | `status --json` | — | Confirms counts across tables. |
-
-**v2 JSON shape:**
-```json
-{
-  "version": 2,
-  "annotations": [
-    {
-      "content": "Canonical auth entry",
-      "kind": "pattern",
-      "source": "agent:claude-code",
-      "unit_identity_key": "<from step 1>",
-      "confidence": 0.9,
-      "tags": ["auth"]
-    }
-  ],
-  "edges": [
-    {
-      "source_name": "UserService", "source_file": "/abs/auth.py",
-      "target_name": "SecurityPolicy", "target_file": "/abs/policy.py",
-      "relation": "implements_pattern",
-      "evidence": "..."
-    }
-  ]
-}
-```
-
-Rejected at import time: `kind` starting with `code.*`; relations in `{calls, imports, inherits, references}`. Off-vocabulary kinds / relations produce warnings but are accepted.
-
-| Command | Purpose | Brain | Key Flags |
-|---------|---------|:-----:|-----------|
-| `extract export` | Emit the AST-known units + edges the agent can attach to | — | `--project`, `--limit`, `--pretty` |
-| `extract import` | Import a v2 payload (annotations + semantic edges) from JSON | — | `--file`, `--project` |
-
 ### Search
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
 | `query "<text>"` | Vector similarity search over the `embeddings` table (joined back to units + files for context) | Embed | `--json` | rich output |
-| `query "<text>" --observations` | Vector search over annotations (wisdom layer), **cross-encoder reranked** by default for precision. `--no-rerank` for pure vector order. Renamed from `--recall` (collided with the top-level `recall` command); `--recall` is a hidden deprecation-warned alias for one release. | Embed + Rerank | `--json` | rich output |
-| `context "<task>"` | Synthesize units + graph + annotations for a task. `--limit` caps each section. | Embed | `--json` | rich panel |
+| `query "<text>" --observations` | Vector search over annotations (wisdom layer), **cross-encoder reranked** by default for precision. `--no-rerank` for pure vector order. | Embed + Rerank | `--json` | rich output |
+| `context "<task>"` | Synthesize relevant indexed content (docs + files) plus matching observations for a task. `--limit` caps each section. `--json` has `chunks` + `annotations` (no `entities` key). `--format compact` collapses to content + kind + source + age (no `units` key). | Embed | `--json` | rich panel |
 
 **An empty query is an error, not a result set.** A blank query embeds to a
 near-zero vector, against which *empty* documents (blank `.scss` files,
@@ -544,8 +501,7 @@ hooks parse it; new fields are additive.
 | `compact` | context-window injection | content + kind + source + age only; long annotations excerpted |
 | `md` | prompt injection | raw markdown, not Rich-rendered; long annotations excerpted |
 
-`compact` drops uuids, timestamps, null fields, float scores, and (on `context`)
-the graph section's edge lists, collapsing units to `name (kind)`. Pass
+`compact` drops uuids, timestamps, null fields, and float scores. Pass
 `--with-ids` to re-add ids — **do this whenever the consumer might write back**,
 because an agent that can read a decision but not cite it cannot
 `observe --supersedes` it, and the corpus silently accumulates contradictions.
@@ -594,7 +550,7 @@ relevant rows.
 3. A near-certain typo (similarity ≥ 0.9, clear of the runner-up) — corrected on read with a one-line notice on stderr. Names differing only in a number (`…-v3` / `…-v4`) are siblings, never typos.
 4. Several projects still fit → the one not **retired** wins; if that doesn't settle it, or nothing fits, exit `2` with `{"ok": false, "error": ..., "candidates": [...]}`. A misspelt project used to return an empty result indistinguishable from "nothing known".
 
-Writes (`observe`, `note`, `capture`, `extract import`) apply 1–2 and file under the main name. A **new** name that is a near-certain typo of an existing one is refused unless `--new-project`; anything else is a new project. `ingest` and the importers never refuse — an unclear name is kept as given, because git hooks pin it. Agent writes with no `--project` (`--source agent:*`, and MCP `hafiz_observe`/`hafiz_note`) file under the project of the working directory: the closer of the indexed tree that holds it and its git repo's folder name. A user's own notes stay unscoped.
+Writes (`observe`, `note`, `capture`) apply 1–2 and file under the main name. A **new** name that is a near-certain typo of an existing one is refused unless `--new-project`; anything else is a new project. `ingest` and the importers never refuse — an unclear name is kept as given, because git hooks pin it. Agent writes with no `--project` (`--source agent:*`, and MCP `hafiz_observe`/`hafiz_note`) file under the project of the working directory: the closer of the indexed tree that holds it and its git repo's folder name. A user's own notes stay unscoped.
 
 Spellings that merely look alike are never merged automatically — two repos can be one key apart (a retired v1 and its replacement). See `projects` below.
 
@@ -602,25 +558,12 @@ Spellings that merely look alike are never merged automatically — two repos ca
 
 | Flag | Effect |
 |------|--------|
-| `--include-domain code,doc` | Restrict results to units whose `kind` starts with one of the listed domains. Comma-separated. |
-| `--exclude-domain code` | Drop results whose `kind` starts with one of the listed domains. Comma-separated. |
+| `--include-domain doc,file` | Restrict results to units whose `kind` starts with one of the listed domains. Comma-separated. |
+| `--exclude-domain file` | Drop results whose `kind` starts with one of the listed domains. Comma-separated. |
 
-A "domain" is the prefix of `kind` before the first dot — `code`, `doc`, `mail`, `chat`, `file`, etc. (For exact-kind filters like `code.function`, keep using `--type`.) The two flags are mutually exclusive *per-domain*: `--include-domain code,doc --exclude-domain doc` errors out before hitting the DB. A dotted value (`--include-domain code.function`) also errors — domains are dotless tokens.
+A "domain" is the prefix of `kind` before the first dot — `doc`, `file`, `mail`, `chat`. There is no `code` domain (`--include-domain code` matches nothing). (For exact-kind filters like `doc.heading`, keep using `--type`.) The two flags are mutually exclusive *per-domain*: `--include-domain doc,file --exclude-domain doc` errors out before hitting the DB. A dotted value (`--include-domain doc.heading`) also errors — domains are dotless tokens.
 
 When both flags are omitted on the CLI, the active session's defaults (set via `session start --include-domain` / `--exclude-domain`) are inherited. Passing *either* flag explicitly skips inheritance entirely, so a query can flip the filter without first ending the session.
-
-### Knowledge Graph
-
-| Command | Purpose | Brain | Agent use | Terminal use |
-|---------|---------|:-----:|-----------|-------------|
-| `graph show <name>` | Unit and its direct connections | — | `--json` | rich tree |
-| `graph deps <name>` | What this unit depends on (outgoing edges) | — | `--json` | rich table |
-| `graph impact <name>` | Blast radius — what depends on this unit (incoming edges) | — | `--json` | rich table |
-| `graph path <src> <tgt>` | Shortest directed path | — | `--json` | rich tree |
-| `graph rank` | Top units by centrality (pagerank / betweenness / degree) | — | `--json` | rich table |
-| `graph stats` | Overall graph health (density, components, top-central, kind/relation breakdowns) | — | `--json` | rich tables |
-
-Graph nodes are current units (`valid_until IS NULL`), edges are current edges (`superseded_at IS NULL`) with both endpoints resolved in scope. External references (`target_unit_id IS NULL`, `target_name` set) are excluded from traversal — visible via raw DB if needed.
 
 ### Annotations (the "wisdom layer")
 
@@ -633,7 +576,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
 | `projects alias ALIAS PROJECT` | Declare a synonym: reads and writes through `ALIAS` land on `PROJECT` from now on. Stored in the `project_names` table, so every entry point sees it. | — | `--json` → `{"ok":true,"alias","project"}` | one line |
 | `projects unalias ALIAS` | Remove a synonym; rows already merged stay put | — | `--json` → `{"ok":true,"alias","removed":bool}` | one line |
 | `projects retire PROJECT [--undo]` | Mark a project retired: still searchable, but loses to an active project when a name fits both | — | `--json` → `{"ok":true,"project","retired":bool}` | one line |
-| `projects merge [--apply]` | Move rows filed under a declared synonym to its main name — notes, transcripts, sessions. Never the code index (git hooks pin its name; the synonym already routes reads to it), and never an undeclared look-alike. Preview unless `--apply`. | — | `--json` → `{"ok":true,"applied":bool,"moves":[{"alias","project","rows":{table:n}}],"skipped":[{"alias","project","reason"}]}` | per-synonym lines |
+| `projects merge [--apply]` | Move rows filed under a declared synonym to its main name — notes, transcripts, sessions. Never the file index (git hooks pin its name; the synonym already routes reads to it), and never an undeclared look-alike. Preview unless `--apply`. | — | `--json` → `{"ok":true,"applied":bool,"moves":[{"alias","project","rows":{table:n}}],"skipped":[{"alias","project","reason"}]}` | per-synonym lines |
 | `journal` | Time-bounded digest of annotations, grouped by day | — | `--json` | rich tables · `--format mermaid` |
 | `distill` | Surface the promotable backlog — recent notes + transcript turns, grouped into themes (scanner, not promoter) | Embed | `--json` · `--brief` | rich panels |
 
@@ -675,7 +618,7 @@ Graph nodes are current units (`valid_until IS NULL`), edges are current edges (
     - **Primary is the superset, not the newest.** Newest-unless-materially-shorter read plausibly and inverted in practice: on a same-day pair it proposed retiring the only row carrying "supersedes the earlier same-task decision", because the row lacking that sentence was a few characters longer. Containment is checked directly; newest wins only among rows that already say the same things.
     - JSON shape: `{action, scanned, total_live, truncated, threshold, total, clusters: [{kind, project, suggested_action, primary_id, commands: [...], members: [{id, content, score, source, valid_from, chars, primary, overlap, unique_words, unique_fragments}]}]}`. `suggested_action` is `retire` | `review` | `merge` — `review` is new, so a consumer switching on the value needs a branch for it.
     - The count also rides on `doctor` (and so on `status --diagnose`) as **Knowledge base deduplicated**, because a read-only command nobody remembers to run surfaces nothing. It is not on `status`: with no vector index on `annotations.embedding` the count is a quadratic scan (~310 ms at 1,099 rows), and `status` is on the hot path.
-- **Unit binding**: annotations created via `extract import` can link to a unit via `unit_identity_key`. Annotations created via `observe` are unit-free by default (can be linked later via API).
+- **Unit binding**: annotations created via `observe` are unit-free by default (can be linked later via API).
 
 #### The distillation backlog (`distill`)
 
@@ -864,7 +807,7 @@ All four share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
 **Retention enforcement.** `import` runs the expiry sweep automatically and
 reports it (`retention_sweep: {matched, tombstoned, dry_run}` in `--json`; a row
 in the rich table when non-zero). `--dry-run` propagates to the sweep. It is
-deliberately *not* wired into `ingest`: that's the code/doc subsystem, it fires
+deliberately *not* wired into `ingest`: that's the file/doc subsystem, it fires
 per-commit from a git hook, and its output goes to `/dev/null`, so a sweep there
 would be unattributable and unobservable.
 
@@ -911,7 +854,7 @@ One append-only source-layer table, one INSERT per search.
 
 `export` is a one-way eject to plain files. This is the transport: every table, both layers, into a database on the other backend.
 
-It exists because "just re-ingest" only half works. Code and docs can be re-derived — git is their source. **Annotations cannot.** Someone who starts on SQLite, accumulates two years of decisions and then wants Postgres for a second machine has nothing to re-ingest from.
+It exists because "just re-ingest" only half works. Docs and files can be re-derived — git is their source. **Annotations cannot.** Someone who starts on SQLite, accumulates two years of decisions and then wants Postgres for a second machine has nothing to re-ingest from.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
@@ -934,7 +877,7 @@ Measured on a real store: **421,732 rows, Postgres → SQLite, 81s**, 71,194 sel
 
 ### Sovereignty (export)
 
-The data-portability complement to `forget`. Dumps the brain's **wisdom layer** — annotations (decisions / facts / learnings / patterns / warnings) — to plain files for backup, human review, or migration. Code and AST structure are **excluded** (git is their sovereign copy). Forgotten (`valid_until`) and retention-expired rows are never included — export reflects only live data.
+The data-portability complement to `forget`. Dumps the brain's **wisdom layer** — annotations (decisions / facts / learnings / patterns / warnings) — to plain files for backup, human review, or migration. Indexed file bodies are **excluded** (git is their sovereign copy). Forgotten (`valid_until`) and retention-expired rows are never included — export reflects only live data.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
@@ -946,14 +889,13 @@ Defaults & flags:
 - `--include-transcripts`: also dump source-layer agent transcripts (opt-in, mirrors `query` / `context`). Off by default.
 - `--project`: limit to one project; default is the whole brain.
 - Every export writes a `manifest.json` (tool/schema version, format, generated-at, scope, counts).
-- **Distinct from `extract export`**, which emits AST units as an agent-extraction payload — not a portability dump.
 - `import` (round-trip restore) is **not yet implemented**; the `json` format is designed to enable it later.
 
 ### Review
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `review` | Self-review of the knowledge base: counts units / edges / embeddings / annotations, then flags annotation-quality gaps (no decisions, low confidence, staleness), orphan units, and projects with units but no edges. | Graph + Annotations | `--json` emits `{stats, findings, summary}` | rich panel of findings |
+| `review` | Self-review of the knowledge base: counts units / embeddings / annotations, then flags annotation-quality gaps (no decisions, low confidence, staleness). | Annotations | `--json` emits `{stats, findings, summary}` | rich panel of findings |
 
 ## Common Flags
 
@@ -965,8 +907,9 @@ Defaults & flags:
 | `--project` / `-p` | Most commands | Filter or tag by project name |
 | `--workspace` / `-w` | `context`, `query`, `journal` | Scope to sibling projects in parent directory |
 | `--type` / `-t` | `query`, `observe`, `journal` | Unit kind or annotation kind depending on context |
-| `--limit` / `-l` | `query`, `extract export`, `journal` | Maximum results |
-| `--observations` | `query` | Search annotations (wisdom layer) instead of content. Renamed from `--recall`, which remains a hidden alias for one release. |
+| `--limit` / `-l` | `query`, `journal` | Maximum results |
+| `--observations` | `query` | Search annotations (wisdom layer) instead of content |
+
 | `--since` | `journal` / `distill` | Duration window ending now (default `7d`) |
 | `--day` | `journal` | Specific UTC day (ISO date). Exclusive with `--since` |
 | `--expires-in` | `observe`, `note` | Expire after duration. Exclusive with `--expires` |
@@ -982,7 +925,7 @@ Defaults & flags:
 | `--include-superseded` | `query --observations` | Return superseded / expired rows |
 | `--tags` | `query --observations` | Comma-separated tag allowlist; keeps rows carrying **any** of them (array overlap). Filters in SQL, so `--limit` counts only matching rows. Refused without `--observations` — only annotations carry tags. |
 | `--include-transcripts` | `query`, `context` | Add source-layer transcript matches to results (off by default) |
-| `--include-domain` | `query`, `context`, `session start` | Comma-separated data-domain allowlist (`code`, `doc`, `chat`, …). Domain = `kind` prefix before the first dot. |
+| `--include-domain` | `query`, `context`, `session start` | Comma-separated data-domain allowlist (`doc`, `file`, `chat`, `mail`). Domain = `kind` prefix before the first dot. No `code` domain. |
 | `--exclude-domain` | `query`, `context`, `session start` | Comma-separated data-domain denylist. Mutually exclusive *per-domain* with `--include-domain`. |
 | `--diagnose` | `status` | Full diagnostic checks including parser registry |
 
@@ -990,5 +933,5 @@ Defaults & flags:
 
 Two stability layers:
 
-- **Layer 1 (stable contract):** `skills.md` v2 installed via `hafiz agent install`. Ownership rule (parsers own structure, agents own meaning) is load-bearing. `hafiz agent install` detects version drift and warns when refreshing an older splice.
+- **Layer 1 (stable contract):** `skills.md` installed via `hafiz agent install`. Ownership rule (parsers own indexed content, agents own meaning) is load-bearing. `hafiz agent install` detects version drift and warns when refreshing an older splice.
 - **Layer 2 (evolving):** `hafiz review`, `hafiz parsers list`, Phase 7 observability surfaces. Free to iterate; not referenced from `skills.md`.

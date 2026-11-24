@@ -22,7 +22,7 @@ def test_parsers_list_rich_output_shows_builtins():
     result = runner.invoke(app, ["parsers", "list"])
     assert result.exit_code == 0
     # In-tree parsers must always show up.
-    for name in ("python_ast", "prose", "whole_file"):
+    for name in ("prose", "whole_file"):
         assert name in result.output
 
 
@@ -34,7 +34,6 @@ def test_parsers_list_json_output_is_parseable():
     payload = json.loads(result.output[first_brace:])
     assert "parsers" in payload
     names = [p["name"] for p in payload["parsers"]]
-    assert "python_ast" in names
     assert "prose" in names
     assert "whole_file" in names
     for p in payload["parsers"]:

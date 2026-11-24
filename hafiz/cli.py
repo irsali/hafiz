@@ -397,13 +397,7 @@ def query(
     observations: bool = typer.Option(
         False,
         "--observations",
-        help="Search the wisdom layer (annotations) instead of code chunks.",
-    ),
-    recall_alias: bool = typer.Option(
-        False,
-        "--recall",
-        hidden=True,
-        help="Deprecated alias for --observations.",
+        help="Search the wisdom layer (annotations) instead of indexed documents and files.",
     ),
     source: str | None = typer.Option(
         None,
@@ -448,7 +442,7 @@ def query(
         "--include-domain",
         help=(
             "Restrict to units in these data domains (comma-separated, "
-            "e.g. 'code', 'doc,chat'). Domain = the part of `kind` before "
+            "e.g. 'doc', 'doc,file'). Domain = the part of `kind` before "
             "the dot. Overrides any session default."
         ),
     ),
@@ -464,7 +458,7 @@ def query(
 ) -> None:
     """Search indexed content with vector similarity.
 
-    By default, searches code chunks. Use --observations to search the
+    By default, searches indexed documents and files. Use --observations to search the
     wisdom layer (decisions, facts, learnings, patterns, warnings). Use
     --include-transcripts to additionally search the source layer
     (imported agent transcripts).
@@ -474,14 +468,6 @@ def query(
     if project and workspace:
         _fail("--project and --workspace are mutually exclusive.", fmt=fmt, code=1)
 
-    if recall_alias:
-        # `--recall` collided with the top-level `hafiz recall` (source layer).
-        # Renamed to `--observations`; keep the alias working one release.
-        typer.echo(
-            "Warning: --recall is deprecated; use --observations.",
-            err=True,
-        )
-
     tag_list = _parse_domain_csv(tags)
     if tags is not None and tag_list is None:
         # `--tags ""` / `--tags ","` / an unset shell variable. Falling through
@@ -489,13 +475,13 @@ def query(
         # holds a curated pin — the same failure as the blank query that went
         # unnoticed in a hook for 3.5 weeks, so it exits the same way.
         _fail("--tags was passed but names no tag.", fmt=fmt, code=2)
-    if tag_list and not (observations or recall_alias):
+    if tag_list and not observations:
         # A filter that silently does nothing is worse than no filter: the
         # caller would trust an unfiltered result set. Only the wisdom layer
         # carries tags, so refuse rather than ignore.
         _fail("--tags applies to annotations; add --observations.", fmt=fmt, code=1)
 
-    if observations or recall_alias:
+    if observations:
         from hafiz.commands.observe import run_recall
 
         try:
@@ -773,101 +759,6 @@ def config_clear_sticky(
     run_config_clear_sticky(output_json=json_output)
 
 
-# ─── GRAPH ─────────────────────────────────────────────────────────────
-
-graph_app = typer.Typer(name="graph", help="Explore the knowledge graph.")
-app.add_typer(graph_app)
-
-
-@graph_app.command("show")
-def graph_show(
-    name: str = typer.Argument(..., help="Entity name to look up."),
-    depth: int = typer.Option(
-        1, "--depth", "-d", min=0, help="Include neighbors up to N hops (undirected)."
-    ),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
-) -> None:
-    """Show an entity and its N-hop neighborhood (undirected walk)."""
-    from hafiz.commands.graph import run_graph_show
-
-    run_graph_show(name, depth=depth, project=project, output_json=json_output)
-
-
-@graph_app.command("deps")
-def graph_deps(
-    name: str = typer.Argument(..., help="Entity name to look up."),
-    depth: int = typer.Option(1, "--depth", "-d", min=0, help="Walk outgoing edges up to N hops."),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
-) -> None:
-    """Show what an entity depends on, transitively (outgoing walk)."""
-    from hafiz.commands.graph import run_graph_deps
-
-    run_graph_deps(name, depth=depth, project=project, output_json=json_output)
-
-
-@graph_app.command("impact")
-def graph_impact(
-    name: str = typer.Argument(..., help="Entity name to look up."),
-    depth: int = typer.Option(1, "--depth", "-d", min=0, help="Walk incoming edges up to N hops."),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
-) -> None:
-    """Show the blast radius — what breaks if this entity changes (incoming walk)."""
-    from hafiz.commands.graph import run_graph_impact
-
-    run_graph_impact(name, depth=depth, project=project, output_json=json_output)
-
-
-@graph_app.command("path")
-def graph_path(
-    source: str = typer.Argument(..., help="Source entity name."),
-    target: str = typer.Argument(..., help="Target entity name."),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
-) -> None:
-    """Find the shortest directed path from SOURCE to TARGET."""
-    from hafiz.commands.graph import run_graph_path
-
-    run_graph_path(source, target, project=project, output_json=json_output)
-
-
-@graph_app.command("rank")
-def graph_rank(
-    metric: str = typer.Option(
-        "pagerank",
-        "--metric",
-        "-m",
-        help="Centrality metric: pagerank, betweenness, degree, in_degree, out_degree.",
-    ),
-    top: int = typer.Option(20, "--top", "-n", min=1, help="Number of results to show."),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
-) -> None:
-    """Rank entities by a centrality metric (importance ranking)."""
-    from hafiz.commands.graph import run_graph_rank
-
-    run_graph_rank(metric=metric, top_n=top, project=project, output_json=json_output)
-
-
-@graph_app.command("stats")
-def graph_stats(
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    top_central: int = typer.Option(
-        5,
-        "--top-central",
-        min=0,
-        help="Number of top-central nodes to include (by PageRank).",
-    ),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON."),
-) -> None:
-    """Show graph-level health: counts, density, components, top-central nodes."""
-    from hafiz.commands.graph import run_graph_stats
-
-    run_graph_stats(project=project, top_central=top_central, output_json=json_output)
-
-
 # ─── SESSION ──────────────────────────────────────────────────────────
 
 session_app = typer.Typer(
@@ -898,7 +789,7 @@ def session_start(
         "--include-domain",
         help=(
             "Default data-domain include filter for `query`/`context` on this "
-            "cursor (comma-separated, e.g. 'code,doc')."
+            "cursor (comma-separated, e.g. 'doc,file')."
         ),
     ),
     exclude_domain: str | None = typer.Option(
@@ -1410,7 +1301,7 @@ def context(
         "--include-domain",
         help=(
             "Restrict context chunks to these data domains "
-            "(comma-separated, e.g. 'code,doc'). Overrides any session "
+            "(comma-separated, e.g. 'doc,file'). Overrides any session "
             "default. Domain = `kind` prefix before the dot."
         ),
     ),
@@ -1435,8 +1326,7 @@ def context(
         max=1.0,
         help=(
             "Drop results below this 0–1 relevance floor — cosine similarity for "
-            "chunks, cross-encoder relevance for annotations. Narrows the whole "
-            "bundle, since the graph section is seeded from the surviving chunks."
+            "chunks, cross-encoder relevance for annotations."
         ),
     ),
     output_format: OutputFormat | None = typer.Option(
@@ -1455,7 +1345,7 @@ def context(
     ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
 ) -> None:
-    """Synthesize relevant code, graph, and observations for a task."""
+    """Synthesize relevant documents, files, and observations for a task."""
     fmt = resolve_format(output_format, json_flag=json_output)
 
     if project and workspace:
@@ -1502,41 +1392,6 @@ def review(
     from hafiz.commands.review import run_review
 
     run_review(project=project, output_json=json_output)
-
-
-# ─── EXTRACT ───────────────────────────────────────────────────────
-
-extract_app = typer.Typer(name="extract", help="Entity & relationship extraction.")
-app.add_typer(extract_app)
-
-
-@extract_app.command("export")
-def extract_export_cmd(
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project."),
-    limit: int = typer.Option(500, "--limit", "-l", help="Maximum units to surface."),
-    pretty: bool = typer.Option(False, "--pretty", help="Human-readable summary instead of JSON."),
-) -> None:
-    """Emit the AST-known units + structural edges agents can annotate
-    against. JSON by default (agents parse it); --pretty for humans."""
-    from hafiz.commands.extract import run_extract_export
-
-    run_extract_export(project=project, limit=limit, output_json=not pretty)
-
-
-@extract_app.command("import")
-def extract_import_cmd(
-    file: str | None = typer.Option(
-        None, "--file", "-f", help="JSON file (reads stdin if omitted)."
-    ),
-    project: str | None = typer.Option(
-        None, "--project", "-p", help="Project tag for stored rows."
-    ),
-) -> None:
-    """Import agent extraction v2 (annotations + semantic edges)
-    from JSON (file or stdin)."""
-    from hafiz.commands.extract import run_extract_import
-
-    run_extract_import(file, project=project)
 
 
 # ─── PROJECTS ──────────────────────────────────────────────────────
@@ -1889,9 +1744,6 @@ def export(
 
     Code is intentionally excluded — your git repository is already its
     sovereign copy.
-
-    Distinct from ``hafiz extract export``, which emits AST units as an
-    agent-extraction payload.
     """
     from hafiz.commands.export import run_export
 

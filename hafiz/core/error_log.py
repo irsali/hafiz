@@ -345,7 +345,7 @@ def _is_declared_runtime_dep(module_name: str) -> bool:
                 want = module_name.lower()
                 for dep in deps:
                     name = _dep_package_name(dep).lower()
-                    # numpy / scipy / networkx are the direct common case;
+                    # numpy / fastembed are the direct common case;
                     # also tolerate "-" vs "_" where the Python module
                     # name doesn't match the PyPI name exactly.
                     if name == want or name.replace("-", "_") == want:

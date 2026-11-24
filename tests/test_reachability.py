@@ -57,7 +57,7 @@ def _public_names(tree: ast.Module) -> set[str]:
     }
 
 
-#: ``"hafiz.core.graph_ops:graph_op"`` — how ``mcp_registry`` names the core
+#: ``"hafiz.core.session_ops:session_op"`` — how ``mcp_registry`` names the core
 #: function behind a tool. A string target is a real reference the AST cannot
 #: follow, so without this the checker reports a wired-up module as dead.
 #:
@@ -82,7 +82,7 @@ def _imports_by_module() -> dict[str, set[str]]:
                 if not node.module.startswith("hafiz") or node.module == self_mod:
                     continue
                 for alias in node.names:
-                    # `from hafiz.core import graph_analysis as ga` imports a
+                    # `from hafiz.core import telemetry` imports a
                     # *module*. Attributing that to the package would make
                     # every such submodule look unused.
                     submodule = f"{node.module}.{alias.name}"
@@ -167,7 +167,6 @@ def test_string_targets_resolve_but_do_not_wave_everything_through():
     imported = _imports_by_module()
 
     # Positive: mcp_registry names these as "module:function" strings only.
-    assert "graph_op" in imported.get("hafiz.core.graph_ops", set())
     assert "session_op" in imported.get("hafiz.core.session_ops", set())
 
     # Negative: a module nobody references stays absent, so the reachability
@@ -175,4 +174,4 @@ def test_string_targets_resolve_but_do_not_wave_everything_through():
     assert "hafiz.core.a_module_that_does_not_exist" not in imported
 
     # Specific: the rule credits the named function, not the whole module.
-    assert "<module>" not in imported.get("hafiz.core.graph_ops", set())
+    assert "<module>" not in imported.get("hafiz.core.session_ops", set())

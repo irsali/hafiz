@@ -21,7 +21,6 @@ def test_default_settings():
     assert settings.embedding.model == "nomic-ai/nomic-embed-text-v1.5"
     assert settings.embedding.dimensions == 768
     assert settings.embedding.provider == "fastembed"
-    assert settings.llm.provider == "anthropic"
 
 
 def test_env_override():
@@ -102,7 +101,6 @@ def test_settings_serialization():
     data = settings.model_dump()
     assert "database" in data
     assert "embedding" in data
-    assert "llm" in data
     assert "workspace" in data
 
 
@@ -199,6 +197,26 @@ def test_env_beats_toml_as_documented(tmp_path, monkeypatch):
     # ("toml values arrive as pydantic-settings init args, which beat env
     # vars"), so `database.url` cannot measure anything here.
     assert settings.embedding.max_part_chars == 1234
+
+
+def test_a_config_with_retired_sections_still_loads(tmp_path, monkeypatch):
+    """`[llm]` and `[graph]` were written by older `hafiz init` runs. Settings
+    reject unknown keys, so without dropping them every command would fail to
+    start on an existing install."""
+    from hafiz.core.config import load_settings
+
+    cfg = tmp_path / "hafiz.toml"
+    cfg.write_text(
+        '[llm]\nprovider = "anthropic"\nmodel = "x"\n\n'
+        "[graph]\ncontext_depth = 3\n\n"
+        "[embedding]\nmax_part_chars = 1234\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    settings = load_settings()
+    assert settings.embedding.max_part_chars == 1234
+    assert "llm" not in settings.model_dump() and "graph" not in settings.model_dump()
 
 
 # ── Plain config keys, not just tunables ─────────────────────────────────

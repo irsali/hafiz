@@ -1,7 +1,7 @@
 """File watcher for real-time re-indexing using watchdog.
 
 Monitors a directory for file changes, debounces rapid saves,
-and re-indexes only changed files (chunks + embeddings, no graph extraction).
+and re-indexes only changed files (units + embeddings).
 """
 
 from __future__ import annotations

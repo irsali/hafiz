@@ -26,13 +26,6 @@ END_MARKER = (
 # Default filename when no agent name and no --file provided
 DEFAULT_FILENAME = "skills.md"
 
-# The skills.md version at which the agent-extraction contract broke
-# (entity_type / relation_type vocabulary). Only a bump *crossing* this
-# boundary warrants the retrain-your-extractors warning; later bumps are
-# additive and must not cry wolf.
-_EXTRACTOR_CONTRACT_VERSION = 2
-
-
 # ── Wrappers ──────────────────────────────────────────────────────────────
 
 

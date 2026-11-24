@@ -106,7 +106,6 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
     from hafiz.core.database import (
         Annotation,
         Commit,
-        Edge,
         Embedding,
         File,
         Unit,
@@ -131,7 +130,6 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
         units_count = await count(Unit, Unit.valid_until.is_(None))
         current_revisions_count = await count(UnitRevision, UnitRevision.superseded_at.is_(None))
         embeddings_count = await count(Embedding)
-        edges_count = await count(Edge, Edge.superseded_at.is_(None))
         annotations_count = await count(Annotation)
         commits_count = await count(Commit)
 
@@ -191,7 +189,6 @@ async def collect_status(verbose: bool = False) -> dict[str, Any]:
         "units_total": total_units,
         "units_tombstoned": total_units - units_count,
         "embeddings": embeddings_count,
-        "edges": edges_count,
         "annotations": annotations_count,
         "commits": commits_count,
         "by_project": {p or "(none)": c for p, c in project_rows},

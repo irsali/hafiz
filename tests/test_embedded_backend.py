@@ -552,3 +552,52 @@ def test_a_fresh_install_reaches_a_working_store_with_no_server():
         config = Path(payload["config_path"])
         assert config.exists()
         assert "sqlite" in config.read_text(encoding="utf-8")
+
+
+async def test_init_on_an_existing_store_runs_pending_migrations(embedded_url):
+    """Re-running init on an older store must upgrade it, not stamp it.
+
+    Stamping at head skipped every pending revision. That was invisible while
+    revisions only added tables, which ``create_all`` creates anyway; 0011
+    deletes the code index, and a skipped delete leaves stale code units and
+    an ingest that never re-reads unchanged code files.
+    """
+    from hafiz.core.database import (
+        File,
+        Unit,
+        UnitRevision,
+        close_engine,
+        create_tables,
+        get_session_factory,
+    )
+
+    async with get_session_factory()() as s:
+        f = File(project="p", path="/r/a.py", last_seen_commit="abc")
+        doc = File(project="p", path="/r/README.md", last_seen_commit="abc")
+        s.add_all([f, doc])
+        await s.flush()
+        code = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="c")
+        heading = Unit(file_id=doc.id, kind="doc.heading", name="Intro", identity_key="d")
+        s.add_all([code, heading])
+        await s.flush()
+        s.add(
+            UnitRevision(unit_id=code.id, content="def foo(): ...", content_hash="h", source="ast")
+        )
+        # The store as 0010 left it: an edges table, and stamped one revision back.
+        await s.execute(text("CREATE TABLE edges (id TEXT PRIMARY KEY)"))
+        await s.execute(text("UPDATE alembic_version SET version_num = '0010'"))
+        await s.commit()
+    await close_engine()
+
+    # init names the project to re-ingest, so its code comes back as plain text.
+    assert await create_tables(embedded_url) == ["p"]
+
+    async with get_session_factory()() as s:
+        kinds = (await s.execute(select(Unit.kind))).scalars().all()
+        commits = (await s.execute(select(File.last_seen_commit))).scalars().all()
+        tables = (await s.execute(text(table_list_sql(SQLITE)))).scalars().all()
+        version = (await s.execute(text("SELECT version_num FROM alembic_version"))).scalar()
+    assert kinds == ["doc.heading"]
+    assert commits == [None, None]  # next ingest re-reads the project, code as plain text
+    assert "edges" not in tables
+    assert version == "0011"

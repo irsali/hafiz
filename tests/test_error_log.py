@@ -154,12 +154,12 @@ def test_build_record_captures_traceback_and_argv():
     try:
         raise ValueError("test boom")
     except ValueError as e:
-        rec = build_record(e, argv=["graph", "stats"])
+        rec = build_record(e, argv=["session", "show"])
     assert rec.exception_type == "ValueError"
     assert rec.message == "test boom"
     assert "ValueError: test boom" in rec.traceback
-    assert rec.command == "graph stats"
-    assert rec.argv == ["graph", "stats"]
+    assert rec.command == "session show"
+    assert rec.argv == ["session", "show"]
 
 
 def test_build_record_extracts_command_before_flags():
@@ -174,13 +174,13 @@ def test_build_record_extracts_command_before_flags():
 
 
 def test_suggest_action_recognizes_declared_dep():
-    exc = ModuleNotFoundError("No module named 'scipy'")
-    exc.name = "scipy"
+    exc = ModuleNotFoundError("No module named 'pathspec'")
+    exc.name = "pathspec"
     suggestion, ctx = _suggest_action(exc, argv=[])
     assert suggestion is not None
     assert "pipx inject" in suggestion
-    assert "scipy" in suggestion
-    assert ctx["missing_module"] == "scipy"
+    assert "pathspec" in suggestion
+    assert ctx["missing_module"] == "pathspec"
     assert ctx["is_declared_dep"] is True
 
 
@@ -373,11 +373,11 @@ def test_config_validation_no_false_positive_outside_config_loader():
 
 def test_suggest_action_walks_registry_and_returns_first_match():
     # ModuleNotFoundError is the first recognizer; should still match.
-    exc = ModuleNotFoundError("No module named 'scipy'")
-    exc.name = "scipy"
+    exc = ModuleNotFoundError("No module named 'pathspec'")
+    exc.name = "pathspec"
     suggestion, ctx = _suggest_action(exc, argv=[], traceback_text="")
     assert suggestion is not None
-    assert ctx["missing_module"] == "scipy"
+    assert ctx["missing_module"] == "pathspec"
 
 
 def test_suggest_action_routes_programming_error_to_pgvector():
@@ -431,7 +431,7 @@ def test_group_by_exception_type_aggregates_and_sorts():
             reversed(
                 [
                     ("RuntimeError", "ingest"),
-                    ("ModuleNotFoundError", "graph stats"),
+                    ("ModuleNotFoundError", "session show"),
                     ("ModuleNotFoundError", "query x"),
                     ("ModuleNotFoundError", "context y"),
                     ("RuntimeError", "ingest"),

@@ -4,12 +4,11 @@ This is Layer 2 (evolving) — separate from skills.md (Layer 1, stable contract
 It helps users and agents understand the health of their knowledge base and
 surfaces actionable improvements without being prescriptive.
 
-Reads the v5 knowledge layer: ``units`` (addressable things), ``edges``
-(relations between them), ``annotations`` (the wisdom layer), and ``embeddings``
-(the vector index). Only *live* rows are counted — tombstoned units
-(``valid_until`` set), superseded edges (``superseded_at`` set), and expired
-annotations (``valid_until`` in the past) are excluded so findings reflect the
-current state, not history.
+Reads the knowledge layer: ``units`` (addressable things), ``annotations``
+(the wisdom layer), and ``embeddings`` (the vector index). Only *live* rows are
+counted — tombstoned units (``valid_until`` set) and expired annotations
+(``valid_until`` in the past) are excluded so findings reflect the current
+state, not history.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from sqlalchemy import func, or_, select
 
 from hafiz.core.database import (
     Annotation,
-    Edge,
     Embedding,
     File,
     Unit,
@@ -34,7 +32,7 @@ from hafiz.core.database import (
 class ReviewFinding:
     """A single review finding with actionable suggestion."""
 
-    category: str  # annotations, graph, coverage, staleness
+    category: str  # annotations, staleness
     severity: str  # info, suggestion, warning
     title: str
     detail: str
@@ -104,8 +102,6 @@ async def run_review(project: str | None = None) -> ReviewReport:
 
     Checks:
     - Annotation quality: type distribution, low confidence, staleness
-    - Graph coverage: orphan units (no edges)
-    - Index coverage: projects with units but no edges (graph not built)
     """
     from hafiz.core.projects import resolve_project
 
@@ -117,12 +113,10 @@ async def run_review(project: str | None = None) -> ReviewReport:
         # ── Gather stats (live rows only) ───────────────────────────────
         embedding_count = (await session.execute(_embedding_count(project))).scalar() or 0
         unit_count = (await session.execute(_unit_count(project))).scalar() or 0
-        edge_count = (await session.execute(_edge_count(project))).scalar() or 0
         ann_count = (await session.execute(_annotation_count(project))).scalar() or 0
 
         report.stats = {
             "units": unit_count,
-            "edges": edge_count,
             "embeddings": embedding_count,
             "annotations": ann_count,
         }
@@ -216,91 +210,6 @@ async def run_review(project: str | None = None) -> ReviewReport:
                 )
             )
 
-        # ── Graph checks ────────────────────────────────────────────────
-
-        # Orphan units — live units that appear on no live edge (in or out).
-        if unit_count > 0:
-            connected = (
-                select(Edge.source_unit_id.label("uid"))
-                .where(Edge.superseded_at.is_(None))
-                .union(
-                    select(Edge.target_unit_id.label("uid"))
-                    .where(Edge.superseded_at.is_(None))
-                    .where(Edge.target_unit_id.isnot(None))
-                )
-            ).subquery()
-
-            orphan_count = (
-                await session.execute(
-                    _unit_filter(
-                        select(func.count())
-                        .select_from(Unit)
-                        .where(Unit.valid_until.is_(None))
-                        .where(Unit.id.notin_(select(connected.c.uid))),
-                        project,
-                    )
-                )
-            ).scalar() or 0
-
-            # Name-only edges: the parser recorded a relation by target name
-            # but never resolved it to a unit (target_unit_id IS NULL). A high
-            # share of these is the usual reason orphan counts look alarming —
-            # the relations exist, they just aren't resolved into the graph.
-            unresolved_edges = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(Edge)
-                    .where(Edge.superseded_at.is_(None))
-                    .where(Edge.target_unit_id.is_(None))
-                )
-            ).scalar() or 0
-
-            if orphan_count > 0:
-                pct = round(orphan_count / unit_count * 100)
-                detail = (
-                    "Units with no resolved edges are isolated — they don't "
-                    "contribute to dependency analysis."
-                )
-                if unresolved_edges and edge_count:
-                    unresolved_pct = round(unresolved_edges / edge_count * 100)
-                    detail += (
-                        f" Note: {unresolved_pct}% of edges are name-only "
-                        "(target not yet resolved to a unit), which inflates "
-                        "this count — those relations exist but aren't linked."
-                    )
-                report.findings.append(
-                    ReviewFinding(
-                        category="graph",
-                        severity="suggestion" if pct > 30 else "info",
-                        title=f"{orphan_count} orphan units ({pct}%)",
-                        detail=detail,
-                        action="hafiz graph show <unit> --json  # check if relations are missing",
-                    )
-                )
-
-        # ── Coverage checks ─────────────────────────────────────────────
-
-        # Projects with units but no edges — the graph hasn't been built for
-        # them (extraction / structural linking not yet run). Per-project
-        # unit and edge presence is reached via the file → project axis.
-        proj_units = (await session.execute(_units_by_project())).all()
-        proj_edges = (await session.execute(_edges_by_project())).all()
-
-        edge_projects = {p for p, _ in proj_edges if p}
-        for proj, count in proj_units:
-            if proj and proj not in edge_projects:
-                report.findings.append(
-                    ReviewFinding(
-                        category="coverage",
-                        severity="suggestion",
-                        title=f"Project '{proj}' has {count} units but no edges",
-                        detail="No relations were extracted for this project. "
-                        "Graph queries won't return results.",
-                        action=f"hafiz extract export --project {proj} --limit 200"
-                        "  # then import semantic edges",
-                    )
-                )
-
         # Unit-to-embedding ratio (rough index coverage signal)
         if embedding_count > 0 and unit_count > 0:
             report.stats["unit_embedding_ratio"] = round(unit_count / embedding_count, 3)
@@ -310,8 +219,8 @@ async def run_review(project: str | None = None) -> ReviewReport:
 
 # ---------------------------------------------------------------------------
 # Query builders. ``project`` lives on ``files`` (units join through file_id),
-# on ``annotations`` directly, and is reached for edges/embeddings via their
-# unit. We scope by joining to ``files`` where needed.
+# on ``annotations`` directly, and is reached for embeddings via their unit.
+# We scope by joining to ``files`` where needed.
 # ---------------------------------------------------------------------------
 
 
@@ -344,19 +253,6 @@ def _unit_count(project: str | None):
     return _unit_filter(stmt, project)
 
 
-def _edge_count(project: str | None):
-    stmt = select(func.count()).select_from(Edge).where(Edge.superseded_at.is_(None))
-    if project:
-        stmt = stmt.where(
-            Edge.source_unit_id.in_(
-                select(Unit.id).where(
-                    Unit.file_id.in_(select(File.id).where(File.project == project))
-                )
-            )
-        )
-    return stmt
-
-
 def _embedding_count(project: str | None):
     stmt = (
         select(func.count())
@@ -373,26 +269,3 @@ def _embedding_count(project: str | None):
             )
         )
     return stmt
-
-
-def _units_by_project():
-    """Live unit counts grouped by their file's project."""
-    return (
-        select(File.project, func.count(Unit.id))
-        .join(File, Unit.file_id == File.id)
-        .where(Unit.valid_until.is_(None))
-        .where(File.project.isnot(None))
-        .group_by(File.project)
-    )
-
-
-def _edges_by_project():
-    """Live edge counts grouped by the source unit's file's project."""
-    return (
-        select(File.project, func.count(Edge.id))
-        .join(Unit, Edge.source_unit_id == Unit.id)
-        .join(File, Unit.file_id == File.id)
-        .where(Edge.superseded_at.is_(None))
-        .where(File.project.isnot(None))
-        .group_by(File.project)
-    )

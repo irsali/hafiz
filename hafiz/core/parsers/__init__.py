@@ -1,9 +1,13 @@
 """Parser Protocol, data types, and registry for the structural layer.
 
-Parsers turn a file's content into (units, edges). They are the deterministic
-half of Hafiz's knowledge extraction: AST / prose structure / generic
-whole-file fallback. Agents own the semantic half (annotations, concepts,
-patterns) and plug in via the separate `extract import` path.
+Parsers turn a file's content into units. They are the deterministic half of
+Hafiz's knowledge: prose structure for documents, and a whole-file fallback for
+everything else — code included. Agents own the semantic half (annotations) and
+write it with `observe` / `note`.
+
+The function-level code parsers and the call/import graph they fed were removed
+in 2026-11: agents never used them, and code stays searchable as whole files.
+See docs/roadmap.md, "Removed".
 
 Parsers are **capabilities, not toggles** — there is no enable/disable
 config. A file's language is handled by whichever parser is registered for
@@ -11,7 +15,7 @@ its extension; unregistered languages fall through to `WholeFileParser`.
 
 In-tree parsers register via module import. Third-party parsers plug in via
 the `hafiz.parsers` Python entry-point group — `pip install hafiz-parser-go`
-is how you turn on Go AST for that language; no config edit required.
+is how a third party adds a format; no config edit required.
 
 See workitems/done/structural-grounding.md for the design.
 """
@@ -35,9 +39,9 @@ logger = logging.getLogger("hafiz.parsers")
 class ParsedUnit:
     """One addressable unit inside a file.
 
-    `kind` is namespaced `domain.subtype` by convention (`code.function`,
-    `doc.heading`, `mail.message`, `file.raw`, …). `name` is qualified
-    within the file (e.g. `Foo.bar` for a method). Line numbers are
+    `kind` is namespaced `domain.subtype` by convention (`doc.heading`,
+    `mail.message`, `file.raw`, …). `name` is qualified within the file
+    (e.g. a heading path). Line numbers are
     1-indexed and inclusive. `content` is the raw body the ingest layer
     will hash and embed.
     """
@@ -52,28 +56,10 @@ class ParsedUnit:
 
 
 @dataclass
-class ParsedEdge:
-    """One relation between units.
-
-    `source_name` and `target_name` are parser-local identifiers (the
-    qualified names the parser emits for units). The edge resolver in
-    Phase 4 binds these to `unit_id`s; external targets (stdlib,
-    third-party imports) stay unresolved with `target_name` populated.
-    """
-
-    source_name: str
-    target_name: str
-    relation: str
-    evidence: str | None = None
-    line: int | None = None
-
-
-@dataclass
 class ParseResult:
     """A parser's output for one file."""
 
     units: list[ParsedUnit] = field(default_factory=list)
-    edges: list[ParsedEdge] = field(default_factory=list)
     language: str | None = None
 
 
@@ -88,20 +74,17 @@ class Parser(Protocol):
     expose `name`, `languages`, and `parse(path, content) -> ParseResult`.
 
     Attributes:
-        name: Stable identifier, e.g. `"python_ast"`, `"prose"`.
+        name: Stable identifier, e.g. `"prose"`, `"whole_file"`.
         languages: File extensions claimed (each with leading dot,
             lowercase, e.g. `[".py"]`), or the sentinel `["*"]` to
             register as the universal fallback.
     Optional, not part of the structural Protocol check:
-        source_tag: The `unit_revisions.source` / `edges.source` value the
-            store should record for this parser's output. A structural
-            parser that emits `code.*` edges declares
-            `source_tag = "ast"` as a plain class attribute (the AST layer
-            owns structure). Parsers that emit no edges (prose, whole-file)
-            omit it. The store reads it via `getattr` and falls back to a
-            name heuristic when absent, so it stays an opt-in convention —
-            it is deliberately NOT listed below, to keep `isinstance(p,
-            Parser)` from requiring it.
+        source_tag: The `unit_revisions.source` value the store should
+            record for this parser's output (`"ast"` or `"parser"`). The
+            store reads it via `getattr` and falls back to a name heuristic
+            when absent, so it stays an opt-in convention — it is
+            deliberately NOT listed below, to keep `isinstance(p, Parser)`
+            from requiring it.
     """
 
     name: str
@@ -179,22 +162,9 @@ def _build_registry() -> ParserRegistry:
 
     # In-tree parsers — imported here to avoid circular import at module load.
     from hafiz.core.parsers.prose import ProseParser
-    from hafiz.core.parsers.python_ast import PythonAstParser
     from hafiz.core.parsers.whole_file import WholeFileParser
 
-    registry.register(PythonAstParser())
     registry.register(ProseParser())
-
-    # JS/TS is an optional capability: its tree-sitter deps live in the
-    # `hafiz[js]` extra. Register only when the grammars imported cleanly,
-    # so a base install never carries the dependency and .js/.ts files fall
-    # through to WholeFileParser instead.
-    from hafiz.core.parsers.tree_sitter_js import AVAILABLE as _JS_AVAILABLE
-    from hafiz.core.parsers.tree_sitter_js import TreeSitterJsParser
-
-    if _JS_AVAILABLE:
-        registry.register(TreeSitterJsParser())
-
     registry.register(WholeFileParser())
 
     # Entry-point discovered parsers
@@ -245,7 +215,6 @@ def reset_registry() -> None:
 
 __all__ = [
     "ParsedUnit",
-    "ParsedEdge",
     "ParseResult",
     "Parser",
     "ParserRegistry",

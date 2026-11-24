@@ -1,6 +1,6 @@
 # Hafiz
 
-A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your codebase, extracts entities and relationships, stores observations, and provides semantic search from the terminal or any AI agent.
+A sovereign, CLI-first intelligence layer for your workspace. Hafiz indexes your docs and files, stores observations, and provides semantic search from the terminal or any AI agent.
 
 It runs on a **single local file** by default — no database server to install. Postgres + pgvector remains fully supported for shared and multi-machine installs.
 
@@ -56,10 +56,6 @@ pipx install git+https://github.com/irsali/hafiz.git
 
 # With GPU acceleration (requires CUDA drivers). `gpu` is an alias for `cuda`.
 pipx install "hafiz[cuda] @ git+https://github.com/irsali/hafiz.git"
-
-# With JavaScript / TypeScript AST parsing (tree-sitter)
-pipx install "hafiz[js] @ git+https://github.com/irsali/hafiz.git"
-# Extras combine: hafiz[cuda,js]
 
 # Upgrade to latest from GitHub
 pipx upgrade hafiz
@@ -214,7 +210,7 @@ hafiz migrate-backend --to postgresql+asyncpg://postgres:postgres@localhost:5432
 hafiz config set database.url postgresql+asyncpg://postgres:postgres@localhost:5432/hafiz
 ```
 
-Re-ingesting rebuilds code and docs — git is their source. It cannot recover
+Re-ingesting rebuilds docs and files — git is their source. It cannot recover
 your **annotations**: decisions, learnings, warnings have no source to
 re-derive from. `migrate-backend` copies every table verbatim (retention and
 tombstone timestamps included), verifies the row counts, and round-trips a
@@ -248,9 +244,6 @@ hafiz context "implement rate limiting" --workspace
 
 # Store a decision
 hafiz observe "JWT preferred over sessions" --type decision
-
-# Explore the knowledge graph (blast radius — what depends on this)
-hafiz graph impact AuthController
 ```
 
 ### 7. Connect an agent
@@ -417,20 +410,9 @@ Recall also shows each row's age (e.g. `3mo ago`) and dims results older than 90
 
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `hafiz query "<text>"` | Vector similarity search over code and docs | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j`, `--observations` |
-| `hafiz query "<text>" --observations` | Search observations (decisions, facts, learnings). Renamed from `--recall`; the alias still works one release. | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
-| `hafiz context "<task>"` | Synthesize relevant code, graph, and observations for a task | `--project/-p`, `--workspace/-w`, `--json/-j` |
-
-### Knowledge Graph
-
-| Command | Description | Key Flags |
-|---------|-------------|-----------|
-| `hafiz graph show <name>` | Show entity and its N-hop neighborhood (undirected walk) | `--depth/-d`, `--project/-p`, `--json/-j` |
-| `hafiz graph deps <name>` | What this entity depends on (outgoing walk) | `--depth/-d`, `--project/-p`, `--json/-j` |
-| `hafiz graph impact <name>` | Blast radius — what breaks if this entity changes (incoming walk) | `--depth/-d`, `--project/-p`, `--json/-j` |
-| `hafiz graph path <from> <to>` | Shortest directed path between two entities | `--project/-p`, `--json/-j` |
-| `hafiz graph rank` | Rank entities by centrality (`pagerank` / `betweenness` / `degree` / …) | `--metric/-m`, `--top/-n`, `--project/-p`, `--json/-j` |
-| `hafiz graph stats` | Overall graph health — counts, density, components, top-central nodes | `--top-central`, `--project/-p`, `--json/-j` |
+| `hafiz query "<text>"` | Vector similarity search over indexed docs and files | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j`, `--observations` |
+| `hafiz query "<text>" --observations` | Search observations (decisions, facts, learnings) | `--type/-t`, `--project/-p`, `--workspace/-w`, `--limit/-l`, `--json/-j` |
+| `hafiz context "<task>"` | Synthesize relevant docs, files, and observations for a task | `--project/-p`, `--workspace/-w`, `--json/-j` |
 
 ### Observations & Capture
 
@@ -464,14 +446,12 @@ Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` wi
 | `hafiz ingest <path>` | Index files into the knowledge base (chunk + embed + store) | `--project/-p`, `--git-hook`, `--prune`, `--json/-j` |
 | `hafiz watch <path>` | Real-time file watcher (re-indexes on change) | `--project/-p`, `--json/-j` |
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
-| `hafiz extract export` | Export chunks grouped by file as JSON (for agent extraction) | `--project/-p`, `--unextracted`, `--path`, `--limit/-l`, `--offset` |
-| `hafiz extract import` | Import extraction results from JSON (file or stdin) | `--file/-f`, `--project/-p` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file`, `--hooks` |
 | `hafiz agent install <name> --hooks` | Wire automatic transcript capture into the agent (`PreCompact` + `SessionEnd`). `claude-code` only. | `--local` |
 | `hafiz import claude-code [path]` | Import session transcripts. Accepts a directory or a single `.jsonl`. | `--project`, `--since`, `--dry-run`, `--no-embed`, `--from-hook` |
 
-**Language support.** Hafiz ships AST parsers for **Python** (stdlib) and **Markdown/prose**; everything else is indexed whole-file. **JavaScript & TypeScript** (`.js .jsx .mjs .cjs .ts .tsx .mts .cts`) get full AST parsing — functions, classes, methods, imports, calls — when you install the optional `hafiz[js]` extra (tree-sitter). Without it, JS/TS files still index as whole-file units; no error. Run `hafiz parsers list` to see what's active. More languages (Go, Rust, …) plug in the same way — see [docs/roadmap.md](docs/roadmap.md).
+**Language support.** Hafiz ships a prose parser for **Markdown** (`doc.heading` / `doc.paragraph` units). Everything else — including code — is indexed whole-file as one `file.raw` unit per file, still searchable by meaning with `hafiz query`. Run `hafiz parsers list` to see what's active.
 
 ### System
 
@@ -524,10 +504,8 @@ Hafiz captures every unhandled exception into `~/.cache/hafiz/errors.log` (NDJSO
 
 ### Type Values
 
-- **Chunk types** (for `query --type`): `code`, `doc`, `note`, `decision`, `transcript`
+- **Unit kinds** (for `query --type`): `doc.heading`, `doc.paragraph`, `file.raw`, …
 - **Observation types** (for `observe --type`, `journal --type`): `fact`, `decision`, `learning`, `pattern`, `warning`, `note`
-- **Entity types**: `class`, `function`, `module`, `api`, `table`, `concept`
-- **Relation types**: `calls`, `imports`, `inherits`, `depends_on`, `defines`
 
 ## Ignore Rules
 
@@ -588,47 +566,41 @@ Or lock it in `hafiz.toml` under `[embedding]`: `device = "cpu"` (never touch th
 Workspace Files
       |
       v
-  Chunker (LlamaIndex SentenceSplitter / CodeSplitter)
+  Parsers (prose for Markdown; whole-file for everything else)
       |
       v
   Embeddings (nomic-embed-text-v1.5 via fastembed, local ONNX)
       |
       v
-  Chunks table (text + 768-dim vectors)
+  Units + revisions + embeddings
       |
-      v (agent-driven extraction)
-  chunks export --> Agent (any LLM) --> extract import
-                                            |
-                                            v
-                                  Entities + Relations tables
-                                            |
-      All tables ----------------> PostgreSQL + pgvector
+      v (agent-authored)
+  Observations (decisions, learnings, warnings, …)
+      |
+      All tables ----------------> SQLite+vec or PostgreSQL + pgvector
                                       |
                                       v
                               hafiz CLI (Typer + Rich)
                                       |
               +-----------+-----------+-----------+
               |           |           |           |
-           Bilal     Claude Code    Aider     Any Agent
+         Claude Code   Cursor    Copilot    Any Agent
 ```
 
 ### Data Model
 
-- **Chunks**: Raw content split into searchable pieces, each with a 768-dim vector embedding
-- **Entities**: Extracted "nouns" (classes, functions, modules, APIs, tables, concepts)
-- **Relations**: Extracted "verbs" (calls, imports, inherits, depends_on, defines)
-- **Observations**: High-level facts, decisions, learnings, patterns, and warnings
+- **Units / revisions / embeddings**: Indexed content (docs split by heading/paragraph; other files as whole-file units), each with 768-dim vector embeddings
+- **Observations (annotations)**: High-level facts, decisions, learnings, patterns, and warnings
 
 ### Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | CLI | Typer + Rich |
-| Database | PostgreSQL + pgvector |
+| Database | SQLite + sqlite-vec (default) or PostgreSQL + pgvector |
 | ORM | SQLAlchemy 2.0 (async) |
 | Embeddings | fastembed (nomic-embed-text-v1.5, local ONNX) |
-| Chunking | LlamaIndex SentenceSplitter / CodeSplitter |
-| Extraction | Agent-driven (any LLM in session or piped via CLI) |
+| Parsing | Prose (Markdown) + whole-file fallback |
 | File Watching | watchdog |
 | Migrations | Alembic |
 | Config | Pydantic + TOML |
@@ -643,7 +615,7 @@ hafiz agent install cursor        # Cursor IDE
 hafiz agent install github-copilot # GitHub Copilot
 ```
 
-This writes a skill file to the agent's configuration directory (e.g. `~/.claude/CLAUDE.md` for Claude Code). The skill teaches the agent to use `hafiz context`, `hafiz query`, `hafiz graph`, and `hafiz observe` as part of its workflow.
+This writes a skill file to the agent's configuration directory (e.g. `~/.claude/CLAUDE.md` for Claude Code). The skill teaches the agent to use `hafiz context`, `hafiz query`, and `hafiz observe` as part of its workflow.
 
 | Flag | Description |
 |------|-------------|
@@ -656,10 +628,11 @@ If the target file already exists and was not installed by hafiz, the command sk
 `hafiz ingest --json` emits newline-delimited JSON progress events, useful for agents and scripts:
 
 ```jsonl
-{"event":"chunking","status":"done","chunks":71,"files":38}
-{"event":"embedding","status":"progress","done":64,"total":71}
-{"event":"storing","status":"done","stored":71,"files":38}
-{"event":"complete","chunks":71,"files":38,"entities":0,"relations":0}
+{"event":"walk","status":"start","path":"/repo","head":"3f2c…","base":null,"diff_driven":false}
+{"event":"walk","status":"done","files":38}
+{"event":"index","status":"start","total":38}
+{"event":"index","status":"progress","path":"/repo/README.md","parser":"prose","units_seen":24,"revisions_created":24,"embeddings_written":24, …}
+{"event":"complete","files_processed":38,"units_seen":412,"revisions_created":412,"embeddings_written":430,"units_tombstoned":0,"files_tombstoned":0,"commits_reconciled":0,"failures":[]}
 ```
 
 All agents should use `--json` for machine-readable output. The recommended workflow:
@@ -688,13 +661,10 @@ hafiz/
   commands/            -- Presentation layer (thin — delegate to core/)
     agent.py           -- hafiz agent install/uninstall/list
     capture.py         -- hafiz capture (transcripts / multi-page dumps)
-    chunks.py          -- chunk export logic (used by extract export)
     context.py         -- hafiz context
     distill.py         -- hafiz distill (promotable-candidate scanner)
     embedding.py       -- hafiz embedding status/retry
     errors.py          -- hafiz errors list/show/clear
-    extract.py         -- hafiz extract export/import
-    graph.py           -- hafiz graph show/deps/impact/path/rank/stats
     hooks.py           -- hafiz hooks install
     ingest.py          -- hafiz ingest (with JSON progress)
     journal.py         -- hafiz journal (time-bounded digest)
@@ -719,14 +689,12 @@ hafiz/
     durations.py       -- Human-readable duration parser (30d, 2w, 6m, 1y)
     embeddings.py      -- fastembed wrapper
     error_log.py       -- ~/.cache/hafiz/errors.log writer + recognizer rules
-    extractor.py       -- Agent-driven entity/relation extraction (v2 contract)
     git_context.py     -- Per-observation git HEAD capture
     git_hooks.py       -- Git hook utilities
-    graph_analysis.py  -- Centrality metrics + graph stats
     host_probe.py      -- RAM / CPU / GPU / ONNX provider detection
     journal.py         -- Time-bounded digest assembly
     observations.py    -- Observations store & search (supersession)
-    parsers/           -- AST parsers (Python, etc.) + registry
+    parsers/           -- Prose + whole-file parsers + registry
     probers.py         -- Per-tunable probers driving doctor --probe
     review.py          -- Self-review engine (knowledge quality analysis)
     search.py          -- Vector similarity search + scoping

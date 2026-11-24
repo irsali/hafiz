@@ -61,7 +61,7 @@ class SearchResult:
     id: str  # embedding row id
     unit_id: str
     unit_name: str
-    kind: str  # namespaced: code.function, doc.heading, file.raw, …
+    kind: str  # namespaced: doc.heading, file.raw, …
     content: str  # the embedded part (may be a slice of the unit body)
     source_file: str
     line_start: int | None

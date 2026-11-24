@@ -66,8 +66,7 @@ def test_query_help():
     assert "json" in result.output.lower()
     assert "--observations" in result.output
     assert "--source" in result.output
-    # --recall is the deprecated alias; it works but is hidden from help.
-    assert "--recall" not in result.output
+    assert "--recall" not in result.output  # the old alias is gone
 
 
 def test_serve_status_help():
@@ -172,13 +171,6 @@ def test_export_help_lists_flags():
     assert "--out" in result.output
 
 
-def test_export_help_distinguishes_from_extract_export():
-    """The contract collision with `extract export` must be documented."""
-    result = runner.invoke(app, ["export", "--help"])
-    assert result.exit_code == 0
-    assert "extract export" in result.output
-
-
 def test_export_rejects_bad_format(tmp_path):
     result = runner.invoke(
         app, ["export", "--format", "xml", "--out", str(tmp_path / "e"), "--json"]
@@ -228,7 +220,7 @@ def test_query_rejects_overlapping_domain_filters():
 
 
 def test_query_rejects_dotted_domain():
-    result = runner.invoke(app, ["query", "test", "--include-domain", "code.function"])
+    result = runner.invoke(app, ["query", "test", "--include-domain", "doc.heading"])
     assert result.exit_code == 2
     assert "single token" in result.output.lower()
 
@@ -288,22 +280,6 @@ def test_review_help():
     assert "--json" in result.output
 
 
-def test_extract_export_help():
-    result = runner.invoke(app, ["extract", "export", "--help"])
-    assert result.exit_code == 0
-    # v2 export surfaces AST-known units/edges; the v1 chunk-oriented
-    # flags (--unextracted, --path, --offset) are gone.
-    assert "--limit" in result.output
-    assert "--pretty" in result.output
-    assert "--project" in result.output
-
-
-def test_extract_import_help():
-    result = runner.invoke(app, ["extract", "import", "--help"])
-    assert result.exit_code == 0
-    assert "--file" in result.output
-
-
 def test_recall_command_is_source_layer_recall():
     """``hafiz recall`` is the source-layer entry point (messages from a
     session/communication). Annotation search lives under
@@ -319,22 +295,21 @@ def test_recall_command_is_source_layer_recall():
 
 def test_query_observations_flag_replaces_recall():
     """`query --observations` searches annotations (the wisdom layer). The
-    old `--recall` is a hidden, deprecation-warned alias for one release;
-    the top-level `hafiz recall` now owns the word."""
+    old `--recall` alias served its one deprecation release and is gone; the
+    top-level `hafiz recall` owns the word."""
     result = runner.invoke(app, ["query", "--help"])
     assert result.exit_code == 0
     assert "--observations" in result.output
-    assert "--recall" not in result.output  # alias is hidden
+    rejected = runner.invoke(app, ["query", "anything", "--recall"])
+    assert rejected.exit_code == 2
+    assert "No such option" in rejected.output
 
 
-def test_query_recall_alias_still_works_with_warning():
-    """The deprecated `--recall` alias still dispatches to annotation search
-    and prints a one-line deprecation warning. Output stream is merged in
-    this Typer/Click version, so we assert on the combined output."""
-    result = runner.invoke(app, ["query", "anything", "--recall", "--json"])
-    # The command may exit non-zero if no DB is reachable, but the
-    # deprecation notice fires before dispatch regardless.
-    assert "--recall is deprecated" in result.output
+@pytest.mark.parametrize("command", ["graph", "extract"])
+def test_the_code_index_commands_are_gone(command):
+    """Removed 2026-11 with the code index (see docs/roadmap.md, "Removed")."""
+    assert command not in runner.invoke(app, ["--help"]).output.split()
+    assert runner.invoke(app, [command, "--help"]).exit_code == 2
 
 
 def test_doctor_command_exists():
@@ -349,7 +324,7 @@ def test_doctor_command_exists():
 
 
 def test_removed_chunks_command():
-    """chunks export is now extract export, standalone chunks should not exist."""
+    """The old `chunks` command group is gone (and so is its successor, `extract`)."""
     result = runner.invoke(app, ["chunks", "export", "--help"])
     assert result.exit_code != 0
 
@@ -893,8 +868,8 @@ def test_review_runs_clean_on_v5_schema():
     """`hafiz review --json` must produce a well-formed report, not crash.
 
     Regression guard: review.py used to query removed ORM tables and died
-    with ``ArgumentError: ...got Chunk``. It now reads units/edges/
-    embeddings/annotations.
+    with ``ArgumentError: ...got Chunk``. It now reads units/embeddings/
+    annotations.
 
     Synchronous on purpose: ``runner.invoke`` drives the CLI's own
     ``asyncio.run``, which cannot nest inside a running event loop.
@@ -908,9 +883,9 @@ def test_review_runs_clean_on_v5_schema():
     assert result.exit_code == 0, result.output
 
     payload = json.loads(result.output)
-    # Shape contract: stats counts the four v5 knowledge tables; findings
-    # and summary are always present.
-    for key in ("units", "edges", "embeddings", "annotations"):
+    # Shape contract: stats counts the knowledge tables; findings and
+    # summary are always present.
+    for key in ("units", "embeddings", "annotations"):
         assert key in payload["stats"], payload["stats"]
         assert isinstance(payload["stats"][key], int)
     assert isinstance(payload["findings"], list)

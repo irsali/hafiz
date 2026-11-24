@@ -14,7 +14,7 @@ Every tool and agent you use — Claude Code, Cursor, Copilot, Aider, a research
 >
 > **Dropped from scope (as of 2026-04-21):** REST API layer. Hafiz's primary contract is `hafiz` + `--json`; there is no HTTP surface and none planned.
 >
-> **MCP reinstated (2026-09-06), reversing half of that decision.** `hafiz mcp` serves the knowledge layer to agents that *cannot* shell out — Cursor chat, desktop and hosted clients — over **stdio only**: no HTTP, no SSE, no listening socket. It is 14 tools giving full capability parity of the knowledge surface, generated from one registry keyed to the same core functions the CLI calls, so it cannot drift from the CLI contract. Install/admin, destructive and long-running ingest commands are deliberately absent: an MCP client calls tools without asking anyone, so those stay on the CLI where a human is present. Needs the optional extra — `pip install hafiz[mcp]`.
+> **MCP reinstated (2026-09-06), reversing half of that decision.** `hafiz mcp` serves the knowledge layer to agents that *cannot* shell out — Cursor chat, desktop and hosted clients — over **stdio only**: no HTTP, no SSE, no listening socket. It is 13 tools giving full capability parity of the knowledge surface, generated from one registry keyed to the same core functions the CLI calls, so it cannot drift from the CLI contract. Install/admin, destructive and long-running ingest commands are deliberately absent: an MCP client calls tools without asking anyone, so those stay on the CLI where a human is present. Needs the optional extra — `pip install hafiz[mcp]`.
 >
 > This file is the **product vision + future backlog**. It is *not* the development guide — see [CLAUDE.md](../CLAUDE.md) for conventions, layout, and how to add a command. [commands.md](commands.md) is the source of truth for command shapes and flags.
 
@@ -55,25 +55,20 @@ New content types are parsers, not schema changes. New agents are CLI callers, n
               │  │(identity│ │ (versioned│  │
               │  │ +kind)  │ │  bodies)  │  │
               │  └─────────┘ └───────────┘  │
+              │  ┌───────────┐ ┌─────────┐  │
+              │  │Annotations│ │  Files  │  │
+              │  │ (meaning) │ │ (roots) │  │
+              │  └───────────┘ └─────────┘  │
               │  ┌─────────┐ ┌───────────┐  │
-              │  │  Edges  │ │Annotations│  │
-              │  │(struct+ │ │ (meaning, │  │
-              │  │semantic)│ │ decisions)│  │
+              │  │ Commits │ │Embeddings │  │
+              │  │(git axis│ │ (vector   │  │
+              │  │         │ │  search)  │  │
               │  └─────────┘ └───────────┘  │
-              │  ┌─────────┐ ┌───────────┐  │
-              │  │  Files  │ │  Commits  │  │
-              │  │ (roots) │ │ (git axis)│  │
-              │  └─────────┘ └───────────┘  │
-              │  ┌───────────────────────┐  │
-              │  │      Embeddings       │  │
-              │  │  (vector search idx)  │  │
-              │  └───────────────────────┘  │
               └────────────┬────────────────┘
                            │
                     ┌──────▼──────┐
                     │  BRAIN CORE │  (Python Library)
                     │  pgvector   │  - Vector search
-                    │  + NetworkX │  - Graph traversal & centrality
                     │  + Custom   │  - Context synthesis
                     └──────┬──────┘
                            │
@@ -92,9 +87,9 @@ New content types are parsers, not schema changes. New agents are CLI callers, n
 
 ## Data Model
 
-**Seven tables**, in one database — an embedded SQLite file with `sqlite-vec` by default, or PostgreSQL with `pgvector` for a shared install. The schema, the CLI surface, the `--json` shapes and the agent contract are identical on both; [hafiz/core/dialect.py](../hafiz/core/dialect.py) is the one place that knows which backend is in use, and the full test suite runs against each. Alembic owns the schema — see [alembic/versions/](alembic/versions/). Move a store between backends with `hafiz migrate-backend`.
+**Six knowledge-layer tables**, in one database — an embedded SQLite file with `sqlite-vec` by default, or PostgreSQL with `pgvector` for a shared install. The schema, the CLI surface, the `--json` shapes and the agent contract are identical on both; [hafiz/core/dialect.py](../hafiz/core/dialect.py) is the one place that knows which backend is in use, and the full test suite runs against each. Alembic owns the schema — see [alembic/versions/](alembic/versions/). Move a store between backends with `hafiz migrate-backend`.
 
-Built on two invariants. *Identity is stable, body evolves* — every fact that can change over time is an immutable **unit** with append-only **revisions**; branch switches, commit hops, and edits become diffs, never destructive overwrites. *Bodies are canonical, embeddings are an index* — the vector search layer sits in a separate `embeddings` table (1:N from revisions), so oversized units (long docs, huge functions, whole-file fallbacks) get multiple embedded parts while small units get one. Agent annotations reference units by stable identity, surviving body changes without orphaning; editing one paragraph of a ten-paragraph note re-embeds one part, not ten.
+Built on two invariants. *Identity is stable, body evolves* — every fact that can change over time is an immutable **unit** with append-only **revisions**; branch switches, commit hops, and edits become diffs, never destructive overwrites. *Bodies are canonical, embeddings are an index* — the vector search layer sits in a separate `embeddings` table (1:N from revisions), so oversized units (long docs, whole-file fallbacks) get multiple embedded parts while small units get one. Agent annotations reference units by stable identity, surviving body changes without orphaning; editing one paragraph of a ten-paragraph note re-embeds one part, not ten.
 
 ```sql
 -- ─── Files — one row per file ever seen in the project ─────
@@ -102,16 +97,15 @@ files          (id, project, path, language, first_seen_commit,
                 last_seen_commit, valid_until, metadata jsonb)
 
 -- ─── Units — stable identity of an addressable thing ──────
--- Functions, classes, Markdown headings, config blocks, mail
--- messages, chat turns — anything parseable. `kind` is
--- namespaced by convention: code.function, code.class,
--- doc.heading, mail.message, chat.turn, …
+-- Markdown headings/paragraphs, whole files, mail messages —
+-- anything parseable. `kind` is namespaced by convention:
+-- doc.heading, doc.paragraph, file.raw, mail.message, …
 units          (id, file_id, kind, name, parent_name, identity_key UNIQUE,
                 first_seen_commit, last_seen_commit, valid_until)
 
 -- ─── Unit revisions — versioned body (append-only) ─────────
 -- Partial unique: ≤1 current revision per unit.
--- source ∈ {ast, parser, agent, user}.
+-- source ∈ {ast, parser, agent, user} (ast: a third-party structural parser via the plugin entry point).
 unit_revisions (id, unit_id, content, content_hash,
                 line_start, line_end, commit_hash, source,
                 observed_at, superseded_at, superseded_by)
@@ -119,7 +113,7 @@ unit_revisions (id, unit_id, content, content_hash,
 -- ─── Embeddings — vector search index over revisions ──────
 -- 1:N from unit_revisions (UNIQUE on (unit_revision_id, part_index),
 -- FK cascade on revision delete). Small units: one row per revision.
--- Oversized units (long docs, huge functions, whole-file fallback):
+-- Oversized units (long docs, whole-file fallback):
 -- many rows with token spans. Each part is content-hashed independently,
 -- so partial edits re-embed only the affected parts. Vector search
 -- hits this table and joins back to revisions → units → files.
@@ -127,17 +121,9 @@ embeddings     (id, unit_revision_id, part_index, content,
                 content_hash, embedding vector(768),
                 token_span_start, token_span_end)
 
--- ─── Edges — relations between units (append-only) ────────
--- source ∈ {ast, agent, user}. target_name kept for unresolved
--- or external references (e.g. stdlib, third-party imports).
-edges          (id, source_unit_id, target_unit_id, target_name,
-                relation, source, evidence, weight, commit_hash,
-                observed_at, superseded_at)
-
 -- ─── Annotations — decisions, facts, learnings ────────────
--- Today's "observations", renamed. May link to a unit (`unit_id`)
--- or float free. Temporal primitives (`valid_from`, `valid_until`,
--- `supersedes_id`) unchanged.
+-- May link to a unit (`unit_id`) or float free. Temporal primitives
+-- (`valid_from`, `valid_until`, `supersedes_id`) unchanged.
 annotations    (id, content, embedding vector(768), kind, source,
                 project, tags text[], confidence, unit_id,
                 session_id, task, commit_hash, valid_from,
@@ -147,9 +133,9 @@ annotations    (id, content, embedding vector(768), kind, source,
 commits        (hash PK, project, author, committed_at, summary)
 ```
 
-**Ownership rule.** Parsers own structure (entities, imports, calls, inherits — `source='ast'`); agents own meaning (concepts, patterns, decisions, workarounds — `source='agent'`). `hafiz extract import` rejects AST-territory kinds and relation types. Non-duplication is enforced at the data layer.
+**Ownership rule.** Parsers own indexed content (prose split into `doc.*`; everything else as `file.raw`); agents own meaning (concepts, patterns, decisions, workarounds) via `hafiz observe` / `hafiz note`.
 
-**Indexes in place** (post-restructure): `project` / `path` on files; `identity_key` / `kind` / `file_id` on units; `unit_id` / `content_hash` / `commit_hash` on unit_revisions with a partial unique for the current revision; `unit_revision_id` on embeddings with a unique on `(unit_revision_id, part_index)`; `source_unit_id` / `target_unit_id` / `relation` on edges; `kind` / `unit_id` / `commit_hash` on annotations; `project` / `committed_at` on commits.
+**Indexes in place** (post-restructure): `project` / `path` on files; `identity_key` / `kind` / `file_id` on units; `unit_id` / `content_hash` / `commit_hash` on unit_revisions with a partial unique for the current revision; `unit_revision_id` on embeddings with a unique on `(unit_revision_id, part_index)`; `kind` / `unit_id` / `commit_hash` on annotations; `project` / `committed_at` on commits.
 
 **Indexes deferred until scale demands them:** `ivfflat` on `embeddings.embedding` and `annotations.embedding`; GIN on `annotations.tags`. Trigger to add them: second-brain corpora (millions of units across domains) or the first noticeable latency regression.
 
@@ -174,23 +160,11 @@ hafiz prune         [--project] [--dry-run] [--json]
 
 # ─── SEARCH ───
 hafiz query   "<text>" [--project|--workspace] [--type] [--limit] [--json]
-hafiz query   "<text>" --observations [--type] …   # search annotations instead of chunks (was --recall)
-hafiz context "<task>" [--project|--workspace] [--json]   # chunks + graph + observations
-
-# ─── GRAPH (NetworkX-backed) ───
-hafiz graph show   <entity> [--depth] [--project] [--json]
-hafiz graph deps   <entity> [--depth] [--project] [--json]  # outgoing walk
-hafiz graph impact <entity> [--depth] [--project] [--json]  # incoming walk (blast radius)
-hafiz graph path   <src> <tgt> [--project] [--json]         # shortest directed path
-hafiz graph rank   [--metric pagerank|betweenness|degree|in_degree|out_degree] [--top]
-hafiz graph stats  [--project] [--top-central] [--json]
+hafiz query   "<text>" --observations [--type] …   # search annotations instead of chunks
+hafiz context "<task>" [--project|--workspace] [--json]   # indexed content + observations
 
 # ─── OBSERVE ───
 hafiz observe "<text>" [--type] [--source] [--project] [--tags] [--confidence] [--json]
-
-# ─── EXTRACT (agent-driven; no API key) ───
-hafiz extract export [--project] [--path] [--unextracted] [--limit] [--offset]
-hafiz extract import [--file] [--project]         # or stdin
 
 # ─── REVIEW (Layer 2 — evolving) ───
 hafiz review [--project] [--json]
@@ -220,11 +194,12 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 - **Deviation (major):** Extraction is **agent-driven**, not LlamaIndex `PropertyGraphIndex` / `SchemaLLMPathExtractor`. `extract export` dumps chunks grouped by file → the in-session agent produces the JSON → `extract import` stores it. No API key is ever required; the direct-LLM path was removed in `9440b3f`.
 - **Rename:** `graph dependents` (in the original plan) shipped as `graph impact`. Same behaviour — incoming walk — clearer framing as "blast radius."
 - **Deviation:** The original "hybrid search with `--depth`" on `query` is delivered by the dedicated `hafiz context` command (Phase 3), which combines chunks + graph + observations. `query` stayed focused on vector similarity.
+- **Later removed (2026-11):** the whole graph + extract surface — see [Removed — Code index](#code-index-2026-11).
 
 ### Phase 3 — The Wisdom Layer
 - [x] `observe` with `--type`, `--source`, `--project`, `--tags`, `--confidence`
-- [x] `query --recall` (semantic search over observations only) with `--type` / `--project` filters
-- [x] `hafiz context "<task>"` — the killer feature. Markdown + JSON bundle: relevant chunks, graph neighbours (PageRank-scored), matching observations, project distribution
+- [x] `query --observations` (semantic search over observations only; shipped as `--recall`, renamed, alias later removed) with `--type` / `--project` filters
+- [x] `hafiz context "<task>"` — the killer feature. Markdown + JSON bundle: relevant indexed content + matching observations (graph neighbourhood removed 2026-11)
 - **Deviation:** No Mem0 dependency — own `observations` table + pgvector, as planned in principle.
 
 ### Phase 4 — The Librarian
@@ -241,15 +216,27 @@ Phase numbering preserved for history. Deviations from the original plan are cal
 
 ### Phase 6 — Structural Grounding (AST layer + greenfield schema + second-brain scope)
 See [workitems/done/structural-grounding.md](../workitems/done/structural-grounding.md) for the full design + closure record.
-- [x] **Greenfield seven-table schema** — `files`, `units`, `unit_revisions`, `embeddings`, `edges`, `annotations`, `commits`. Identity/body/embedding split into three concerns; partial edits to long documents re-embed only the changed parts.
-- [x] **Parser Protocol + concrete parsers** — `python_ast`, `prose` (Markdown), `whole_file` fallback. Third-party parsers plug in via Python entry points (`hafiz.parsers` group); no config edits required.
-- [x] **JavaScript / TypeScript parser** — `tree_sitter_js` (tree-sitter), covering `.js .jsx .mjs .cjs .ts .tsx .mts .cts`. Same contract as `python_ast` (`code.module/class/function/method`; `imports`/`inherits`/`calls`). Optional `hafiz[js]` extra — self-registers only when installed; otherwise JS/TS falls through to `whole_file`. First tree-sitter parser; proves the additive path for Go/Rust/etc.
+- [x] **Greenfield schema** — originally seven tables including `edges`; today six knowledge-layer tables after the 2026-11 code-index removal (`files`, `units`, `unit_revisions`, `embeddings`, `annotations`, `commits`). Identity/body/embedding split into three concerns; partial edits to long documents re-embed only the changed parts.
+- [x] **Parser Protocol + concrete parsers** — `prose` (Markdown) and `whole_file` fallback remain. Third-party parsers plug in via Python entry points (`hafiz.parsers` group); no config edits required.
+- [x] ~~**JavaScript / TypeScript parser**~~ — **removed 2026-11** with the code index (was optional `hafiz[js]` / `tree_sitter_js`). Code files index as `file.raw` via whole-file.
 - [x] **Diff-driven ingest** — parser-driven, hash-aligned, skips unchanged units. Re-ingests parse only files changed since `last_seen_commit`.
-- [x] **Edge resolver + graph rewire** — `hafiz graph show / deps / impact / path / rank / stats` reshaped onto the new edges table; NetworkX caching layer.
+- [x] ~~**Edge resolver + graph rewire**~~ — **removed 2026-11** with the code index (`hafiz graph` and the `edges` table).
 - [x] **Git-axis as first class** — `commits` table populated on every ingest; rewrite resilience (rebase/amend/squash/force-push) via `post-rewrite` hook + reconcile-on-ingest. `commit_hash` advisory, never load-bearing.
-- [x] **Agent contract v2** — `skills.md` v3 → v7. `hafiz extract export/import` enforce non-duplication: AST-territory kinds/relations rejected; structural facts have one owner (the parser).
+- [x] ~~**Agent extraction v2**~~ — **removed 2026-11** (`hafiz extract export/import`). Agents record meaning with `observe` / `note` only.
 - [x] **Observability** — `hafiz parsers list`, `hafiz status --diagnose` extended with parser coverage and tombstone counts.
-- **Carry-overs (own follow-ups, not Phase 6 debt):** `hafiz capture` / `watch` / `prune` / `context` still raise on use against the new schema (Phase 3b fallbacks accepted by design); `hafiz review` rewire owned by [self-review-curation-loop](../workitems/active/self-review-curation-loop.md); README "install additional language parsers via pip" tutorial pending.
+- **Carry-overs (own follow-ups, not Phase 6 debt):** `hafiz review` rewire owned by [self-review-curation-loop](../workitems/active/self-review-curation-loop.md).
+
+---
+
+## Removed
+
+### Code index (2026-11)
+
+Removed the Python AST parser (`python_ast`), the JS/TS tree-sitter parser (`tree_sitter_js`), the call/import/inherits graph they produced, `hafiz graph` (show/deps/impact/path/rank/stats), `hafiz extract` (export/import), the `hafiz_graph` MCP tool, the `edges` table, and deps `networkx` / `scipy` / `anthropic` / optional `hafiz[js]`. Code files are still indexed whole-file as `file.raw` and remain searchable with `hafiz query`. Migration `0011` deletes stored `code.*` units and clears last-seen commits so the next ingest of affected projects re-reads every file once (unchanged docs skipped by hash).
+
+**Why (measured over 120 days of agent sessions):** `graph` and `extract` were run 0 times (versus hundreds of `observe` and dozens of `query`); the instruction to run `graph impact` before every change was never followed; code was about 8% of stored units and no note was ever attached to a code unit; the graph cost every install networkx and scipy. Agents read code with grep/read tools and git, which are always current, while the index went stale fastest exactly where work was happening.
+
+**Reopen only if** agents repeatedly ask structural questions ("who calls X", "what breaks if I change this") that grep cannot answer — and then design from that need rather than restoring the old parsers.
 
 ---
 
@@ -268,7 +255,6 @@ Items actively on deck — a mix of leftovers from the original roadmap and newe
 
 Ideas, not committed — most are unblocked by the Structural Grounding work (Phase 6).
 
-- [ ] **More tree-sitter parsers** — Go, Rust, and other languages as drop-in `Parser` Protocol implementations, following the `tree_sitter_js` pattern (JS/TS shipped in Phase 6). No schema churn.
 - [ ] **Domain parsers — the second-brain build-out** — mail (`mbox`, Gmail export), chat (Slack/Discord exports), clip (read-it-later, Instapaper), research (Zotero), meeting (transcripts), terminal (shell history), OCR'd screenshots. Each is a parser, not a migration.
 - [ ] **Code-history reconstruction** — `hafiz history <unit>` to show revisions across commits; `--at-commit <sha>` on queries. Schema already supports it after Phase 6; this is surface work.
 - [ ] **Personal-tier privacy** — encryption-at-rest, per-project access modes. Triggered by the first non-code domain landing.
@@ -299,14 +285,14 @@ Ideas, not committed — most are unblocked by the Structural Grounding work (Ph
 - **Standalone project.** Hafiz is an independent tool — not coupled to any specific agent. Any agent that can run a CLI command can use it.
 - **Two-layer stability.** Layer 1 ([skills.md](../hafiz/data/agents/skills.md)) is the stable contract with every agent; Layer 2 (`hafiz review` and friends) is free to iterate. See [CLAUDE.md](../CLAUDE.md).
 - **Everything is configurable.** DB connection, embedding model, workspace path — all via `hafiz.toml` or environment variables. No hardcoded values.
-- **Library-first, not library-captured.** We lean on LlamaIndex for chunking primitives and fastembed for embeddings, but we own the storage, search, graph, and CLI layers in plain SQL + NetworkX. Wrappers earn their place.
-- **No API-key-dependent paths.** Entity/relation extraction is agent-driven by design (direct-LLM path removed in `9440b3f`). The agent *is* the brain.
-- **Workspace = Unit of Knowledge.** A "workspace" is a root directory (like a VSCode workspace) that may contain multiple projects. Hafiz indexes the workspace and tags chunks/entities by project. `--workspace` scopes to sibling projects in the parent directory.
+- **Library-first, not library-captured.** We lean on fastembed for embeddings, but we own the storage, search, and CLI layers in plain SQL. Wrappers earn their place.
+- **No API-key-dependent paths.** Agents record meaning with `hafiz observe` / `hafiz note` (direct-LLM extraction path removed in `9440b3f`). The agent *is* the brain.
+- **Workspace = Unit of Knowledge.** A "workspace" is a root directory (like a VSCode workspace) that may contain multiple projects. Hafiz indexes the workspace and tags units by project. `--workspace` scopes to sibling projects in the parent directory.
 - **CLI surface is the product.** Human output must be scannable; `--json` shapes must be stable and documented in [commands.md](commands.md).
 - **Identity vs body is a first-class split.** Every fact that can evolve over time has a stable identity and append-only revisions. Branch switches, commit hops, and edits are diffs; nothing is destructively overwritten. Agent annotations reference units by identity, so they survive body changes without orphaning.
-- **Parsing is a Protocol, not a monolith.** New content types — new languages, new domains — are additive `Parser` implementations against a stable shape. The schema, ingest pipeline, graph, and query surface are language- and domain-agnostic by construction. Parsers register via Python entry points (`hafiz.parsers` group); installing a parser *is* enabling AST for that language — no config knob, no flag. Unregistered languages fall through to the whole-file fallback.
-- **Domain-agnostic by design.** Units don't know they're code. `code.function`, `doc.heading`, `mail.message`, `chat.turn` all live in one table with one query surface. A new domain is a parser, never a schema migration.
-- **Non-duplication at the data layer.** Parsers own structural facts (`source='ast'`); agents own semantic facts (`source='agent'`). The import path rejects duplicates; ownership is enforced, not requested.
+- **Parsing is a Protocol, not a monolith.** New content types — new domains — are additive `Parser` implementations against a stable shape. The schema, ingest pipeline, and query surface are language- and domain-agnostic by construction. Parsers register via Python entry points (`hafiz.parsers` group). Unregistered types fall through to the whole-file fallback.
+- **Domain-agnostic by design.** Units don't know they're code. `doc.heading`, `file.raw`, `mail.message` all live in one table with one query surface. A new domain is a parser, never a schema migration.
+- **Ownership at the data layer.** Parsers own indexed content; agents own meaning via annotations.
 
 ---
 
@@ -316,15 +302,16 @@ Ideas, not committed — most are unblocked by the Structural Grounding work (Ph
 |---|---|---|
 | 1 | Database | **Dedicated DB** inside the existing `postgres` container (port 5432). Separate database name (`hafiz`). |
 | 2 | Embedding model | **nomic-embed-text-v1.5** (768 dims, fastembed ONNX, local). GPU via `fastembed-gpu` extras. |
-| 3 | Entity extraction | **Agent-driven.** `extract export` → agent → `extract import`. No LLM API key required. *(Revised 2026-04 from the original "LlamaIndex + Claude" plan.)* |
+| 3 | Entity extraction | **Removed 2026-11** with the code index. Agents record meaning with `observe` / `note` only. *(Had been agent-driven `extract export` → agent → `extract import` since 2026-04.)* |
 | 4 | Scope | **Workspace-scoped.** One Hafiz instance per workspace; a workspace contains one or more projects. `--workspace` fans out across siblings. |
 | 5 | ChromaDB | **Hard cutover** when migration lands. No dual-read. |
 | 6 | Stability model | **Two layers.** `skills.md` is the stable agent contract; `review` and friends evolve freely in Layer 2. |
-| 7 | Structural extraction | **AST-first for code, agents for meaning.** Parsers own structure (entities, calls, imports, inherits — `source='ast'`); agents own concepts, patterns, decisions, workarounds (`source='agent'`). Non-duplication enforced at the data layer; `hafiz extract import` rejects AST-territory facts. *(Decided 2026-04-21.)* |
-| 8 | Schema reshape | **Greenfield, one-shot.** Pre-1.0 grant: old tables (`chunks` / `entities` / `relations` / `observations`) are dropped and replaced with `units` / `unit_revisions` / `embeddings` / `edges` / `annotations` / `files` / `commits`. Identity, body, and embedding are separated (embeddings are 1:N from revisions, enabling partial re-embedding for oversized units). Users re-ingest after upgrade. No backfill shim. *(Decided 2026-04-21.)* |
-| 9 | Product scope | **Second brain for the whole system, not just code.** Code is the first workload; mail, chat, research, clip, meeting, terminal, OCR parsers are additive with zero schema change. `units.kind` is namespaced `domain.subtype` by convention (`code.function`, `doc.heading`, `mail.message`, …). *(Decided 2026-04-21.)* |
-| 10 | Agent contract | **Hard v2 bump** to match the new schema. `extract export/import` schemas change; `skills.md` is versioned. `hafiz agent install` warns on out-of-date splice. One-release deprecation window. *(Decided 2026-04-21.)* |
-| 11 | AST configurability | **Capability-based, not toggleable.** No `[parsers] enabled/disabled` config knob. A file's language is handled by whichever parser is registered; unregistered languages fall through to `WholeFileParser` (file = one unit), and agent extraction fills in structural annotations. Third-party parsers register via the `hafiz.parsers` Python entry-point group — `pip install hafiz-parser-go` is how you turn on Go AST. `hafiz parsers list` exposes what's active. *(Decided 2026-04-21.)* |
+| 7 | Structural extraction | **Superseded 2026-11.** Code AST + call graph removed; see [Removed — Code index](#code-index-2026-11). Parsers own indexed content (prose + whole-file); agents own meaning. *(Original 2026-04-21 decision was AST-first for code.)* |
+| 8 | Schema reshape | **Greenfield, one-shot.** Pre-1.0 grant: old tables (`chunks` / `entities` / `relations` / `observations`) dropped for `units` / `unit_revisions` / `embeddings` / `annotations` / `files` / `commits` (plus `edges`, later removed in 2026-11). Identity, body, and embedding are separated. Users re-ingest after upgrade. No backfill shim. *(Decided 2026-04-21.)* |
+| 9 | Product scope | **Second brain for the whole system, not just code.** Mail, chat, research, clip, meeting, terminal, OCR parsers are additive with zero schema change. `units.kind` is namespaced `domain.subtype` by convention (`doc.heading`, `file.raw`, `mail.message`, …). *(Decided 2026-04-21.)* |
+| 10 | Agent contract | **Versioned `skills.md`.** `hafiz agent install` warns on out-of-date splice. *(Extract v2 contract removed 2026-11.)* |
+| 11 | Parser configurability | **Capability-based, not toggleable.** No `[parsers] enabled/disabled` config knob. A file's type is handled by whichever parser is registered; unregistered types fall through to `WholeFileParser` (file = one unit). Third-party parsers register via the `hafiz.parsers` Python entry-point group. `hafiz parsers list` exposes what's active. *(Decided 2026-04-21.)* |
+| 12 | Code index | **Removed 2026-11.** See [Removed — Code index](#code-index-2026-11). |
 
 ---
 

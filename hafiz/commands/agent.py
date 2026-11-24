@@ -8,7 +8,6 @@ from rich.console import Console
 from rich.table import Table
 
 from hafiz.core.agents import (
-    _EXTRACTOR_CONTRACT_VERSION,
     AGENTS,
     current_skills_version,
     install_file,
@@ -145,9 +144,8 @@ def run_agent_install(
     console.print(f"Installing hafiz skills for [bold]{display_name}[/bold]...")
 
     # Detect version drift: an agent config with an older SKILLS_VERSION
-    # than what we're about to install is running the previous contract
-    # (e.g. v1 extractor vocabulary). Flag it so users know the refresh
-    # is carrying a hard break — not a no-op cosmetic update.
+    # than what we're about to install is running the previous contract.
+    # Flag it so users know the refresh changed what agents are told.
     current_v = current_skills_version()
     prev_v = installed_skills_version(target)
 
@@ -164,17 +162,6 @@ def run_agent_install(
 
     if prev_v is not None and prev_v < current_v:
         console.print(f"\n[yellow]Upgraded skills.md from v{prev_v} to v{current_v}.[/yellow]")
-        # The extractor vocabulary break is specific to crossing v2 — it is
-        # not a property of "some version went up". Printing it on every
-        # bump told users to retrain extractors after purely additive
-        # releases, which is how a real warning gets tuned out.
-        if prev_v < _EXTRACTOR_CONTRACT_VERSION <= current_v:
-            console.print(
-                "  [yellow]This crosses a breaking contract change:[/yellow] "
-                "extract import rejects v1 payloads (entity_type / "
-                "relation_type vocabulary). See the 'Agent Extraction' section "
-                "of the new skills.md and retrain any in-flight extractors."
-            )
 
     if status == "appended":
         console.print(

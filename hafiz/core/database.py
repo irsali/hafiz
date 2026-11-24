@@ -5,17 +5,14 @@ Two storage layers (see docs/architecture.md "Storage layers"):
 **Knowledge layer** — identity-stable, mid-volume, embedding-first:
 
   files          - One row per file ever seen (tombstoned via valid_until).
-  units          - Stable identity of an addressable thing (function, heading,
-                   section, whole-file fallback). kind is namespaced
-                   `domain.subtype` (code.function, doc.heading, mail.message,
-                   …) by convention.
+  units          - Stable identity of an addressable thing (heading, section,
+                   whole file). kind is namespaced `domain.subtype`
+                   (doc.heading, file.raw, mail.message, …) by convention.
   unit_revisions - Append-only body. At most one current revision per unit
                    (partial unique on superseded_at IS NULL).
   embeddings     - 1:N vector search index over revisions. Small units: one
                    row. Oversized units: many rows with part_index + token
                    spans, each content-hashed independently.
-  edges          - Append-only relations between units. source ∈ {ast, agent,
-                   user}. target_name kept for unresolved/external refs.
   annotations    - Decisions / facts / learnings. May link to a unit or float
                    free. Temporal primitives (valid_from/until, supersedes_id).
   commits        - Git axis as a first-class citizen. rewritten_at /
@@ -270,54 +267,6 @@ class Embedding(Base):
         UniqueConstraint("unit_revision_id", "part_index", name="uq_embeddings_revision_part"),
         Index("idx_embeddings_revision", "unit_revision_id"),
         Index("idx_embeddings_content_hash", "content_hash"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Edges — relations between units (append-only)
-# ---------------------------------------------------------------------------
-
-
-class Edge(Base):
-    __tablename__ = "edges"
-
-    id: Mapped[uuid.UUID] = mapped_column(uuid_col(), primary_key=True, default=uuid.uuid4)
-    source_unit_id: Mapped[uuid.UUID] = mapped_column(
-        uuid_col(),
-        ForeignKey("units.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    target_unit_id: Mapped[uuid.UUID | None] = mapped_column(
-        uuid_col(),
-        ForeignKey("units.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    target_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    relation: Mapped[str] = mapped_column(Text, nullable=False)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
-    weight: Mapped[float] = mapped_column(Float, default=1.0)
-    commit_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    observed_at: Mapped[datetime] = mapped_column(
-        ts_col(),
-        default=lambda: datetime.now(UTC),
-    )
-    superseded_at: Mapped[datetime | None] = mapped_column(ts_col(), nullable=True)
-    metadata_: Mapped[dict] = mapped_column("metadata", json_col(), default=dict)
-
-    source_unit: Mapped[Unit] = relationship("Unit", foreign_keys=[source_unit_id])
-    target_unit: Mapped[Unit | None] = relationship("Unit", foreign_keys=[target_unit_id])
-
-    __table_args__ = (
-        CheckConstraint(
-            "source IN ('ast', 'agent', 'user')",
-            name="ck_edges_source",
-        ),
-        Index("idx_edges_source", "source_unit_id"),
-        Index("idx_edges_target", "target_unit_id"),
-        Index("idx_edges_target_name", "target_name"),
-        Index("idx_edges_relation", "relation"),
-        Index("idx_edges_commit", "commit_hash"),
     )
 
 
@@ -666,52 +615,6 @@ class ProjectName(Base):
 
 
 # ---------------------------------------------------------------------------
-# Transition stubs — Phase 3 removes these
-# ---------------------------------------------------------------------------
-# Several modules (hafiz.core.search / context / capture / journal /
-# graph_analysis / observations / distill / store / extractor, and several
-# commands) still import Chunk / Entity / Relation / Observation at module
-# scope. Migration 0005 dropped those tables; the callers get rewired in
-# Phase 3 of workitems/done/structural-grounding.md.
-#
-# Until then these stubs keep the import chain alive so the CLI loads and
-# unrelated tests run. Any attempt to instantiate or ORM-query them fails
-# loudly — there is no silent compatibility path.
-
-
-class _RemovedInV5:
-    """Placeholder for a model removed in 0005_structural_grounding."""
-
-    _name = "<unknown>"
-
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError(
-            f"{type(self)._name} was removed in migration 0005 "
-            "(structural-grounding) and replaced by units / unit_revisions / "
-            "edges — see docs/architecture.md, 'Data Model (the seven tables)'. "
-            "If you reached this from a hafiz command rather than your own "
-            "code, it is a bug worth reporting: "
-            "https://github.com/irsali/hafiz/issues"
-        )
-
-
-class Chunk(_RemovedInV5):
-    _name = "Chunk"
-
-
-class Entity(_RemovedInV5):
-    _name = "Entity"
-
-
-class Relation(_RemovedInV5):
-    _name = "Relation"
-
-
-class Observation(_RemovedInV5):
-    _name = "Observation"
-
-
-# ---------------------------------------------------------------------------
 # Engine / Session factory
 # ---------------------------------------------------------------------------
 
@@ -763,8 +666,12 @@ def _alembic_config(url: str | None = None):
     return cfg
 
 
-async def create_tables(url: str | None = None) -> None:
+async def create_tables(url: str | None = None) -> list[str | None]:
     """Initialize schema for whichever backend the URL selects.
+
+    Returns the projects that need a fresh ``hafiz ingest``: those whose code
+    units revision 0011 is about to delete (``None`` for files with no
+    project). Empty on a new store and on any store already past 0011.
 
     **Postgres** runs Alembic to head. Alembic is the single source of truth
     there: on a fresh DB it runs every migration in order; on an existing one
@@ -772,11 +679,11 @@ async def create_tables(url: str | None = None) -> None:
 
     IMPORTANT: the `0005_structural_grounding` migration is destructive. It
     drops the old `chunks` / `entities` / `relations` / `observations` tables
-    and replaces them with the seven-table identity/body/embedding model.
-    Callers should communicate "re-ingest required" to the user on first run.
+    and replaces them with the identity/body/embedding model. So is `0011`,
+    which removes code units; its re-ingest list is the return value.
 
-    **Embedded** creates the schema from the ORM and then *stamps* Alembic at
-    head. Replaying the history is not an option — `0001`, `0005` and `0006`
+    **Embedded, new store** creates the schema from the ORM and then *stamps*
+    Alembic at head. Replaying the history is not an option — `0001`, `0005` and `0006`
     import `pgvector` and `postgresql.UUID` directly, so they cannot execute
     against SQLite at all.
 
@@ -787,6 +694,10 @@ async def create_tables(url: str | None = None) -> None:
     and embedded users are precisely the solo installs least able to diagnose
     that. Stamping gives them a correct schema today and a working migration
     path for every future revision, which must be written dialect-aware.
+
+    **Embedded, existing store** runs Alembic to head like Postgres does. Every
+    embedded store was stamped at `0008` or later, and every revision after
+    that is plain SQL.
     """
     import asyncio
 
@@ -819,16 +730,54 @@ async def create_tables(url: str | None = None) -> None:
 
     cfg = _alembic_config(db_url)
     loop = asyncio.get_running_loop()
+    engine = get_engine(db_url)
+    async with engine.begin() as conn:
+        stamped = await conn.run_sync(_stamped_revision)
+        reingest = await conn.run_sync(_projects_with_code_units)
 
     if not is_embedded(db_url):
         await loop.run_in_executor(None, command.upgrade, cfg, "head")
-        return
+        return reingest
 
-    engine = get_engine(db_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await loop.run_in_executor(None, command.stamp, cfg, "head")
+    if stamped:
+        # An existing store: run the revisions it has not seen. Stamping it at
+        # head instead would skip them — harmless while every later revision
+        # only added tables (``create_all`` covers those), but 0011 deletes
+        # rows, and a skipped delete leaves the store silently stale. Every
+        # revision after the embedded backend shipped (0008) is plain SQL.
+        await loop.run_in_executor(None, command.upgrade, cfg, "head")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await loop.run_in_executor(None, command.stamp, cfg, "head")
     secure_db_file(db_url)
+    return reingest
+
+
+def _projects_with_code_units(sync_conn) -> list[str | None]:
+    """Projects holding ``code.*`` units — what revision 0011 deletes."""
+    from sqlalchemy import inspect as sa_inspect
+
+    if not sa_inspect(sync_conn).has_table("units"):
+        return []
+    rows = sync_conn.execute(
+        text(
+            "SELECT DISTINCT f.project FROM units u JOIN files f ON f.id = u.file_id "
+            "WHERE u.kind LIKE 'code.%'"
+        )
+    )
+    return sorted((r[0] for r in rows), key=lambda p: (p is None, p or ""))
+
+
+def _stamped_revision(sync_conn) -> str | None:
+    """The Alembic revision an existing store is at, or None for a new one."""
+    from sqlalchemy import inspect as sa_inspect
+
+    if not sa_inspect(sync_conn).has_table("alembic_version"):
+        return None
+    return sync_conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
 
 
 async def close_engine() -> None:

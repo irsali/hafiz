@@ -11,8 +11,8 @@ for the source layer, retention-expired rows (``retention_until > now``).
 A row the user forgot — or that aged past its retention window — does not
 appear in any export.
 
-**Scope: wisdom, not code.** Code and its AST structure (units, revisions,
-files, commits, edges, embeddings) live in git — the repository is already
+**Scope: wisdom, not code.** Indexed files and their bodies (units, revisions,
+files, commits, embeddings) live in git — the repository is already
 the sovereign copy. Dumping them here would just duplicate the source tree.
 Export carries only the *irreplaceable* layer:
 
