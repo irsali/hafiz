@@ -244,7 +244,7 @@ Removed the Python AST parser (`python_ast`), the JS/TS tree-sitter parser (`tre
 
 Items actively on deck — a mix of leftovers from the original roadmap and newer structural work:
 
-- [ ] **One-time migration scripts** — `import_memory.py` (MEMORY.md → observations), `import_knowledgehub.py`, `import_chromadb.py`. No top-level `scripts/` directory exists today.
+- [ ] **One-time migration scripts** — `import_memory.py` (MEMORY.md → observations), `import_teamwiki.py`, `import_chromadb.py`. No top-level `scripts/` directory exists today.
 - [ ] **ChromaDB hard cutover** — not executed; no ChromaDB dependency to decommission in this repo
 - [ ] **Retention policies** for stale data — `prune` is on-demand only; no age-based policy
 - [ ] **Test coverage for a second agent** (Aider, Codex) beyond the three currently registered

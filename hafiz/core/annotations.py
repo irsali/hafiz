@@ -607,9 +607,9 @@ def _text_delta(candidate: str, keeper: str) -> tuple[float, list[str], int]:
     word-level overlap by cosine band ran 0.99+ -> 0.93, 0.97-0.99 -> 0.61,
     0.95-0.97 -> 0.48, 0.92-0.95 -> 0.19, 0.88-0.92 -> 0.09. At the default
     0.88 threshold, members share under a tenth of their words: same subject,
-    different statement. One such cluster paired the Web Channel v2 *stage*
+    different statement. One such cluster paired the Shop Front v2 *stage*
     pipeline path with the *prod* one, where the prod row says in as many words
-    "NOT banner/v2 like stage". Cosine cannot see that; this can.
+    "NOT front/v2 like stage". Cosine cannot see that; this can.
     """
     import difflib
 

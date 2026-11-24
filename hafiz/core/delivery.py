@@ -86,7 +86,7 @@ def specific_terms(text: str) -> set[str]:
     """The tokens in ``text`` specific enough to count as evidence of reuse.
 
     A token qualifies when it carries a digit or a structural character
-    (``web-channel``, ``v2.4``, ``hafiz/core``, ``#47471``) or is long (9+
+    (``shop-front``, ``v2.4``, ``hafiz/core``, ``#47471``) or is long (9+
     characters) and not a stock word. Short plain words never qualify — "use",
     "test", "merge" turn up in every session.
     """

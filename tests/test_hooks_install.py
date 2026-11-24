@@ -68,15 +68,15 @@ def test_repo_path_is_baked_into_every_hook(repo):
 
 
 def test_explicit_project_overrides_the_directory_name(repo):
-    hooks.run_hooks_install(str(repo), project="Admin Portal")
-    assert "HAFIZ_PROJECT='Admin Portal'" in _hook(repo, "post-commit")
+    hooks.run_hooks_install(str(repo), project="Billing Portal")
+    assert "HAFIZ_PROJECT='Billing Portal'" in _hook(repo, "post-commit")
 
 
 def test_project_with_spaces_is_shell_quoted(repo):
-    """Unquoted, `--project Admin Portal` would parse as two arguments."""
-    hooks.run_hooks_install(str(repo), project="Admin Portal")
+    """Unquoted, `--project Billing Portal` would parse as two arguments."""
+    hooks.run_hooks_install(str(repo), project="Billing Portal")
     body = _hook(repo, "post-commit")
-    assert "HAFIZ_PROJECT='Admin Portal'" in body
+    assert "HAFIZ_PROJECT='Billing Portal'" in body
     assert '--project "$HAFIZ_PROJECT"' in body
 
 
@@ -200,9 +200,9 @@ def test_the_legacy_untagged_hook_is_upgraded(repo):
         "nohup hafiz ingest --git-hook > /dev/null 2>&1 &\n",
         encoding="utf-8",
     )
-    hooks.run_hooks_install(str(repo), project="KnowledgeHub")
+    hooks.run_hooks_install(str(repo), project="TeamWiki")
     body = _hook(repo, "post-commit")
-    assert "HAFIZ_PROJECT=KnowledgeHub" in body
+    assert "HAFIZ_PROJECT=TeamWiki" in body
     assert "# No project specified" not in body
     assert "hafiz ingest --git-hook > /dev/null" not in body
 
@@ -264,12 +264,10 @@ def test_force_appends_to_a_hand_written_hafiz_hook(repo):
 def test_hook_project_is_recovered_across_generations(repo):
     """`_hook_project` only feeds the human message, but it must not report the
     literal `$HAFIZ_PROJECT` variable as the project name."""
-    assert hooks._hook_project('HAFIZ_PROJECT=KnowledgeHub\n--project "$HAFIZ_PROJECT"') == (
-        "KnowledgeHub"
-    )
-    assert hooks._hook_project("HAFIZ_PROJECT='Admin Portal'") == "Admin Portal"
-    assert hooks._hook_project('nohup hafiz ingest "$REPO" --project "Account API"') == (
-        "Account API"
+    assert hooks._hook_project('HAFIZ_PROJECT=TeamWiki\n--project "$HAFIZ_PROJECT"') == ("TeamWiki")
+    assert hooks._hook_project("HAFIZ_PROJECT='Billing Portal'") == "Billing Portal"
+    assert hooks._hook_project('nohup hafiz ingest "$REPO" --project "Ledger API"') == (
+        "Ledger API"
     )
     assert hooks._hook_project("nohup hafiz ingest --git-hook") is None
 
@@ -342,8 +340,8 @@ def test_git_hook_ingest_forwards_the_path_it_was_given(monkeypatch):
     monkeypatch.setattr("hafiz.commands.ingest.run_ingest", _fake_run_ingest)
     from hafiz.commands.ingest import run_git_hook_ingest_cmd
 
-    run_git_hook_ingest_cmd("/repos/Admin Portal", project="Admin Portal")
-    assert seen == {"path": "/repos/Admin Portal", "project": "Admin Portal"}
+    run_git_hook_ingest_cmd("/repos/Billing Portal", project="Billing Portal")
+    assert seen == {"path": "/repos/Billing Portal", "project": "Billing Portal"}
 
 
 def test_git_hook_ingest_defaults_to_cwd(monkeypatch):

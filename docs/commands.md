@@ -181,10 +181,10 @@ answer the questions an operator or agent actually asks of `status`:
 
 ```json
 {
-  "last_commit_per_project": {"Admin Portal": "13367ea0..."},
+  "last_commit_per_project": {"Billing Portal": "13367ea0..."},
   "staleness": {
-    "Admin Portal": {
-      "repo_path": "/repos/Admin Portal",
+    "Billing Portal": {
+      "repo_path": "/repos/Billing Portal",
       "indexed_commit": "13367ea0...",
       "head_commit": "13367ea0...",
       "commits_behind": 0,
@@ -546,7 +546,7 @@ relevant rows.
 **How a project name resolves** — on every command, the daemon and MCP alike (`hafiz/core/projects.py`):
 
 1. The exact name on file, or a **declared synonym** (`hafiz projects alias`).
-2. The same name ignoring case, spaces, `_` and `-` (`account api` → `Account API`).
+2. The same name ignoring case, spaces, `_` and `-` (`ledger api` → `Ledger API`).
 3. A near-certain typo (similarity ≥ 0.9, clear of the runner-up) — corrected on read with a one-line notice on stderr. Names differing only in a number (`…-v3` / `…-v4`) are siblings, never typos.
 4. Several projects still fit → the one not **retired** wins; if that doesn't settle it, or nothing fits, exit `2` with `{"ok": false, "error": ..., "candidates": [...]}`. A misspelt project used to return an empty result indistinguishable from "nothing known".
 
@@ -603,7 +603,7 @@ When both flags are omitted on the CLI, the active session's defaults (set via `
       |---|---:|---:|---:|---:|---:|
       | same words | 0.93 | 0.61 | 0.48 | 0.19 | **0.09** |
 
-      At the default `0.88`, members share under a tenth of their words — same *subject*, different *statement*. One cluster paired the Web Channel v2 **stage** pipeline path with the **prod** one, where the prod row says in as many words "NOT banner/v2 like stage". So `threshold` still governs what gets grouped (and what `observe` surfaces on write, where "you may already have said this" is useful), but it no longer governs what gets recommended.
+      At the default `0.88`, members share under a tenth of their words — same *subject*, different *statement*. One cluster paired the Shop Front v2 **stage** pipeline path with the **prod** one, where the prod row says in as many words "NOT front/v2 like stage". So `threshold` still governs what gets grouped (and what `observe` surfaces on write, where "you may already have said this" is useful), but it no longer governs what gets recommended.
     - **Every cluster carries a proposal, and the proposal is made on text.** One member is the `primary`; the rest are retired. Each non-primary member reports `overlap` (word-level ratio vs the primary), `unique_words` (every word it has and the primary lacks) and `unique_fragments` (those words as contiguous runs, longest first). `suggested_action` has three tiers:
 
       | tier | means | your move |

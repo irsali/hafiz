@@ -1,8 +1,8 @@
 """One project, one name — synonyms, look-alikes, and refusing to guess.
 
 A 2026-11 audit found ten products under two or three spellings each, and two
-genuinely different repos one spelling apart (a retired ``Admin Portal`` and its
-replacement ``admin-portal``). These tests pin the rules that came out of it:
+genuinely different repos one spelling apart (a retired ``Billing Portal`` and its
+replacement ``billing-portal``). These tests pin the rules that came out of it:
 declared synonyms and case/spacing variants resolve; a near-certain typo is
 corrected on read; anything unclear is an error naming the candidates; a write
 never guesses from a close spelling; and only declared synonyms are merged.
@@ -63,8 +63,8 @@ async def _rows(project: str) -> int:
 
 
 def test_case_spaces_and_separators_share_a_key():
-    assert {P.project_key(n) for n in ("Web Channel_v2", "Web_Channel_v2", "web-channel-v2")} == {
-        "web-channel-v2"
+    assert {P.project_key(n) for n in ("Shop Front_v2", "Shop_Front_v2", "shop-front-v2")} == {
+        "shop-front-v2"
     }
 
 
@@ -112,7 +112,7 @@ async def test_a_different_version_number_is_never_a_typo(stem):
 
 
 async def test_a_different_set_of_numbers_is_suggested_but_never_used(stem):
-    # Caught on a live store: "web-channel-v4" was silently read as "Web Channel_v2_4".
+    # Caught on a live store: "shop-front-v4" was silently read as "Shop Front_v2_4".
     await _seed(f"{stem}-channel-v2-4")
     with pytest.raises(UnknownProjectError) as err:
         await P.resolve_project(f"{stem}-channel-v4")
@@ -121,10 +121,10 @@ async def test_a_different_set_of_numbers_is_suggested_but_never_used(stem):
 
 
 async def test_an_unknown_name_is_an_error_with_suggestions(stem):
-    await _seed(f"{stem}-account-api")
+    await _seed(f"{stem}-ledger-api")
     with pytest.raises(UnknownProjectError) as err:
-        await P.resolve_project(f"{stem}-account")
-    assert err.value.candidates[0] == f"{stem}-account-api"
+        await P.resolve_project(f"{stem}-ledger")
+    assert err.value.candidates[0] == f"{stem}-ledger-api"
     assert "Did you mean" in str(err.value)
 
 

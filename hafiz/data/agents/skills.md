@@ -192,7 +192,7 @@ when reranking didn't run), plus a top-level `reranked` boolean — that's how y
 tell reranked output from vector output.
 
 **An unknown project is an error, not an empty result.** `--project` accepts
-synonyms and case/spacing variants (`account-api` finds `Account API`); a name
+synonyms and case/spacing variants (`ledger-api` finds `Ledger API`); a name
 that fits nothing, or several projects, exits `2` with `candidates` to retry
 with. On writes, a new name that is a near-certain typo of an existing project
 is refused unless `--new-project`. Omit `--project` on your own writes and the

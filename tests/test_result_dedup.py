@@ -4,9 +4,9 @@ The markdown parser attaches each paragraph to **every ancestor heading**, so a
 paragraph nested under ``H1 > H2 > H3`` becomes three units with identical
 content, differing only in ``name`` / ``parent_name``::
 
-    Web Channel — AI Agent Instructions #p506
-    Web Channel — AI Agent Instructions > Integrations #p506
-    Web Channel — AI Agent Instructions > Integrations > Geolocation Services #p506
+    Shop Front — AI Agent Instructions #p506
+    Shop Front — AI Agent Instructions > Integrations #p506
+    Shop Front — AI Agent Instructions > Integrations > Geolocation Services #p506
 
 Measured on a 15-project deployment: 8,852 clusters, 17,625 redundant of 33,967
 live doc units (51.9%), and 17,701 of 49,334 live embeddings. Every non-annotation
