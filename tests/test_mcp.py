@@ -39,7 +39,6 @@ EXPECTED_TOOLS = {
     "hafiz_query",
     "hafiz_recall_observations",
     "hafiz_recall_session",
-    "hafiz_graph",
     "hafiz_journal",
     "hafiz_distill",
     "hafiz_observe",

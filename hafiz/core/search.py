@@ -42,8 +42,8 @@ def _normalize_domains(domains: list[str] | None) -> list[str]:
             continue
         if "." in d:
             raise ValueError(
-                f"Domain {raw!r} must be a single token (e.g. 'code', "
-                "'doc') — use --type for exact kinds like 'code.function'."
+                f"Domain {raw!r} must be a single token (e.g. 'doc', "
+                "'doc') — use --type for exact kinds like 'doc.heading'."
             )
         if d not in seen:
             seen.add(d)
@@ -169,10 +169,10 @@ async def vector_search(
         limit: Maximum results.
         project: Filter by project name (str), multiple projects (list),
             or None for no project filter.
-        kind: Filter by unit kind (e.g. ``"code.function"``,
-            ``"doc.heading"``). Matches on ``units.kind``.
+        kind: Filter by unit kind (e.g. ``"doc.heading"``,
+            ``"file.raw"``). Matches on ``units.kind``.
         include_domains: Restrict results to units whose ``kind`` starts
-            with one of these domain prefixes (e.g. ``["code"]``,
+            with one of these domain prefixes (e.g. ``["doc"]``,
             ``["doc", "chat"]``). Domains are the part of ``kind`` before
             the first dot.
         exclude_domains: Drop results whose ``kind`` starts with any of

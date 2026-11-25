@@ -3,9 +3,8 @@
 Thin wrapper over :func:`hafiz.core.export.export_brain`. Handles
 ``--json`` vs. rich output and exit codes; all logic lives in core.
 
-Note the deliberate naming distinction from ``hafiz extract export``,
-which dumps AST units as an agent-extraction payload. This command is a
-whole-brain, human-facing dump and is a peer to ``hafiz forget``.
+This command is a whole-brain, human-facing dump and is a peer to
+``hafiz forget``.
 """
 
 from __future__ import annotations

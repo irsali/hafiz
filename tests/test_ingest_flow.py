@@ -65,7 +65,6 @@ async def _cleanup():
     factory = get_session_factory()
     async with factory() as s:
         await s.execute(text("DELETE FROM annotations"))
-        await s.execute(text("DELETE FROM edges"))
         await s.execute(text("DELETE FROM embeddings"))
         await s.execute(text("DELETE FROM unit_revisions"))
         await s.execute(text("DELETE FROM units"))
@@ -95,8 +94,14 @@ async def _count(table: str, *, where: str | None = None) -> int:
         return (await s.execute(text(q))).scalar() or 0
 
 
-def _py(body: str) -> tuple[Path, str]:
-    return Path("/tmp/fake.py"), body
+def _md(body: str) -> tuple[Path, str]:
+    return Path("/tmp/fake.md"), body
+
+
+# Markdown is the multi-unit format: each heading is a unit and so is each
+# paragraph under it. Code files are indexed whole (one ``file.raw`` unit).
+KEEPER = "## keeper\n\none\n\n"
+GONER = "## goner\n\ntwo\n"
 
 
 # ── Tests ──────────────────────────────────────────────────────────────
@@ -104,9 +109,7 @@ def _py(body: str) -> tuple[Path, str]:
 
 @pytest.mark.asyncio
 async def test_first_ingest_creates_units_revisions_embeddings(tmp_path):
-    abs_path, content = _py(
-        "def hello():\n    return 'world'\n\nclass Foo:\n    def bar(self):\n        return 1\n"
-    )
+    abs_path, content = _md(KEEPER + GONER)
     result = await index_file(
         abs_path,
         content,
@@ -114,7 +117,7 @@ async def test_first_ingest_creates_units_revisions_embeddings(tmp_path):
         embed_fn=mock_embed,
     )
 
-    # code.module + code.function + code.class + code.method = 4 units
+    # Two headings, each with one paragraph = 4 units
     assert result.units_seen == 4
     assert result.revisions_created == 4
     assert result.embeddings_written >= 4  # ≥1 embedding per revision
@@ -127,13 +130,29 @@ async def test_first_ingest_creates_units_revisions_embeddings(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_code_file_is_indexed_whole_as_plain_text():
+    """There is no code parser: a source file is one ``file.raw`` unit, so it
+    stays searchable by its text."""
+    code = "def hello():\n    return 'world'\n\nclass Foo:\n    pass\n"
+    for path in (Path("/tmp/mod.py"), Path("/tmp/app.ts")):
+        result = await index_file(path, code, project="t", embed_fn=mock_embed)
+        assert result.parser_name == "whole_file"
+        assert result.units_seen == 1
+
+    factory = get_session_factory()
+    async with factory() as s:
+        kinds = (await s.execute(select(Unit.kind))).scalars().all()
+    assert kinds == ["file.raw", "file.raw"]
+
+
+@pytest.mark.asyncio
 async def test_reingesting_unchanged_content_is_noop():
-    abs_path, content = _py("def foo():\n    return 1\n")
+    abs_path, content = _md("## only\n\nbody\n")
 
     first = await index_file(abs_path, content, project="t", embed_fn=mock_embed)
     second = await index_file(abs_path, content, project="t", embed_fn=mock_embed)
 
-    assert first.revisions_created == 2  # module + function
+    assert first.revisions_created == 2  # heading + paragraph
     assert second.revisions_created == 0
     assert second.embeddings_written == 0
     assert second.units_tombstoned == 0
@@ -145,42 +164,37 @@ async def test_reingesting_unchanged_content_is_noop():
 
 
 @pytest.mark.asyncio
-async def test_changing_one_function_body_supersedes_exactly_one_revision():
-    abs_path = Path("/tmp/mod.py")
-    v1 = "def stable():\n    return 'unchanged'\n\ndef mutating():\n    return 1\n"
-    v2 = (
-        "def stable():\n    return 'unchanged'\n\n"
-        "def mutating():\n    return 2\n"  # body changed
-    )
+async def test_changing_one_section_supersedes_only_its_revisions():
+    abs_path = Path("/tmp/mod.md")
+    stable = "## stable\n\nunchanged\n\n"
+    v1 = stable + "## mutating\n\nv1\n"
+    v2 = stable + "## mutating\n\nv2\n"  # body changed
 
     await index_file(abs_path, v1, project="t", embed_fn=mock_embed)
     result = await index_file(abs_path, v2, project="t", embed_fn=mock_embed)
 
-    # mutating() changed. module's content also changed (file content
-    # differs), so module revision bumps too. stable() unchanged.
-    assert result.revisions_created == 2  # mutating + module
+    # The mutating heading and its paragraph changed; the stable section did not.
+    assert result.revisions_created == 2
     assert result.units_tombstoned == 0
 
-    # One current revision per unit (3 units: module, stable, mutating).
-    assert await _count("unit_revisions", where="superseded_at IS NULL") == 3
-    # Total revisions = 3 original + 2 new = 5.
-    assert await _count("unit_revisions") == 5
-    # Exactly 2 revisions were superseded (module v1 and mutating v1).
+    # One current revision per unit (4 units).
+    assert await _count("unit_revisions", where="superseded_at IS NULL") == 4
+    # Total revisions = 4 original + 2 new = 6.
+    assert await _count("unit_revisions") == 6
+    # Exactly 2 revisions were superseded (mutating heading + paragraph v1).
     assert await _count("unit_revisions", where="superseded_at IS NOT NULL") == 2
 
 
 @pytest.mark.asyncio
 async def test_deleted_unit_is_tombstoned():
-    abs_path = Path("/tmp/mod.py")
-    v1 = "def keeper():\n    return 1\n\ndef goner():\n    return 2\n"
-    v2 = "def keeper():\n    return 1\n"  # goner removed
+    abs_path = Path("/tmp/mod.md")
 
-    await index_file(abs_path, v1, project="t", embed_fn=mock_embed)
-    result = await index_file(abs_path, v2, project="t", embed_fn=mock_embed)
+    await index_file(abs_path, KEEPER + GONER, project="t", embed_fn=mock_embed)
+    result = await index_file(abs_path, KEEPER, project="t", embed_fn=mock_embed)
 
-    # module body changed → new revision. goner vanished → tombstoned.
-    # keeper unchanged → no new revision.
-    assert result.units_tombstoned == 1
+    # goner's heading and paragraph vanished → tombstoned. keeper unchanged.
+    assert result.units_tombstoned == 2
+    assert result.revisions_created == 0
 
     # goner's unit still exists but tombstoned.
     factory = get_session_factory()
@@ -206,9 +220,9 @@ async def test_a_superseded_revision_keeps_its_body_but_drops_its_vectors():
     """Search only reads current revisions and nothing un-supersedes one, so a
     superseded revision's vectors are unreachable. Keeping them grew one store
     to 54% dead embeddings. The body is history and stays."""
-    abs_path = Path("/tmp/mod.py")
-    await index_file(abs_path, "def f():\n    return 1\n", project="t", embed_fn=mock_embed)
-    await index_file(abs_path, "def f():\n    return 2\n", project="t", embed_fn=mock_embed)
+    abs_path = Path("/tmp/mod.md")
+    await index_file(abs_path, "## f\n\none\n", project="t", embed_fn=mock_embed)
+    await index_file(abs_path, "## f\n\ntwo\n", project="t", embed_fn=mock_embed)
 
     assert await _count("unit_revisions", where="superseded_at IS NOT NULL") == 2
     assert await _count("embeddings", where=_ORPHAN_VECTORS) == 0
@@ -224,10 +238,10 @@ async def test_a_superseded_revision_keeps_its_body_but_drops_its_vectors():
 
 @pytest.mark.asyncio
 async def test_a_vanished_unit_drops_its_vectors_and_comes_back_searchable():
-    abs_path = Path("/tmp/mod.py")
-    both = "def keeper():\n    return 1\n\ndef goner():\n    return 2\n"
+    abs_path = Path("/tmp/mod.md")
+    both = KEEPER + GONER
     await index_file(abs_path, both, project="t", embed_fn=mock_embed)
-    await index_file(abs_path, "def keeper():\n    return 1\n", project="t", embed_fn=mock_embed)
+    await index_file(abs_path, KEEPER, project="t", embed_fn=mock_embed)
     assert await _count("embeddings", where=_ORPHAN_VECTORS) == 0
 
     # Same body as before it vanished: it must not count as "unchanged" and
@@ -325,8 +339,8 @@ async def test_every_embedding_belongs_to_its_own_revision_body():
 
     Sounds tautological; is not. ``identity_key`` is a hash of
     (project, path, kind, name, parent_name) and is therefore **not unique
-    within a file** — two same-named functions, or the far more common case
-    of two identical markdown headings like ``## Notes``, collide. Any
+    within a file** — two identical markdown headings like ``## Notes``
+    collide. Any
     bookkeeping in ``index_file`` that keys per-unit work by identity_key
     silently gives the first occurrence the second occurrence's data.
 

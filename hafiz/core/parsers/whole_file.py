@@ -2,7 +2,7 @@
 
 Registered with `languages = ["*"]` — the registry uses it for any file
 whose extension isn't claimed by a specialized parser. Emits a single
-`file.raw` unit containing the entire file contents. No edges.
+`file.raw` unit containing the entire file contents.
 
 This is the universal safety net: every file gets represented, even if
 we don't know how to parse it. Ingest still gets a unit + content to

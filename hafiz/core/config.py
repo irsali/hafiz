@@ -402,11 +402,6 @@ class DaemonSettings(BaseModel):
     idle_timeout: float = 1800.0  # 30 minutes; 0 disables shutdown
 
 
-class LLMSettings(BaseModel):
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-20250514"
-
-
 class WorkspaceSettings(BaseModel):
     root: str = "."
     projects: list[str] = Field(default_factory=list)
@@ -420,22 +415,6 @@ class WorkspaceSettings(BaseModel):
             "build",
         ]
     )
-
-
-class GraphSettings(BaseModel):
-    """Tuning knobs for knowledge-graph expansion inside `hafiz context`.
-
-    context_depth        — how many hops to walk out from entities found in
-                           the retrieved chunks (undirected). 3 is a sensible
-                           default: includes neighbors-of-neighbors without
-                           blowing up the bundle.
-    context_max_entities — hard cap on how many entities land in the bundle
-                           after walking. Results are sorted by (distance,
-                           -pagerank) so nearest + most central win the cap.
-    """
-
-    context_depth: int = 3
-    context_max_entities: int = 25
 
 
 class HafizSettings(BaseSettings):
@@ -455,9 +434,7 @@ class HafizSettings(BaseSettings):
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     daemon: DaemonSettings = Field(default_factory=DaemonSettings)
-    llm: LLMSettings = Field(default_factory=LLMSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
-    graph: GraphSettings = Field(default_factory=GraphSettings)
 
 
 def env_overridden_keys(environ: dict[str, str] | None = None) -> set[tuple[str, str]]:
@@ -480,6 +457,13 @@ def env_overridden_keys(environ: dict[str, str] | None = None) -> set[tuple[str,
     return out
 
 
+#: Sections hafiz once read and no longer does. Settings reject unknown keys,
+#: so a config file written by an older ``hafiz init`` would stop every command
+#: from loading; these are dropped on read instead. ``llm`` belonged to the
+#: removed API-key extraction path, ``graph`` to the removed code graph.
+RETIRED_SECTIONS = ("llm", "graph")
+
+
 def load_settings() -> HafizSettings:
     """Load settings from hafiz.toml (if found), with env var overrides.
 
@@ -498,6 +482,8 @@ def load_settings() -> HafizSettings:
         return HafizSettings()
 
     toml_data = load_toml(config_path)
+    for section in RETIRED_SECTIONS:
+        toml_data.pop(section, None)
     for section, key in env_overridden_keys():
         values = toml_data.get(section)
         if isinstance(values, dict):

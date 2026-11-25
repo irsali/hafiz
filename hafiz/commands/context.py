@@ -1,4 +1,4 @@
-"""hafiz context — synthesize relevant code, graph, and observations for a task."""
+"""hafiz context — synthesize relevant documents, files, and observations for a task."""
 
 from __future__ import annotations
 
@@ -142,11 +142,7 @@ def run_context(
     )
     console.print()
 
-    summary = (
-        f"  [dim]Chunks: {len(bundle.chunks)} | "
-        f"Units: {len(bundle.entities)} | "
-        f"Annotations: {len(bundle.annotations)}"
-    )
+    summary = f"  [dim]Chunks: {len(bundle.chunks)} | Annotations: {len(bundle.annotations)}"
     if bundle.project_distribution:
         projects_involved = len(bundle.project_distribution)
         summary += f" | Projects: {projects_involved}"

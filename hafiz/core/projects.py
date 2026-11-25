@@ -1,15 +1,15 @@
 """One project, one name — resolving what a caller typed to the name on file.
 
 A 2026-11 audit of a live store found ten products filed under two or three
-spellings each (``Account API`` / ``account-api``, ``Web Channel_v2`` /
-``Web_Channel_v2`` / ``web-channel-v2``). The code index used the repo folder
+spellings each (``Ledger API`` / ``ledger-api``, ``Shop Front_v2`` /
+``Shop_Front_v2`` / ``shop-front-v2``). The code index used the repo folder
 name; agents wrote notes under the ids they knew. Every project filter is an
 exact match, so a query under one spelling silently missed everything filed
 under the others — and a misspelt ``--project`` returned an empty answer that
 looked exactly like "nothing is known".
 
-Spelling alone cannot fix this. The same store held ``Admin Portal`` (a
-retired repo) and ``admin-portal`` (its replacement): one key apart, two
+Spelling alone cannot fix this. The same store held ``Billing Portal`` (a
+retired repo) and ``billing-portal`` (its replacement): one key apart, two
 different codebases. So the rules are:
 
 * **Synonyms are declared, not guessed.** ``project_names`` maps alias → main
@@ -51,7 +51,7 @@ _SEPARATORS = re.compile(r"[\s_\-]+")
 
 
 def project_key(name: str) -> str:
-    """What two spellings of one name have in common: ``Web_Channel v2`` → ``web-channel-v2``."""
+    """What two spellings of one name have in common: ``Shop_Front v2`` → ``shop-front-v2``."""
     return _SEPARATORS.sub("-", name.casefold()).strip("-")
 
 
@@ -174,14 +174,14 @@ _DIGITS = re.compile(r"\d+")
 
 
 def _versions_differ(a: str, b: str) -> bool:
-    """``web-channel-v3`` vs ``web-channel-v4``: same shape, different number —
+    """``shop-front-v3`` vs ``shop-front-v4``: same shape, different number —
     a sibling project, never a typo."""
     return a != b and _DIGITS.sub("#", a) == _DIGITS.sub("#", b)
 
 
 def _same_numbers(a: str, b: str) -> bool:
-    """Numbers name versions, so a typo never changes them: ``web-channel-v4``
-    is not a misspelling of ``Web Channel_v2_4``, however close the letters."""
+    """Numbers name versions, so a typo never changes them: ``shop-front-v4``
+    is not a misspelling of ``Shop Front_v2_4``, however close the letters."""
     return _DIGITS.findall(project_key(a)) == _DIGITS.findall(project_key(b))
 
 
@@ -195,7 +195,7 @@ def _close(name: str, names: ProjectNames, cutoff: float) -> list[tuple[float, s
         if _versions_differ(key, other):
             continue
         ratio = difflib.SequenceMatcher(None, key, other).ratio()
-        # "account" → "account-api": a whole-word prefix is a strong hint even
+        # "ledger" → "ledger-api": a whole-word prefix is a strong hint even
         # when the ratio is modest.
         if other.startswith(key + "-") or key.startswith(other + "-"):
             ratio = max(ratio, SUGGEST_RATIO)  # a hint to offer, never enough to act on
@@ -307,7 +307,7 @@ async def canonical_project(name: str | None, *, new_project: bool = False) -> s
             invalidate()
         return found or cleaned
     # Only a near-certain typo blocks a write: a looser bar would refuse
-    # legitimate siblings ("cookie-notice" next to "cookie-notice-trunk").
+    # legitimate siblings ("weather-app" next to "weather-app-trunk").
     close = [m for _, m in _close(cleaned, names, AUTO_RATIO) if _same_numbers(cleaned, m)]
     if close:
         listed = ", ".join(repr(names.label(c)) for c in close[:5])

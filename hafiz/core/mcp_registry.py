@@ -32,7 +32,7 @@ What is deliberately absent
 Install and administrative commands (``init``, ``hooks``, ``agent``,
 ``config set``, ``embedding``, ``serve``, ``watch``), destructive ones
 (``forget``, ``prune``) and long-running ingest paths (``ingest``,
-``import``, ``extract``, ``review``) are **not** exposed. An MCP client can
+``import``, ``review``) are **not** exposed. An MCP client can
 call any listed tool without confirmation, so anything irreversible or
 environment-mutating stays on the CLI, where a human is present and the act
 is deliberate.
@@ -181,9 +181,9 @@ _MIN_SCORE = (
     "matches; an empty result is the 'not relevant' signal."
 )
 _DOMAINS = (
-    "Data domains to include, e.g. ['code','doc']. The domain is the part of "
-    "a unit kind before the dot (code, doc, chat, mail, file). Note the index "
-    "is ~89% documentation and only ~4% code."
+    "Data domains to include, e.g. ['doc','file']. The domain is the part of "
+    "a unit kind before the dot (doc, file, chat, mail). Code is indexed as "
+    "whole files, under 'file'."
 )
 _EX_DOMAINS = "Data domains to exclude. Mutually exclusive with include_domains per domain."
 
@@ -217,7 +217,7 @@ _OBSERVE_PARAMS = {
 }
 
 _OBSERVE_HIDDEN = {
-    "unit_id": "Attaching to a code unit needs an identity_key the caller does not have.",
+    "unit_id": "Attaching to a unit needs an identity_key the caller does not have.",
     "commit_hash": "Auto-captured from the repo; a caller-supplied value would be a lie.",
     "valid_from": "Defaults to now. Backdating a belief is not something to expose.",
     "metadata": "Arbitrary JSONB. No stable meaning for a model to target.",
@@ -227,9 +227,8 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="hafiz_context",
         summary=(
-            "Start here for any task. Returns one bundle of relevant code/doc units, "
-            "the graph neighbourhood around them, and prior decisions — the same thing "
-            "`hafiz context` builds."
+            "Start here for any task. Returns one bundle of relevant indexed docs and "
+            "files plus prior decisions — the same thing `hafiz context` builds."
         ),
         target="hafiz.core.context:build_context",
         params={
@@ -253,7 +252,7 @@ TOOLS: tuple[ToolSpec, ...] = (
             "query": "Natural-language description of what you are looking for.",
             "limit": _LIMIT,
             "project": _PROJECT,
-            "kind": "Exact unit kind, e.g. 'code.function' or 'doc.heading'.",
+            "kind": "Exact unit kind, e.g. 'doc.heading' or 'file.raw'.",
             "include_domains": _DOMAINS,
             "exclude_domains": _EX_DOMAINS,
             "similarity_threshold": "Cosine floor, 0-1. Useful band is roughly 0.5-0.65.",
@@ -296,27 +295,6 @@ TOOLS: tuple[ToolSpec, ...] = (
             "agent": "Restrict to one harness, e.g. 'claude-code' or 'cursor'.",
             "session_id": "Restrict to one session uuid.",
             "communication_id": "Restrict to one communication uuid.",
-        },
-    ),
-    ToolSpec(
-        name="hafiz_graph",
-        summary=(
-            "Walk the code graph: what a unit depends on, what depends on it (blast "
-            "radius before a refactor), the path between two units, or overall shape."
-        ),
-        target="hafiz.core.graph_ops:graph_op",
-        params={
-            "operation": (
-                "show (unit + direct links) | deps (outgoing) | impact (blast radius, "
-                "ask before refactoring) | path (shortest route between two units) | "
-                "rank (most central units) | stats (overall health)."
-            ),
-            "name": "Unit name. Required for show, deps, impact and path.",
-            "target": "Destination unit name. Required for 'path'.",
-            "project": _PROJECT,
-            "depth": "Hops to walk for deps/impact.",
-            "metric": "Centrality metric for 'rank': pagerank | degree | betweenness.",
-            "limit": _LIMIT,
         },
     ),
     ToolSpec(

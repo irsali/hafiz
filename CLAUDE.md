@@ -38,14 +38,12 @@ hafiz/
 ├── cli.py              # Typer app entrypoint; wires all command groups
 ├── commands/           # CLI presentation layer (thin — delegate to core/)
 │   ├── agent.py        # install/uninstall/list — writes skills.md to agent configs
-│   ├── context.py      # context "<task>" — synthesizes chunks + graph + observations
-│   ├── extract.py      # export/import — agent-driven entity extraction
-│   ├── graph.py        # show / deps / dependents
+│   ├── context.py      # context "<task>" — synthesizes indexed content + observations
 │   ├── hooks.py        # git post-commit / post-merge installation
 │   ├── ingest.py       # chunk + embed + store
 │   ├── maintenance.py  # init, status, config, prune
 │   ├── observe.py      # persist facts / decisions / learnings / patterns / warnings
-│   ├── query.py        # vector search (+ --recall for observations)
+│   ├── query.py        # vector search (+ --observations for annotations)
 │   ├── review.py       # Layer 2 self-review
 │   └── watch.py        # long-running file watcher
 ├── core/               # Business logic; NO Typer/Rich imports here
@@ -55,12 +53,11 @@ hafiz/
 │   ├── context.py      # Context bundle assembly
 │   ├── database.py     # Async engine, session, ORM models
 │   ├── embeddings.py   # fastembed wrapper
-│   ├── extractor.py    # Agent-driven extraction helpers
 │   ├── git_hooks.py    # Hook templates + install
 │   ├── observations.py # CRUD for observations
 │   ├── review.py       # Layer 2 review logic
 │   ├── search.py       # Vector + hybrid search, scoping
-│   ├── store.py        # Chunk / entity / relation persistence
+│   ├── store.py        # Chunk / unit / revision persistence
 │   └── watcher.py      # watchdog-based file watcher
 ├── data/agents/
 │   └── skills.md       # Layer 1 contract — installed by `hafiz agent install`
@@ -128,7 +125,7 @@ indexed (`hafiz status --json` → `by_project` / `staleness`); use them:
 - **Pick 1–2 projects that match what changed** — the language whose parser you touched, several
   repos for `--workspace` / scoping changes, the largest repo for performance, a repo with
   `commits_behind > 0` for diff-driven re-ingest and staleness.
-- **Read-only by default.** `query`, `context`, `graph`, and `status` against another project are
+- **Read-only by default.** `query`, `context`, and `status` against another project are
   safe. That DB is the user's live second brain — **ask before re-ingesting any project other
   than hafiz**, and only when the change is to ingest or parsing.
 - **Machine-specific picks go in `CLAUDE.local.md`** (gitignored). Never name non-hafiz projects in
@@ -216,7 +213,7 @@ Before planning any non-trivial task, check `workitems/active/`. At session end,
 - **Core ↔ Commands split.** `hafiz/core/` holds business logic with no Typer/Rich imports. `hafiz/commands/` is presentation only: arg parsing, `--json` vs. rich output, exit codes.
 - **`--json` is non-negotiable on user-facing commands.** Agents parse it; keep shapes stable and document new fields in [commands.md](docs/commands.md).
 - **Scoping flags.** Any new search-ish command takes `--project` and `--workspace` (mutually exclusive), following the resolution rules in [hafiz/core/search.py](hafiz/core/search.py).
-- **No API-key-dependent paths.** Extraction is agent-driven only (direct-LLM path removed in `9440b3f`). Don't reintroduce one.
+- **No API-key-dependent paths.** Agents record meaning with `hafiz observe` / `hafiz note` only (direct-LLM extraction path removed in `9440b3f`). Don't reintroduce one.
 - **Error surfacing.** Human output: Rich panel + `typer.Exit(code=...)`. JSON output: `{"ok": false, "error": "..."}` to stdout + non-zero exit.
 - **Paths.** Store and compare **absolute** paths in the DB; accept relative from the CLI and resolve immediately.
 

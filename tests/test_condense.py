@@ -47,9 +47,7 @@ def test_an_element_picker_dump_keeps_the_users_words_and_the_elements_text():
 
 
 def test_urls_keep_their_host_and_path_words():
-    assert clean("update https://cookie-compliance.co/pricing/ page") == (
-        "update cookie-compliance.co pricing page"
-    )
+    assert clean("update https://example.com/pricing/ page") == ("update example.com pricing page")
 
 
 def test_code_fences_and_stack_traces_are_dropped():
@@ -69,7 +67,7 @@ LONG = (
     "respected. Something. Go. "
     + "We must check whether v2.4 fixed it in hu-banner.min.js before the release. " * 3
     + "Also confirm the Braintree settlement job for ft2479 still runs nightly. "
-    + "And keep the admin-portal payment modal as it is for now please."
+    + "And keep the billing-portal payment modal as it is for now please."
 )
 
 

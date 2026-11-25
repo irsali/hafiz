@@ -166,7 +166,6 @@ In a Cursor chat, ask something that *should* make the model reach for
 hafiz, e.g.:
 
 - "Use hafiz to find where authentication is handled in this repo."
-- "Before refactoring `UserService`, check what depends on it via hafiz."
 - "What decisions have I recorded about the auth system?"
 
 Watch what Cursor does:
@@ -205,10 +204,8 @@ back to the main repo and we'll triage what's worth fixing for real.
 
 These are known gaps — logging them adds noise without insight:
 
-- **Non-Python files don't get AST graph data.** `.ts`, `.js`, `.cs`,
-  `.go`, etc. fall through to the whole-file parser; they're searchable
-  but `hafiz graph deps` won't have edges for them. Tree-sitter parsers
-  are queued — see prior conversation.
+- **Code is indexed whole-file**, same as any other non-Markdown file —
+  searchable with `hafiz query`, not as an AST call graph.
 - **Cursor rules with `alwaysApply: true` push a lot of context.** The
   whole skills.md goes in. A "compact" Cursor variant is worth doing
   later but isn't ready yet.

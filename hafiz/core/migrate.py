@@ -47,7 +47,6 @@ from hafiz.core.database import (
     Commit,
     Communication,
     CommunicationMessage,
-    Edge,
     Embedding,
     File,
     ProjectName,
@@ -76,7 +75,6 @@ COPY_ORDER: tuple[type[Base], ...] = (
     Unit,
     UnitRevision,
     Embedding,
-    Edge,
     Annotation,
     Communication,
     CommunicationMessage,
@@ -258,6 +256,29 @@ async def _prepare_target(engine, url: str) -> None:
             )
 
 
+async def _assert_source_current(engine, url: str) -> None:
+    """Refuse a source that is behind the schema this code expects.
+
+    The target is built from today's models and stamped at head, so a source
+    with pending migrations would carry rows those migrations remove — after
+    0011, ``code.*`` units — into a store Alembic believes is up to date, and
+    nothing would ever clean them up.
+    """
+    from alembic.script import ScriptDirectory
+
+    from hafiz.core.database import _alembic_config, _stamped_revision
+
+    head = ScriptDirectory.from_config(_alembic_config(url)).get_current_head()
+    async with engine.connect() as conn:
+        at = await conn.run_sync(_stamped_revision)
+    if at != head:
+        raise MigrationError(
+            f"The source database is at schema revision {at or '(none)'}, not {head}. "
+            "Upgrade it first: with it as the configured database, run `hafiz init`, "
+            "then migrate."
+        )
+
+
 async def _copy_table(
     source: async_sessionmaker[AsyncSession],
     target: async_sessionmaker[AsyncSession],
@@ -410,6 +431,7 @@ async def migrate_backend(
     )
 
     try:
+        await _assert_source_current(source_engine, source_url)
         if dry_run:
             async with source_factory() as read:
                 for model in COPY_ORDER:

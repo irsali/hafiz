@@ -232,6 +232,26 @@ async def test_a_non_empty_target_is_refused(target_url):
         await migrate_backend(source_url=await _configured_url(), target_url=target_url)
 
 
+async def test_a_source_behind_the_schema_is_refused(target_url):
+    """A source with pending migrations would carry rows they remove into a
+    target stamped at head — after 0011, code units nothing cleans up."""
+    from sqlalchemy import text
+
+    from hafiz.core.database import get_session_factory
+
+    async with get_session_factory()() as s:
+        head = (await s.execute(text("SELECT version_num FROM alembic_version"))).scalar()
+        await s.execute(text("UPDATE alembic_version SET version_num = '0010'"))
+        await s.commit()
+    try:
+        with pytest.raises(MigrationError, match="hafiz init"):
+            await migrate_backend(source_url=await _configured_url(), target_url=target_url)
+    finally:
+        async with get_session_factory()() as s:
+            await s.execute(text("UPDATE alembic_version SET version_num = :v"), {"v": head})
+            await s.commit()
+
+
 async def test_migrating_onto_itself_is_refused():
     url = await _configured_url()
     with pytest.raises(MigrationError, match="same database"):

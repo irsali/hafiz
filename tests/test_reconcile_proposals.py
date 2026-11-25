@@ -376,10 +376,10 @@ def test_merge_command_carries_project_and_source_so_the_new_row_keeps_them():
         _ann("banner blocks scripts before consent on every region", days=0, source="user:anjum"),
         _ann("banner releases scripts after consent is recorded", days=5),
     ]
-    cmd = _commands_for(_build_cluster("fact", "cookie-notice", anns, [0, 1], _sim(2)))[0]
+    cmd = _commands_for(_build_cluster("fact", "weather-app", anns, [0, 1], _sim(2)))[0]
     assert "--source user:anjum" in cmd
-    # Always quoted: real project names have spaces in them ("Admin Portal").
-    assert "--project 'cookie-notice'" in cmd
+    # Always quoted: real project names have spaces in them ("Billing Portal").
+    assert "--project 'weather-app'" in cmd
 
 
 def test_project_name_with_a_space_survives_as_one_argument():
@@ -387,8 +387,8 @@ def test_project_name_with_a_space_survives_as_one_argument():
         _ann("portal collapses the geolocation section when it is off", days=0),
         _ann("portal gates the geolocation method radio behind the toggle", days=5),
     ]
-    cmd = _commands_for(_build_cluster("fact", "Admin Portal", anns, [0, 1], _sim(2)))[0]
-    assert "--project 'Admin Portal'" in cmd
+    cmd = _commands_for(_build_cluster("fact", "Billing Portal", anns, [0, 1], _sim(2)))[0]
+    assert "--project 'Billing Portal'" in cmd
 
 
 def test_merge_command_omits_project_when_the_rows_have_none():

@@ -1,10 +1,10 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 18 -->
-# Hafiz — Workspace Intelligence (v18)
+<!-- SKILLS_VERSION: 19 -->
+# Hafiz — Workspace Intelligence (v19)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
-user's **sovereign second brain** — not just code indexing. It tracks
-code structure via AST parsers, attaches agent-authored meaning via
+user's **sovereign second brain** — not just a file index. It indexes
+docs and files for semantic search, attaches agent-authored meaning via
 annotations, and preserves a git-aware history across branches and
 rewrites. Always use `--json` when parsing output programmatically.
 
@@ -22,7 +22,7 @@ side-by-side; agents must treat them differently.
 
 | Layer | Tables | Examples | Default visibility |
 |---|---|---|---|
-| **Knowledge** | `units` · `unit_revisions` · `embeddings` · `edges` · `annotations` · `files` · `commits` | code, docs, decisions, learnings, patterns, runbooks | surfaced by default |
+| **Knowledge** | `units` · `unit_revisions` · `embeddings` · `annotations` · `files` · `commits` | docs, files, decisions, learnings, patterns, runbooks | surfaced by default |
 | **Source** | `sessions` · `communications` · `communication_messages` · `annotation_targets` · `retrievals` | imported agent transcripts, recorded searches, future events | **hidden by default; opt-in via `hafiz recall` or `--include-transcripts`** |
 
 **Rule of thumb:** the wisdom layer is primary. Source rows surface
@@ -31,20 +31,20 @@ with raw transcripts.
 
 ## Ownership rule (load-bearing)
 
-Parsers own structure. Agents own meaning.
+Parsers own indexed content. Agents own meaning.
 
-- **Structural facts** — classes, functions, modules, imports, calls,
-  inheritance. Produced by AST parsers at ingest time. You do not
-  write these; `hafiz extract import` rejects them.
-- **Semantic facts** — decisions, learnings, patterns, warnings,
-  concepts, workarounds. Produced by you, via `hafiz observe` for
-  free-floating wisdom or `hafiz extract import` for unit-bound
-  annotations + semantic edges.
+- **Indexed content** — Markdown/prose is split into `doc.heading` /
+  `doc.paragraph` units; everything else (including code) is one
+  `file.raw` unit per file. Produced by parsers at ingest time. You
+  do not write these.
+- **Meaning** — decisions, learnings, patterns, warnings, concepts,
+  workarounds. Produced by you, via `hafiz observe` or `hafiz note`.
 
-Units are namespaced by kind (`code.function`, `code.class`,
-`doc.heading`, `mail.message`, `file.raw`, …). Note that `chat.turn`
-is no longer a unit kind — agent transcripts live in the source layer
-(`communications` + `communication_messages`).
+Units are namespaced by kind (`doc.heading`, `doc.paragraph`,
+`file.raw`, `mail.message`, …). Note that `chat.turn` is no longer a
+unit kind — agent transcripts live in the source layer
+(`communications` + `communication_messages`). There is no `code`
+domain any more.
 
 Annotation kinds: `fact` · `decision` · `learning` · `pattern` ·
 `warning` · `note` · `concept` · `service`.
@@ -53,27 +53,25 @@ Annotation kinds: `fact` · `decision` · `learning` · `pattern` ·
 
 You MUST follow these rules in every session:
 
-1. **Before starting ANY coding task**, gather context first:
+1. **When a task needs prior docs or decisions** and no recall hook already
+   injected them, pull a context bundle:
    ```bash
    hafiz context "<task description>" --json
    ```
+   Prefer `--limit`, `--min-score 0.05`, and `--format compact --with-ids`
+   when injecting into your own context (see **Retrieval hygiene**).
 
-2. **Before refactoring or modifying a unit**, check what depends on it:
-   ```bash
-   hafiz graph impact <UnitName> --json
-   ```
-
-3. **After making an architectural decision**, record it:
+2. **After making an architectural decision**, record it:
    ```bash
    hafiz observe "<what was decided and why>" --type decision --source agent:<your-name>
    ```
 
-4. **After discovering a gotcha or non-obvious behavior**, record it:
+3. **After discovering a gotcha or non-obvious behavior**, record it:
    ```bash
    hafiz observe "<the gotcha>" --type warning --source agent:<your-name>
    ```
 
-5. **Before implementing a significant change, record the decision driving it.**
+4. **Before implementing a significant change, record the decision driving it.**
    Trigger: you've decided on an approach and are about to start editing. For
    agents with a pre-implementation review step (multi-perspective gate, plan
    approval, etc.), fire this right after the user approves the synthesized
@@ -90,7 +88,7 @@ You MUST follow these rules in every session:
    Carve-out: mechanical edits the user explicitly scoped ("rename X to Y",
    "apply this diff") don't need an observe — no real decision is being made.
 
-6. **Route "remember" writes to hafiz — the sovereign memory layer.**
+5. **Route "remember" writes to hafiz — the sovereign memory layer.**
    When the user says "remember X", "save this", "don't forget", or similar,
    write it to hafiz (never to an agent-local memory store):
 
@@ -121,7 +119,7 @@ You MUST follow these rules in every session:
    configs, IDE settings) may stay in whatever agent-local store exists —
    they won't port across agents anyway.
 
-7. **Never inject an unbounded, unfiltered result set.** See
+6. **Never inject an unbounded, unfiltered result set.** See
    **Retrieval hygiene** — this is the difference between hafiz being
    consulted per-task and being ignored as too expensive.
 
@@ -194,7 +192,7 @@ when reranking didn't run), plus a top-level `reranked` boolean — that's how y
 tell reranked output from vector output.
 
 **An unknown project is an error, not an empty result.** `--project` accepts
-synonyms and case/spacing variants (`account-api` finds `Account API`); a name
+synonyms and case/spacing variants (`ledger-api` finds `Ledger API`); a name
 that fits nothing, or several projects, exits `2` with `candidates` to retry
 with. On writes, a new name that is a near-certain typo of an existing project
 is refused unless `--new-project`. Omit `--project` on your own writes and the
@@ -242,21 +240,18 @@ weeks without anyone noticing:
 ## Code and docs are not the same corpus
 
 `query --observations` searches the wisdom layer. Plain `query` searches the
-indexed units — and that index is **~89% documentation**, ~7% whole-file text,
-and only ~4% code. Two consequences:
+indexed units — docs as `doc.heading` / `doc.paragraph`, and everything else
+(including code) as whole-file `file.raw` units. Domains today are `doc`,
+`file`, `chat`, `mail` — there is no `code` domain (`--include-domain code`
+matches nothing).
 
 - **Don't dismiss the unit index as "the code index".** Prose questions
   ("how does X decide which rules apply") land on the doc corpus, which is
   exactly what grep can't reach from that wording.
-- **Do check the freshness block before trusting code results.** `query` output
-  carries `staleness` naming any project whose index trails its repo, with
-  `commits_behind` / `is_ancestor`. When it's non-empty, verify against the
-  working tree — and for the file you're actively editing, prefer reading the
-  file. Staleness concentrates exactly where the work is: on a measured index,
-  4.4% of files overall had changed since indexing, but 80.5% had in the one repo
-  under active development.
-
-`--include-domain code` / `--exclude-domain code` scope this deliberately.
+- **For the file you're actively editing, prefer reading the file** (and use
+  git for history). The index is for semantic discovery across docs and
+  files; check the `staleness` block on `query` output before trusting an
+  indexed file that may trail the working tree.
 
 ## Retrieval telemetry
 
@@ -279,18 +274,16 @@ with `[telemetry] retrieval = false`. Query text stays on the machine.
 
 | Command | When to use |
 |---------|-------------|
-| `hafiz context "<task>"` | **First thing** — bundle of relevant units, graph neighborhood, and annotations |
+| `hafiz context "<task>"` | Pull relevant indexed content (docs + files) and matching observations for a task |
 | `hafiz context "<task>" --limit 5 --min-score 0.05 --format compact --with-ids` | The form to use when injecting into your own context — capped, filtered, token-lean |
 | `hafiz context "<task>" --include-transcripts` | Same as above, plus matching turns from imported transcripts (opt-in source layer) |
 | `hafiz query "<text>" --json` | Semantic search over indexed content (knowledge layer) |
 | `hafiz query "<text>" --min-score 0.05 --format compact` | Same, with a relevance floor and the token-lean shape. `--format rich\|json\|compact\|md`; `--json` is an alias for `--format json` |
 | `hafiz query "<text>" --include-transcripts --json` | Add matching transcript turns to results, tagged ``layer="source"`` |
-| `hafiz query "<text>" --include-domain code --json` | Restrict to a data domain (``code``, ``doc``, ``chat``, …). Inverse: ``--exclude-domain``. Comma-separated for multiple. |
+| `hafiz query "<text>" --include-domain doc --json` | Restrict to a data domain (``doc``, ``file``, ``chat``, ``mail``). Inverse: ``--exclude-domain``. Comma-separated for multiple. |
 | `hafiz retrievals --since-days 7 --json` | What the store was asked for and couldn't answer — a worklist of things to record |
-| `hafiz query "<topic>" --observations --type decision --json` | Search the wisdom layer (annotations: decisions, facts, learnings, patterns, warnings). *(Was `--recall`; the flag was renamed to end the collision with the command below. `--recall` still works as a hidden alias for one release, with a deprecation warning.)* |
+| `hafiz query "<topic>" --observations --type decision --json` | Search the wisdom layer (annotations: decisions, facts, learnings, patterns, warnings) |
 | `hafiz recall <session-or-comm-id>` | List ordered messages from a session/communication (source layer). Add ``--query "<text>"`` for similarity search across the session's turns. Use deliberately. *(`recall` is the source layer; `query --observations` is the wisdom layer — different jobs.)* |
-| `hafiz graph deps <name> --json` | What this unit depends on (outgoing edges) |
-| `hafiz graph impact <name> --json` | Blast radius — what depends on this unit (incoming edges) |
 | `hafiz observe "<text>" --type <kind> --source agent:<name>` | Record a decision / warning / pattern / learning / fact |
 | `hafiz observe "<text>" --derived-from <id>,<id>` | Cite annotations OR messages OR sessions — polymorphic via the ``annotation_targets`` pivot |
 | `hafiz note "<text>" --source agent:<name>` | Capture a raw thought — anything below decision-grade |
@@ -319,9 +312,9 @@ Client config is one entry, `command: hafiz`, `args: ["mcp"]`.
 **Use it exactly as you would the CLI.** The tools take structured
 parameters instead of flags, so `hafiz_query(observations=true,
 kind="decision")` is `query --observations --type decision`. Every
-**Required Behavior** above still applies unchanged: gather context
-before a task, check impact before refactoring, record decisions and
-gotchas as you make them.
+**Required Behavior** above still applies unchanged: pull context when
+a task needs prior docs or decisions, and record decisions and gotchas
+as you make them.
 
 Three things worth knowing, because they are deliberate:
 
@@ -612,70 +605,6 @@ hafiz forget --all-expired                      # sweep retention_until
 pure tool-result echoes don't get embedded. Salient turns are still
 written (``content`` is canonical) — just not vector-indexed.
 
-## Agent Extraction (v2)
-
-When you want to attach structured annotations or semantic edges to
-the parsed code graph in bulk — beyond the one-shot `hafiz observe` —
-use the extract pipeline.
-
-**Step 1 — see what's already parsed:**
-```bash
-hafiz extract export --project <name> --json > /tmp/units.json
-```
-Output is the AST-known units (with their stable `identity_key`) and
-structural edges. Use it to know which units exist before you
-annotate them — don't re-derive structure.
-
-**Step 2 — produce an agent-extraction payload (v2):**
-```json
-{
-  "version": 2,
-  "annotations": [
-    {
-      "content": "Canonical auth entry — all routes funnel through here",
-      "kind": "pattern",
-      "source": "agent:<your-name>",
-      "unit_identity_key": "<copy from step 1>",
-      "confidence": 0.9,
-      "tags": ["auth"]
-    }
-  ],
-  "edges": [
-    {
-      "source_name": "UserService",
-      "source_file": "/abs/path/auth.py",
-      "target_name": "SecurityPolicy",
-      "target_file": "/abs/path/policy.py",
-      "relation": "implements_pattern",
-      "evidence": "canonicalized via policy_engine.enforce(...)"
-    }
-  ]
-}
-```
-
-Rules:
-- **Kinds:** annotations only — `fact` · `decision` · `learning` ·
-  `pattern` · `warning` · `note` · `concept` · `service`.
-  Anything starting `code.*` is rejected (that's the parser's job).
-- **Relations:** semantic only — `implements_pattern` · `is_workaround_for` ·
-  `supersedes_approach` · `depends_on_concept` · `related_to` ·
-  `documents` · `configures`. Structural relations
-  (`calls` / `imports` / `inherits` / `references`) are rejected.
-- **Unit references:** prefer `unit_identity_key` (copied from export).
-  Fall back to `(unit_name, source_file)` — may be ambiguous when a
-  name repeats across files.
-- **Source:** always `agent:<your-name>` or `user:<name>`.
-
-**Step 3 — import:**
-```bash
-cat /tmp/extraction.json | hafiz extract import --project <name>
-```
-
-The import surfaces per-row warnings (unknown kind, unresolved unit)
-and counts them in the summary. Unresolved references are stored with
-null unit_id / target_unit_id; they become resolvable on a later pass
-once the parser catches up.
-
 ## Ingest (for reference — users usually drive this)
 
 ```bash
@@ -706,7 +635,7 @@ Each record carries: `timestamp`, `command`, `argv`, `exception_type`,
 `message`, `traceback`, `cwd`, `hafiz_version`, `git_branch`,
 `host_fingerprint`, plus — for recognized error classes — a
 `suggested_action` string and structured `context` (e.g.,
-`{"missing_module": "scipy", "is_declared_dep": true}`).
+`{"missing_module": "asyncpg", "is_declared_dep": true}`).
 
 Recognizer set as of v10: `ModuleNotFoundError` (declared-dep aware),
 sqlalchemy `OperationalError` (DB connectivity → points at
@@ -726,7 +655,7 @@ The `--group-by exception_type` shape is distinct from the flat one
   "groups": [
     {"exception_type": "ModuleNotFoundError", "count": 3, "with_suggestions": 3,
      "most_recent_id": "...", "most_recent_timestamp": "...",
-     "sample_command": "graph stats", "sample_message": "No module named 'scipy'"}
+     "sample_command": "ingest", "sample_message": "No module named 'asyncpg'"}
   ]
 }
 ```
@@ -797,26 +726,15 @@ workstation is a no-op, not a hazard.
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `hafiz context "<task>"` | Context bundle (units + graph + annotations) | `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
+| `hafiz context "<task>"` | Context bundle (indexed content + annotations) | `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
 | `hafiz query "<text>"` | Semantic search over indexed embeddings | `--type` (unit kind), `--limit`, `--min-score`, `--format`, `--with-ids`, `--project`, `--workspace`, `--include-domain`, `--exclude-domain`, `--json` |
-| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Cross-encoder reranked by default. Renamed from `--recall`; that alias still works one release. | `--type`, `--limit`, `--min-score`, `--format`, `--with-ids`, `--no-rerank`, `--tags`, `--project`, `--workspace`, `--json` |
+| `hafiz query "<text>" --observations` | Semantic search over annotations (wisdom layer). Cross-encoder reranked by default. | `--type`, `--limit`, `--min-score`, `--format`, `--with-ids`, `--no-rerank`, `--tags`, `--project`, `--workspace`, `--json` |
 
-- **Domain filter** (on `query` / `context`): `--include-domain code,doc` or `--exclude-domain code` toggle whole data domains. Domain = the part of `kind` before the dot (`code`, `doc`, `chat`, `mail`, `file`). For exact-kind filtering, use `--type code.function`. Mutually exclusive *per-domain*: `--include-domain code --exclude-domain code` errors. `session start --include-domain ...` persists a default for the cursor.
+- **Domain filter** (on `query` / `context`): `--include-domain doc,file` or `--exclude-domain file` toggle whole data domains. Domain = the part of `kind` before the dot (`doc`, `file`, `chat`, `mail`). For exact-kind filtering, use `--type doc.heading`. Mutually exclusive *per-domain*: `--include-domain doc --exclude-domain doc` errors. `session start --include-domain ...` persists a default for the cursor. There is no `code` domain.
 - **`--min-score FLOAT`** (0–1): relevance floor on the score results are *ranked* by — the reranked score under `--observations`, cosine similarity otherwise. Applied after reranking, before the limit. Reranked scores separate sharply, so useful floors are low (`0.05` default-ish, `0.4` aggressive); cosine floors sit around `0.5`–`0.65`.
 - **`--format rich|json|compact|md`**: `--json` is an alias for `--format json` and keeps its exact shape. `compact` emits content + kind + source + age; add `--with-ids` when you might `--supersedes` later. `md` emits raw markdown for prompt injection. Both **excerpt** annotations over `[annotations] snippet_chars` (default 480) to the best-matching span, marked with `excerpt: true` / `excerpt of N chars` and `…`; `json` and `rich` always carry full `content`.
 - **Two scores in `--json`**: `score` (cosine) and `rerank_score` (0–1, `null` when reranking didn't run), plus a top-level `reranked` boolean. Under reranking `score` is non-monotonic down the list — don't sort or filter on it.
 - **Blank query → exit 2** with `{"ok": false, "error": ...}` on both commands. Check the exit code if you interpolate a variable into the query.
-
-### Knowledge Graph
-
-| Command | Purpose | Key Flags |
-|---------|---------|-----------|
-| `hafiz graph show <name>` | Unit and its direct connections | `--project`, `--json` |
-| `hafiz graph deps <name>` | What this unit depends on (outgoing) | `--project`, `--json` |
-| `hafiz graph impact <name>` | Blast radius — what depends on it | `--project`, `--json` |
-| `hafiz graph path <from> <to>` | Shortest directed path | `--project`, `--json` |
-| `hafiz graph rank` | Top units by centrality | `--metric`, `--top`, `--project`, `--json` |
-| `hafiz graph stats` | Overall graph health | `--project`, `--top-central`, `--json` |
 
 ### Annotations (the "wisdom layer")
 
@@ -841,13 +759,6 @@ workstation is a no-op, not a hazard.
 - **Contradicting knowledge**: never overwrite. Replace with `--supersedes <old-uuid>`, retire (no replacement) with `forget <id> --annotation`, read prior beliefs with `--include-superseded`. See *Capture → Distill* step 4 for the full decision tree.
 - **Lineage**: `--derived-from <ids>` records distillation source without replacing.
 
-### Extraction (agent contract v2)
-
-| Command | Purpose | Key Flags |
-|---------|---------|-----------|
-| `hafiz extract export` | Emit the AST-known units + structural edges to attach annotations to | `--project`, `--limit`, `--pretty` |
-| `hafiz extract import` | Import v2 payload (annotations + semantic edges) from JSON | `--file`, `--project` |
-
 ### Indexing & Maintenance
 
 | Command | Purpose | Key Flags |
@@ -870,10 +781,9 @@ workstation is a no-op, not a hazard.
 ### Sovereignty (export)
 
 The portability complement to `forget`: a one-way dump of the brain's
-**wisdom** (annotations) to plain files. Code/AST structure is excluded
-(git is its sovereign copy); forgotten and retention-expired rows are
-never included. **Not** `extract export` — that emits AST units as an
-agent-extraction payload.
+**wisdom** (annotations) to plain files. Indexed file bodies are
+excluded (git is their sovereign copy); forgotten and retention-expired
+rows are never included.
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
@@ -905,13 +815,12 @@ designed to enable it later.
 | `hafiz config apply` | Run probers + persist to sticky cache. Same as `doctor --apply`, narrower JSON summary. | `--json` |
 | `hafiz config clear-sticky` | Wipe the probed recommendations cache. | `--json` |
 
-### Data model — knowledge layer (the seven tables)
+### Data model — knowledge layer (six tables)
 
 - `files` — one row per file ever seen (tombstoned via `valid_until`).
-- `units` — stable identity of an addressable thing (function, heading, …). `kind` is namespaced.
+- `units` — stable identity of an addressable thing (heading, whole file, …). `kind` is namespaced.
 - `unit_revisions` — append-only versioned body; at most one `superseded_at IS NULL` per unit.
 - `embeddings` — 1:N vector search index over revisions (oversized bodies split into parts).
-- `edges` — append-only relations; `source ∈ {ast, agent, user}`.
 - `annotations` — decisions / facts / learnings. May link to a unit or float free. ``session_id`` is now a uuid FK to ``sessions``; the historical text slug is preserved as ``legacy_session_id``.
 - `commits` — git axis; populated on ingest. `rewritten_at` marks orphaned commits.
 

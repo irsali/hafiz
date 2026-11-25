@@ -54,8 +54,8 @@ def test_bullets_drop_headings_and_labels_and_keep_continuations():
 
 
 def test_specific_terms_keep_identifiers_and_drop_stock_words():
-    terms = specific_terms("Use web-channel v2.4 for #47471 because something merged")
-    assert {"web-channel", "v2.4", "47471"} <= terms
+    terms = specific_terms("Use shop-front v2.4 for #47471 because something merged")
+    assert {"shop-front", "v2.4", "47471"} <= terms
     assert not {"because", "something", "merged", "use"} & terms
 
 

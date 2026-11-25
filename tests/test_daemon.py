@@ -315,10 +315,9 @@ def test_wire_is_a_superset_of_the_public_json_contract():
 def test_context_bundle_round_trips():
     from hafiz.core.context import ContextBundle
 
-    bundle = ContextBundle(query="q", entities=[{"name": "E"}], project_distribution={"p": 2})
+    bundle = ContextBundle(query="q", project_distribution={"p": 2})
     rebuilt = ContextBundle.from_wire(bundle.to_wire())
     assert rebuilt.query == "q"
-    assert rebuilt.entities == [{"name": "E"}]
     assert rebuilt.project_distribution == {"p": 2}
     # A real bundle, not a dict — `to_compact()` is called on the result.
     assert hasattr(rebuilt, "to_compact")

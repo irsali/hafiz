@@ -1,10 +1,10 @@
-"""Smoke tests for the seven-table structural-grounding schema.
+"""Smoke tests for the structural-grounding schema.
 
 Covers basic CRUD + the load-bearing constraints on each table:
   - units.identity_key UNIQUE
   - unit_revisions partial unique on current revision
   - embeddings (unit_revision_id, part_index) UNIQUE
-  - CHECK on unit_revisions.source and edges.source
+  - CHECK on unit_revisions.source
   - FK cascade semantics
 
 Integration tests — skip gracefully when no DB is reachable.
@@ -21,7 +21,6 @@ from sqlalchemy.exc import IntegrityError
 from hafiz.core.database import (
     Annotation,
     Commit,
-    Edge,
     Embedding,
     File,
     Unit,
@@ -47,7 +46,6 @@ async def _cleanup():
     async with factory() as s:
         # Child-first so FK cascades aren't triggered unexpectedly.
         await s.execute(text("DELETE FROM annotations"))
-        await s.execute(text("DELETE FROM edges"))
         await s.execute(text("DELETE FROM embeddings"))
         await s.execute(text("DELETE FROM unit_revisions"))
         await s.execute(text("DELETE FROM units"))
@@ -237,52 +235,6 @@ async def test_embedding_revision_part_unique_and_cascade():
 
         count = await s.execute(text("SELECT COUNT(*) FROM embeddings"))
         assert count.scalar() == 0
-
-
-@pytest.mark.asyncio
-async def test_edge_source_check():
-    factory = get_session_factory()
-    async with factory() as s:
-        f = File(project="hafiz", path="/a.py")
-        s.add(f)
-        await s.flush()
-        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
-        s.add(u)
-        await s.flush()
-
-        bad = Edge(
-            source_unit_id=u.id,
-            relation="calls",
-            source="parser",  # valid for unit_revisions, NOT for edges
-        )
-        s.add(bad)
-        with pytest.raises(IntegrityError):
-            await s.commit()
-
-
-@pytest.mark.asyncio
-async def test_edge_unresolved_target():
-    """target_unit_id may be null; target_name carries the unresolved ref."""
-    factory = get_session_factory()
-    async with factory() as s:
-        f = File(project="hafiz", path="/a.py")
-        s.add(f)
-        await s.flush()
-        u = Unit(file_id=f.id, kind="code.function", name="foo", identity_key="k")
-        s.add(u)
-        await s.flush()
-
-        e = Edge(
-            source_unit_id=u.id,
-            target_unit_id=None,
-            target_name="requests.get",
-            relation="calls",
-            source="ast",
-        )
-        s.add(e)
-        await s.commit()
-
-        assert e.id is not None
 
 
 @pytest.mark.asyncio

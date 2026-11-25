@@ -3,7 +3,7 @@
 Two defects, both measured on a live 15-project index:
 
 * ``last_commit_per_project`` was ``max(hash)`` — a *lexicographic* max over
-  hex strings, i.e. an arbitrary commit. It reported Admin Portal at
+  hex strings, i.e. an arbitrary commit. It reported Billing Portal at
   ``b37cced2`` (2026-04-17) when the true latest was ``13367ea0``
   (2026-07-17), because ``b3`` > ``13`` as text. 5 of 15 projects disagreed.
 * Nothing compared the index to the repo at all, so four repos drifted 31-64

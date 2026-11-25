@@ -52,7 +52,7 @@ def test_list_empty_json():
 
 def test_list_shows_recent_json():
     _inject(RuntimeError, "first", ["ingest"])
-    rid = _inject(ValueError, "second", ["graph", "stats"])
+    rid = _inject(ValueError, "second", ["session", "show"])
 
     result = runner.invoke(app, ["errors", "list", "--json"])
     assert result.exit_code == 0
@@ -123,22 +123,22 @@ def test_clear_noop_when_empty():
     assert payload["cleared"] == 0
 
 
-# ── scipy suggestion end-to-end ───────────────────────────────────────
+# ── declared-dependency suggestion end-to-end ───────────────────────────────────────
 
 
-def test_modulenotfound_scipy_gets_pipx_inject_suggestion():
-    exc = ModuleNotFoundError("No module named 'scipy'")
-    exc.name = "scipy"
+def test_modulenotfound_declared_dep_gets_pipx_inject_suggestion():
+    exc = ModuleNotFoundError("No module named 'pathspec'")
+    exc.name = "pathspec"
     try:
         raise exc
     except ModuleNotFoundError as e:
-        rec = error_log.log_exception(e, argv=["graph", "stats"])
+        rec = error_log.log_exception(e, argv=["session", "show"])
 
     result = runner.invoke(app, ["errors", "show", rec.id, "--json"])
     payload = json.loads(result.stdout)
     assert payload["suggested_action"] is not None
     assert "pipx inject" in payload["suggested_action"]
-    assert payload["context"]["missing_module"] == "scipy"
+    assert payload["context"]["missing_module"] == "pathspec"
     assert payload["context"]["is_declared_dep"] is True
 
 
@@ -184,12 +184,12 @@ def test_list_group_by_exception_type_json_shape():
 
 def test_list_group_by_with_suggestions_count():
     """A recognized error contributes to with_suggestions."""
-    exc = ModuleNotFoundError("No module named 'scipy'")
-    exc.name = "scipy"
+    exc = ModuleNotFoundError("No module named 'pathspec'")
+    exc.name = "pathspec"
     try:
         raise exc
     except ModuleNotFoundError as e:
-        error_log.log_exception(e, argv=["graph", "stats"])
+        error_log.log_exception(e, argv=["session", "show"])
     _inject(RuntimeError, "no advice for me", ["ingest"])
 
     result = runner.invoke(app, ["errors", "list", "--group-by", "exception_type", "--json"])

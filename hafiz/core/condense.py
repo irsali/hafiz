@@ -37,7 +37,7 @@ _FENCE = re.compile(r"```.*?(```|$)", re.S)
 # Cursor's element picker pastes "DOM Path: …", "Position: top=…px, …" and
 # "HTML Element: <tag …>text</tag>", then the user's own words on the same line.
 # Each pattern stops where the dump ends so those words survive, and the
-# element's visible text ("Manage in Admin Portal") is kept — it names the topic.
+# element's visible text ("Manage in Billing Portal") is kept — it names the topic.
 _PICKER = re.compile(
     r"DOM Path:[^\n]*?(?=Position:|\n|$)|Position:\s*\w+=[\w.-]+(?:,\s*\w+=[\w.-]+)*"
 )

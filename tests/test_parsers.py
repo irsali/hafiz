@@ -1,7 +1,7 @@
 """Tests for hafiz.core.parsers — Protocol contract, concrete parsers,
 registry behavior, and entry-point discovery.
 
-The Protocol tests target behavior (units, edges, kinds, registration),
+The Protocol tests target behavior (units, kinds, registration),
 not implementation details. Concrete parsers are exercised with small
 inline fixtures.
 """
@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from hafiz.core.parsers import (
-    ParsedEdge,
     ParsedUnit,
     Parser,
     ParseResult,
@@ -22,7 +21,6 @@ from hafiz.core.parsers import (
     reset_registry,
 )
 from hafiz.core.parsers.prose import ProseParser
-from hafiz.core.parsers.python_ast import PythonAstParser
 from hafiz.core.parsers.whole_file import WholeFileParser
 
 # ---------------------------------------------------------------------------
@@ -32,7 +30,7 @@ from hafiz.core.parsers.whole_file import WholeFileParser
 
 @pytest.mark.parametrize(
     "parser",
-    [PythonAstParser(), ProseParser(), WholeFileParser()],
+    [ProseParser(), WholeFileParser()],
 )
 def test_parser_satisfies_protocol(parser):
     assert isinstance(parser, Parser)
@@ -44,7 +42,6 @@ def test_parser_satisfies_protocol(parser):
 @pytest.mark.parametrize(
     "parser,path,content",
     [
-        (PythonAstParser(), Path("t.py"), "x = 1\n"),
         (ProseParser(), Path("t.md"), "# Hi\nHello.\n"),
         (WholeFileParser(), Path("t.xyz"), "anything\n"),
     ],
@@ -53,226 +50,25 @@ def test_parse_returns_parse_result(parser, path, content):
     result = parser.parse(path, content)
     assert isinstance(result, ParseResult)
     assert all(isinstance(u, ParsedUnit) for u in result.units)
-    assert all(isinstance(e, ParsedEdge) for e in result.edges)
-
-
-# ---------------------------------------------------------------------------
-# PythonAstParser
-# ---------------------------------------------------------------------------
-
-
-def test_python_module_unit_always_emitted():
-    result = PythonAstParser().parse(Path("mod.py"), "x = 1\n")
-    kinds = [u.kind for u in result.units]
-    assert "code.module" in kinds
-    module = next(u for u in result.units if u.kind == "code.module")
-    assert module.name == "mod"
-
-
-def test_python_function_class_method_kinds():
-    code = "def top_level():\n    pass\n\nclass Foo:\n    def bar(self):\n        return 1\n"
-    result = PythonAstParser().parse(Path("a.py"), code)
-    kinds_by_name = {u.name: u.kind for u in result.units}
-    assert kinds_by_name["top_level"] == "code.function"
-    assert kinds_by_name["Foo"] == "code.class"
-    assert kinds_by_name["Foo.bar"] == "code.method"
-
-
-def test_python_inherits_edge():
-    code = "class Base:\n    pass\n\nclass Child(Base):\n    pass\n"
-    result = PythonAstParser().parse(Path("a.py"), code)
-    inherits = [e for e in result.edges if e.relation == "inherits"]
-    assert any(e.source_name == "Child" and e.target_name == "Base" for e in inherits)
-
-
-def test_python_imports_edges():
-    code = "import os\nfrom pathlib import Path\n"
-    result = PythonAstParser().parse(Path("mod.py"), code)
-    imports = [e for e in result.edges if e.relation == "imports"]
-    targets = {e.target_name for e in imports}
-    assert "os" in targets
-    assert "pathlib.Path" in targets
-    # All imports attribute to the module as source
-    assert all(e.source_name == "mod" for e in imports)
-
-
-def test_python_calls_attribute_to_nearest_caller():
-    code = (
-        "def helper():\n"
-        "    pass\n"
-        "\n"
-        "def user():\n"
-        "    helper()\n"
-        "\n"
-        "helper()\n"  # module-level call
-    )
-    result = PythonAstParser().parse(Path("mod.py"), code)
-    calls = [e for e in result.edges if e.relation == "calls"]
-    # One call from user -> helper, one from module -> helper.
-    sources = {e.source_name for e in calls if e.target_name == "helper"}
-    assert "user" in sources
-    assert "mod" in sources
-
-
-def test_python_syntax_error_degrades_to_module_unit():
-    result = PythonAstParser().parse(Path("bad.py"), "def missing_colon()\n    pass\n")
-    assert len(result.units) == 1
-    assert result.units[0].kind == "code.module"
-    assert result.edges == []
-
-
-def test_python_async_function():
-    code = "async def fetch():\n    return 1\n"
-    result = PythonAstParser().parse(Path("a.py"), code)
-    assert any(u.kind == "code.function" and u.name == "fetch" for u in result.units)
-
-
-def test_python_nested_class():
-    code = "class Outer:\n    class Inner:\n        def deep(self):\n            pass\n"
-    result = PythonAstParser().parse(Path("a.py"), code)
-    names = {u.name for u in result.units}
-    assert "Outer" in names
-    assert "Outer.Inner" in names
-    assert "Outer.Inner.deep" in names
-
-
-# ---------------------------------------------------------------------------
-# TreeSitterJsParser (JS/TS) — skipped entirely when the optional
-# tree-sitter grammars (the `hafiz[js]` extra) aren't installed.
-# ---------------------------------------------------------------------------
-
-pytest.importorskip("tree_sitter")
-pytest.importorskip("tree_sitter_javascript")
-pytest.importorskip("tree_sitter_typescript")
-
-from hafiz.core.parsers.tree_sitter_js import TreeSitterJsParser  # noqa: E402
-
-
-def test_js_satisfies_protocol():
-    parser = TreeSitterJsParser()
-    assert isinstance(parser, Parser)
-    assert ".ts" in parser.languages and ".tsx" in parser.languages
-
-
-def test_js_module_unit_always_emitted():
-    result = TreeSitterJsParser().parse(Path("mod.js"), "const x = 1;\n")
-    module = next(u for u in result.units if u.kind == "code.module")
-    assert module.name == "mod"
-    assert module.language == "javascript"
-
-
-def test_ts_language_label():
-    result = TreeSitterJsParser().parse(Path("mod.ts"), "const x = 1;\n")
-    module = next(u for u in result.units if u.kind == "code.module")
-    assert module.language == "typescript"
-
-
-def test_js_function_class_method_kinds():
-    code = "function topLevel() {}\nclass Foo {\n  bar() { return 1; }\n}\n"
-    result = TreeSitterJsParser().parse(Path("a.js"), code)
-    kinds_by_name = {u.name: u.kind for u in result.units if u.kind != "code.module"}
-    assert kinds_by_name["topLevel"] == "code.function"
-    assert kinds_by_name["Foo"] == "code.class"
-    assert kinds_by_name["Foo.bar"] == "code.method"
-
-
-def test_js_named_arrow_and_function_expression_are_functions():
-    code = "const arrow = (n) => n + 1;\nconst expr = function () { return 2; };\n"
-    result = TreeSitterJsParser().parse(Path("a.js"), code)
-    kinds_by_name = {u.name: u.kind for u in result.units if u.kind != "code.module"}
-    assert kinds_by_name["arrow"] == "code.function"
-    assert kinds_by_name["expr"] == "code.function"
-
-
-def test_js_inherits_edge():
-    code = "class Child extends Base {}\n"
-    result = TreeSitterJsParser().parse(Path("a.js"), code)
-    inherits = [e for e in result.edges if e.relation == "inherits"]
-    assert any(e.source_name == "Child" and e.target_name == "Base" for e in inherits)
-
-
-def test_ts_implements_is_not_an_inherits_edge():
-    code = "class C extends Base implements Shape {}\n"
-    result = TreeSitterJsParser().parse(Path("a.ts"), code)
-    inherits_targets = {e.target_name for e in result.edges if e.relation == "inherits"}
-    assert "Base" in inherits_targets
-    assert "Shape" not in inherits_targets
-
-
-def test_js_import_edges_es_and_require():
-    code = "import D from 'dep';\nimport { x } from './local';\nconst c = require('cjs');\n"
-    result = TreeSitterJsParser().parse(Path("mod.js"), code)
-    imports = [e for e in result.edges if e.relation == "imports"]
-    targets = {e.target_name for e in imports}
-    assert {"dep", "./local", "cjs"} <= targets
-    assert all(e.source_name == "mod" for e in imports)
-
-
-def test_js_calls_attribute_to_nearest_caller():
-    code = (
-        "function helper() {}\n"
-        "function user() { helper(); }\n"
-        "helper();\n"  # module-level call
-    )
-    result = TreeSitterJsParser().parse(Path("mod.js"), code)
-    sources = {
-        e.source_name for e in result.edges if e.relation == "calls" and e.target_name == "helper"
-    }
-    assert "user" in sources
-    assert "mod" in sources  # module-level call attributes to the module
-
-
-def test_js_member_call_target_is_dotted():
-    code = "function f() { obj.method(); }\n"
-    result = TreeSitterJsParser().parse(Path("a.js"), code)
-    calls = {e.target_name for e in result.edges if e.relation == "calls"}
-    assert "obj.method" in calls
-
-
-def test_tsx_parses_jsx_cleanly():
-    code = "import React from 'react';\nexport function App() { return build(); }\n"
-    result = TreeSitterJsParser().parse(Path("App.tsx"), code)
-    names = {u.name for u in result.units}
-    assert "App" in names
-    assert any(e.relation == "imports" and e.target_name == "react" for e in result.edges)
-
-
-def test_js_syntax_error_degrades_to_module_unit():
-    result = TreeSitterJsParser().parse(Path("bad.ts"), "function ( { not valid <<<\n")
-    assert len(result.units) == 1
-    assert result.units[0].kind == "code.module"
-
-
-def test_js_registered_in_default_registry():
-    reset_registry()
-    try:
-        r = get_registry()
-        assert r.for_path(Path("a.ts")).name == "tree_sitter_js"
-        assert r.for_path(Path("a.tsx")).name == "tree_sitter_js"
-        assert r.for_path(Path("a.jsx")).name == "tree_sitter_js"
-    finally:
-        reset_registry()
-
-
-def test_structural_parsers_declare_ast_source_tag():
-    """Structural parsers must declare ``source_tag = 'ast'`` so the store
-    lets their ``code.*`` edges into the AST-owned edges table. Regression
-    guard: the store once inferred this from ``'ast' in name``, which
-    silently blocked ``tree_sitter_js`` (no 'ast' substring) from writing
-    edges. See store._source_tag."""
-    assert PythonAstParser.source_tag == "ast"
-    assert TreeSitterJsParser.source_tag == "ast"
 
 
 def test_store_source_tag_declaration_wins_over_name_heuristic():
     """`store._source_tag` prefers an explicit `source_tag` attribute, and
-    falls back to the legacy `'ast' in name` heuristic when it's absent."""
+    falls back to the `'ast' in name` heuristic when it's absent."""
     from hafiz.core.store import _source_tag
 
     # Explicit declaration wins even without 'ast' in the name.
-    assert _source_tag(TreeSitterJsParser()) == "ast"
+    class _Declared:
+        name = "third_party"
+        languages = [".go"]
+        source_tag = "ast"
 
-    # Legacy fallback: no source_tag attribute, name decides.
+        def parse(self, path, content):
+            return ParseResult()
+
+    assert _source_tag(_Declared()) == "ast"
+
+    # Fallback: no source_tag attribute, name decides.
     class _NamedAst:
         name = "go_ast"
         languages = [".go"]
@@ -360,37 +156,36 @@ def test_whole_file_emits_one_unit():
 
 def test_registry_routes_by_extension():
     r = ParserRegistry()
-    r.register(PythonAstParser())
     r.register(ProseParser())
     r.register(WholeFileParser())
 
-    assert r.for_path(Path("a.py")).name == "python_ast"
     assert r.for_path(Path("a.md")).name == "prose"
     assert r.for_path(Path("a.MD")).name == "prose"  # case-insensitive
-    # Unknown extension falls through to the wildcard fallback
+    # Unknown extensions — code included — fall through to the fallback
     assert r.for_path(Path("a.xyz")).name == "whole_file"
+    assert r.for_path(Path("a.py")).name == "whole_file"
 
 
 def test_registry_last_registered_wins():
     """Third-party parsers installed via entry points can override
     in-tree parsers for the same extension."""
     r = ParserRegistry()
-    r.register(PythonAstParser())
+    r.register(ProseParser())
 
-    class OverridePy:
-        name = "override_py"
-        languages = [".py"]
+    class OverrideMd:
+        name = "override_md"
+        languages = [".md"]
 
         def parse(self, path, content):
             return ParseResult()
 
-    r.register(OverridePy())
-    assert r.for_path(Path("a.py")).name == "override_py"
+    r.register(OverrideMd())
+    assert r.for_path(Path("a.md")).name == "override_md"
 
 
 def test_registry_no_parser_without_fallback_raises():
     r = ParserRegistry()
-    r.register(PythonAstParser())
+    r.register(ProseParser())
     with pytest.raises(LookupError):
         r.for_path(Path("a.xyz"))
 
@@ -410,9 +205,7 @@ def test_default_registry_covers_shipped_parsers():
     try:
         r = get_registry()
         names = {p.name for p in r.all_parsers()}
-        assert "python_ast" in names
-        assert "prose" in names
-        assert "whole_file" in names
+        assert {"prose", "whole_file"} <= names
     finally:
         reset_registry()
 
@@ -485,6 +278,6 @@ def test_entry_point_parser_that_fails_to_load_is_skipped(monkeypatch, caplog):
         r = get_registry()
         # In-tree parsers still present.
         names = {p.name for p in r.all_parsers()}
-        assert "python_ast" in names
+        assert "prose" in names
     finally:
         reset_registry()
