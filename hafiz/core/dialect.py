@@ -723,3 +723,234 @@ def most_recalled_sql(backend: str) -> str:
         return _MOST_RECALLED_SQL[backend]
     except KeyError:
         raise _unsupported("most_recalled", backend) from None
+
+
+# ---------------------------------------------------------------------------
+# 4. Keyword (full-text) search over annotations
+# ---------------------------------------------------------------------------
+# Recall is vector-first, and an embedding smears exact strings — a port, an
+# error code, a file name. This is the lexical channel beside it.
+#
+# **One tokenizer on both backends, by construction.** Postgres' default
+# parser keeps ``src/hafiz/core/agents.py`` as a single ``file`` token, so a
+# question about ``agents.py`` would never match it; FTS5's ``unicode61``
+# splits it. Rather than reconcile two parsers, the Postgres side flattens
+# every run of non-alphanumerics to a space *before* ``to_tsvector``, which
+# makes both engines index plain alphanumeric words with positions. A search
+# term is then a phrase of those words (``agents py``), matched adjacent. The
+# text-search config is ``simple`` — no stemming, no stop words — because
+# exact strings must survive, and because a stemmer would make the two
+# backends disagree (SQLite has none). Diacritics are kept on SQLite
+# (``remove_diacritics 0``) for the same parity reason.
+
+#: Generated-column / index / table names. Alembic's ``env.py`` filters these
+#: from autogenerate, because the ORM deliberately does not model them.
+KEYWORD_PG_COLUMN = "content_tsv"
+KEYWORD_PG_INDEX = "idx_annotations_content_fts"
+KEYWORD_SQLITE_TABLE = "annotations_fts"
+
+#: Annotation text past this many characters is not indexed. ``to_tsvector``
+#: raises (rather than truncates) once a vector passes 1 MiB, and a generated
+#: column raising would turn a long annotation into a failed *write*.
+_KEYWORD_MAX_CHARS = 100_000
+
+_PG_KEYWORD_DDL = (
+    f"ALTER TABLE annotations ADD COLUMN IF NOT EXISTS {KEYWORD_PG_COLUMN} tsvector "
+    "GENERATED ALWAYS AS (to_tsvector('simple', "
+    f"regexp_replace(left(content, {_KEYWORD_MAX_CHARS}), '[^[:alnum:]]+', ' ', 'g'))) STORED",
+    f"CREATE INDEX IF NOT EXISTS {KEYWORD_PG_INDEX} ON annotations USING GIN ({KEYWORD_PG_COLUMN})",
+)
+
+_SQLITE_KEYWORD_TABLE_DDL = (
+    f"CREATE VIRTUAL TABLE {KEYWORD_SQLITE_TABLE} USING fts5("
+    "content, annotation_id UNINDEXED, tokenize = 'unicode61 remove_diacritics 0')"
+)
+
+# A standalone FTS5 table keyed on the annotation's *id*, not its rowid.
+# ``VACUUM`` may renumber the rowids of a table with no INTEGER PRIMARY KEY, and
+# ``reclaim_free_pages`` runs one after a hard delete — an external-content
+# table keyed on rowid would then quietly point at the wrong rows. Deleting by
+# id scans the FTS table; at annotation-store sizes that is microseconds.
+_SQLITE_KEYWORD_TRIGGERS = (
+    "CREATE TRIGGER IF NOT EXISTS annotations_fts_ai AFTER INSERT ON annotations BEGIN "
+    f"INSERT INTO {KEYWORD_SQLITE_TABLE}(content, annotation_id) "
+    f"VALUES (substr(new.content, 1, {_KEYWORD_MAX_CHARS}), new.id); END",
+    "CREATE TRIGGER IF NOT EXISTS annotations_fts_ad AFTER DELETE ON annotations BEGIN "
+    f"DELETE FROM {KEYWORD_SQLITE_TABLE} WHERE annotation_id = old.id; END",
+    "CREATE TRIGGER IF NOT EXISTS annotations_fts_au AFTER UPDATE OF content, id ON annotations "
+    f"BEGIN DELETE FROM {KEYWORD_SQLITE_TABLE} WHERE annotation_id = old.id; "
+    f"INSERT INTO {KEYWORD_SQLITE_TABLE}(content, annotation_id) "
+    f"VALUES (substr(new.content, 1, {_KEYWORD_MAX_CHARS}), new.id); END",
+)
+
+
+def ensure_keyword_index(sync_conn: Any) -> None:
+    """Create the full-text index on ``annotations`` if it is not there. Idempotent.
+
+    Takes a *sync* connection (``await conn.run_sync(ensure_keyword_index)``;
+    Alembic's ``op.get_bind()`` is one too). Three callers need it, which is
+    why it is not just the migration: a new embedded store is built from the ORM
+    and stamped at head, and ``migrate-backend`` builds its target the same
+    way — neither replays migrations, so neither would otherwise get the index.
+
+    Postgres: a stored generated ``tsvector`` column plus a GIN index; the
+    database keeps it in sync, so no write path has to know it exists.
+    SQLite: an FTS5 table kept in sync by triggers, and backfilled from the
+    existing rows the first time it is created.
+    """
+    from sqlalchemy import text
+
+    backend = sync_conn.dialect.name
+    if backend == POSTGRESQL:
+        for ddl in _PG_KEYWORD_DDL:
+            sync_conn.execute(text(ddl))
+        return
+    if backend != SQLITE:
+        raise _unsupported("keyword_index", backend)
+
+    exists = sync_conn.execute(
+        text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :n"),
+        {"n": KEYWORD_SQLITE_TABLE},
+    ).first()
+    if not exists:
+        sync_conn.execute(text(_SQLITE_KEYWORD_TABLE_DDL))
+        sync_conn.execute(
+            text(
+                f"INSERT INTO {KEYWORD_SQLITE_TABLE}(content, annotation_id) "
+                f"SELECT substr(content, 1, {_KEYWORD_MAX_CHARS}), id FROM annotations"
+            )
+        )
+    for ddl in _SQLITE_KEYWORD_TRIGGERS:
+        sync_conn.execute(text(ddl))
+
+
+def drop_keyword_index(sync_conn: Any) -> None:
+    """Remove what :func:`ensure_keyword_index` made. Idempotent."""
+    from sqlalchemy import text
+
+    backend = sync_conn.dialect.name
+    if backend == POSTGRESQL:
+        sync_conn.execute(text(f"DROP INDEX IF EXISTS {KEYWORD_PG_INDEX}"))
+        sync_conn.execute(
+            text(f"ALTER TABLE annotations DROP COLUMN IF EXISTS {KEYWORD_PG_COLUMN}")
+        )
+    elif backend == SQLITE:
+        for trigger in ("annotations_fts_ai", "annotations_fts_ad", "annotations_fts_au"):
+            sync_conn.execute(text(f"DROP TRIGGER IF EXISTS {trigger}"))
+        sync_conn.execute(text(f"DROP TABLE IF EXISTS {KEYWORD_SQLITE_TABLE}"))
+    else:
+        raise _unsupported("keyword_index", backend)
+
+
+def keyword_query_text(backend: str, terms: list[tuple[str, ...]]) -> str:
+    """The backend's match expression for ``terms``: OR of phrases.
+
+    Each term is a tuple of alphanumeric words that must appear adjacent and in
+    order; terms are OR'd, because a natural-language prompt matches through
+    *some* of its words — AND of every word would match nothing. The words are
+    pure ``[^\\W_]+`` runs (see :func:`hafiz.core.keyword.match_terms`), so
+    quoting them needs no escaping.
+    """
+    if backend == POSTGRESQL:
+        return " | ".join(" <-> ".join(f"'{w}'" for w in term) for term in terms)
+    if backend == SQLITE:
+        return " OR ".join('"' + " ".join(term) + '"' for term in terms)
+    raise _unsupported("keyword_search", backend)
+
+
+#: A term that appears in more than this share of the store is not a lookup, it
+#: is vocabulary ("config", "session"): matching it says nothing about which row
+#: the prompt means, and it is how an ordinary prompt used to drag in ten rows
+#: that merely shared its common words. The floor keeps a small store usable —
+#: with 40 rows, 5% is two, and every term would otherwise be "too common".
+_KEYWORD_MAX_DF_SHARE = 0.01
+_KEYWORD_MIN_DF_ALLOWANCE = 5
+
+
+async def weigh_keyword_terms(
+    session: Any, terms: list[tuple[str, ...]]
+) -> list[tuple[tuple[str, ...], float]]:
+    """Keep the terms worth matching, each with how much a match should count.
+
+    Two jobs, both from one document count per term (one index lookup apiece):
+
+    * **Drop** terms that match nothing (no row to find) and terms that match a
+      large share of the store (see ``_KEYWORD_MAX_DF_SHARE``).
+    * **Weight** the rest. Ranked by how *often* terms hit, the common words win
+      and the distinctive one — the whole reason for the channel — gets buried
+      past the candidate cap (measured: the target sat at rank 30-60 of the
+      matches for a third of exact-string questions). Postgres has no
+      inverse-document-frequency in its ranking functions, so the weight is
+      ``ln(1 + N / df)`` computed here. SQLite's ``bm25()`` already weights by
+      rarity, so its weights are 1 and only the counts matter.
+    """
+    if not terms:
+        return []
+
+    import math
+
+    from sqlalchemy import column, func, literal_column, select, table
+
+    backend = backend_of(session)
+    if backend == POSTGRESQL:
+        source = table("annotations", column(KEYWORD_PG_COLUMN))
+        tsv = literal_column(f"annotations.{KEYWORD_PG_COLUMN}")
+        matches = [tsv.op("@@")(_pg_tsquery([t])) for t in terms]
+    elif backend == SQLITE:
+        source = table(KEYWORD_SQLITE_TABLE, column("annotation_id"))
+        handle = literal_column(KEYWORD_SQLITE_TABLE)
+        matches = [handle.op("MATCH")(keyword_query_text(SQLITE, [t])) for t in terms]
+    else:
+        raise _unsupported("keyword_search", backend)
+
+    total = select(func.count()).select_from(source).scalar_subquery()
+    counts = [select(func.count()).select_from(source).where(m).scalar_subquery() for m in matches]
+    row = (await session.execute(select(total, *counts))).one()
+    n = max(int(row[0]), 1)
+    ceiling = max(_KEYWORD_MIN_DF_ALLOWANCE, n * _KEYWORD_MAX_DF_SHARE)
+    return [
+        (term, math.log(1 + n / df) if backend == POSTGRESQL else 1.0)
+        for term, df in zip(terms, (int(c) for c in row[1:]), strict=True)
+        if 0 < df <= ceiling
+    ]
+
+
+def _pg_tsquery(terms: list[tuple[str, ...]]) -> Any:
+    from sqlalchemy import func, literal_column
+
+    return func.to_tsquery(literal_column("'simple'"), keyword_query_text(POSTGRESQL, terms))
+
+
+def keyword_match(
+    stmt: Any, backend: str, weighted: list[tuple[tuple[str, ...], float]]
+) -> tuple[Any, Any]:
+    """Restrict ``stmt`` (a select over ``Annotation``) to keyword matches.
+
+    ``weighted`` comes from :func:`weigh_keyword_terms`. Returns ``(stmt, rank)``
+    where ``rank`` is a best-first-*descending* sort expression: on Postgres the
+    summed weight of the terms a row matches (cover density breaks ties), on
+    SQLite ``-bm25()`` (FTS5 reports bm25 as a negative number, smaller is
+    better). The two are on different scales and are only ever used to *order*
+    — the cross-encoder decides what the rows are worth.
+
+    The caller adds every other filter and the ``LIMIT``; this only adds the
+    match, so a keyword hit is filtered exactly as a vector hit is.
+    """
+    from sqlalchemy import case, column, func, literal_column, table
+
+    terms = [term for term, _ in weighted]
+    if backend == POSTGRESQL:
+        tsv = literal_column(f"annotations.{KEYWORD_PG_COLUMN}")
+        matched = sum(
+            case((tsv.op("@@")(_pg_tsquery([term])), literal_column(f"{w:.4f}")), else_=0)
+            for term, w in weighted
+        )
+        cover = func.ts_rank_cd(tsv, _pg_tsquery(terms))
+        return stmt.where(tsv.op("@@")(_pg_tsquery(terms))), matched + cover * 0.001
+
+    if backend != SQLITE:
+        raise _unsupported("keyword_search", backend)
+    fts = table(KEYWORD_SQLITE_TABLE, column("annotation_id"))
+    handle = literal_column(KEYWORD_SQLITE_TABLE)
+    stmt = stmt.join(fts, fts.c.annotation_id == literal_column("annotations.id"))
+    return stmt.where(handle.op("MATCH")(keyword_query_text(SQLITE, terms))), -func.bm25(handle)

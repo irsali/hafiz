@@ -31,7 +31,7 @@ flowchart LR
 | Surface | What it gives |
 |---|---|
 | **Index** — `ingest`, `hooks install` | Parses Markdown/prose into `doc.*` units and everything else (including code) as whole-file `file.raw` units + embeddings. Diff-driven on re-runs ([commands/ingest.py:110-122](../hafiz/commands/ingest.py#L110-L122)). |
-| **Recall** — `query`, `query --observations`, `context` | Vector search over indexed bodies; vector search over annotations (`--observations`); combined "context bundle" of indexed content + annotations for a task ([core/context.py](../hafiz/core/context.py)). |
+| **Recall** — `query`, `query --observations`, `context` | Vector search over indexed bodies; vector + keyword search over annotations (`--observations`), merged then cross-encoder reranked; combined "context bundle" of indexed content + annotations for a task ([core/context.py](../hafiz/core/context.py)). |
 | **Remember** — `observe`, `note`, `capture` | Persists decisions, learnings, warnings, raw notes; auto-tags git commit, branch, session, task. |
 | **Curate** — `journal`, `distill`, `review` | Time-windowed digests of what was recorded; surfaces promotable notes; (Layer 2 self-review is still a stub). |
 | **Operate** — `doctor`, `config`, `errors`, `embedding` | Self-tuning per host, sovereign error log, embedding device fallback. |
@@ -270,6 +270,7 @@ A few things worth saying out loud about the schema as it stands:
 
 - **Project is the only first-class scope.** It's a string column on `files`, `units` (via `file_id`), `commits`, and `annotations`. There is no `solution`, `workspace`, `team`, `person`, `credential`, or `task_definition` table. This is a deliberate choice (parsers own indexed content, agents own meaning) — but it means anything that isn't a unit or an annotation has to live in `metadata` JSONB, in `tags[]`, or as a string in `source`/`task`.
 - **Temporal axes are first-class.** `valid_until` (tombstone), `superseded_at` / `superseded_by` (revision history), `valid_from` / `valid_until` / `supersedes_id` (annotation history), `rewritten_at` / `rewritten_to` (commit rewrites). Hafiz never deletes; it tombstones. Time-travel queries are possible without a separate audit table.
+- **The full-text index is not in the ORM.** Migration `0012` adds a generated `content_tsv` column + GIN index to `annotations` on Postgres, and an `annotations_fts` FTS5 table (trigger-synced) on SQLite, both built by `hafiz.core.dialect.ensure_keyword_index` — which new embedded stores and `migrate-backend` targets also call, since neither replays migrations. `alembic/env.py` hides them from autogenerate.
 - **`metadata` JSONB is the escape hatch.** Used today on annotations to carry `derived_from`, branch info, dirty state. Anything we want to capture that isn't already a column lands here — which is fine for low-volume agent metadata, but a poor substitute for first-class storage when the field becomes load-bearing.
 - **Old tables are gone, not deprecated.** `chunks`, `entities`, `relations`, `observations` were dropped in migration 0005 ([alembic/versions/0005_structural_grounding.py](../alembic/versions/0005_structural_grounding.py)). The `edges` table and `code.*` units were removed in migration `0011`. Don't reach for them.
 
@@ -327,7 +328,7 @@ flowchart TB
 
 Key code: [core/context.py](../hafiz/core/context.py), [core/search.py](../hafiz/core/search.py), [core/annotations.py](../hafiz/core/annotations.py) (workspace resolution lives in context).
 
-**Relevance is purely vector cosine** today — no keyword fallback, no recency boost, no usage signal. Project filtering is an exact-string match. There is no Knowledge Graph section and no `entities` key in `--json`.
+**Relevance is vector cosine** — plus, for observation recall, a keyword (full-text) channel whose hits join the vector candidates before the cross-encoder (see *Keyword channel* in [commands.md](commands.md)). There is no recency boost and no usage signal. Project filtering is an exact-string match. There is no Knowledge Graph section and no `entities` key in `--json`.
 
 ### 5.3 Observe → Distill → Supersede
 

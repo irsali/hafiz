@@ -193,6 +193,26 @@ class RerankSettings(BaseModel):
     condense_queries: bool = True
 
 
+class RecallSettings(BaseModel):
+    """How observation recall finds candidates, before the cross-encoder.
+
+    Recall is a vector search; an embedding smears exact strings (a port, an
+    error code, a file name), so a full-text channel runs beside it and its
+    hits join the vector candidates *before* reranking. The reranker and the
+    ``--min-score`` floor decide what survives; the channel only widens what
+    they get to judge. It runs only when reranking does: with no cross-encoder
+    to arbitrate, lexical hits would displace vector hits on nothing but a
+    keyword-rank guess, and ``--no-rerank`` is the mode that promises pure
+    vector order.
+    """
+
+    keyword_channel: bool = True
+    # Most keyword-only candidates added per searched text. Small on purpose:
+    # each one costs a cross-encoder pass, and the channel exists for the few
+    # rows a vector search misses, not for a second full result list.
+    keyword_candidates: int = 6
+
+
 class DedupSettings(BaseModel):
     """Near-duplicate detection for annotation writes — write hygiene.
 
@@ -444,6 +464,7 @@ class HafizSettings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     rerank: RerankSettings = Field(default_factory=RerankSettings)
+    recall: RecallSettings = Field(default_factory=RecallSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     annotations: AnnotationSettings = Field(default_factory=AnnotationSettings)
     distill: DistillSettings = Field(default_factory=DistillSettings)

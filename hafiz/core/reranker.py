@@ -50,7 +50,7 @@ _infer_lock = asyncio.Lock()
 # docs ~18ms. The relevance signal lives in the opening sentences, and that's
 # all we surface anyway — so cap the text sent to the model. Cuts rerank
 # latency ~5-10x with negligible quality loss.
-_RERANK_DOC_CHARS = 400
+RERANK_DOC_CHARS = 400
 
 
 def rerank_enabled() -> bool:
@@ -131,7 +131,7 @@ async def score_passages(query: str, passages: list[str]) -> list[float] | None:
 
     Returns ``None`` if scoring could not run, so the caller can fall back
     rather than mistake a failure for a uniform score. Passages are *not*
-    truncated to ``_RERANK_DOC_CHARS``: a caller scoring spans has already
+    truncated to ``RERANK_DOC_CHARS``: a caller scoring spans has already
     made them short, and silently trimming them here would score a prefix and
     report it as the span's score.
     """
@@ -170,8 +170,8 @@ async def rerank_scored[T](
     if not items or not query.strip():
         return [(it, None) for it in (items[:top_n] if top_n else items)]
     # Truncate to the relevance-bearing head — cross-encoder cost scales with
-    # doc length, and the opening carries the signal (see _RERANK_DOC_CHARS).
-    docs = [(text_of(it) or "")[:_RERANK_DOC_CHARS] for it in items]
+    # doc length, and the opening carries the signal (see RERANK_DOC_CHARS).
+    docs = [(text_of(it) or "")[:RERANK_DOC_CHARS] for it in items]
     try:
         model = get_reranker()
         async with _infer_lock:

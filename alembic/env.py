@@ -38,6 +38,26 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to):
+    """Hide the full-text index from autogenerate.
+
+    The ORM does not model it (a generated ``tsvector`` column on Postgres, an
+    FTS5 table and its shadow tables on SQLite), so a comparison would propose
+    dropping all of it. Revision 0012 owns those objects.
+    """
+    if not reflected:
+        return True
+    from hafiz.core.dialect import KEYWORD_PG_COLUMN, KEYWORD_PG_INDEX, KEYWORD_SQLITE_TABLE
+
+    if type_ == "table":
+        return not name.startswith(KEYWORD_SQLITE_TABLE)
+    if type_ == "column":
+        return name != KEYWORD_PG_COLUMN
+    if type_ == "index":
+        return name != KEYWORD_PG_INDEX
+    return True
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (generate SQL without connecting)."""
     url = config.get_main_option("sqlalchemy.url")
@@ -46,6 +66,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -54,7 +75,9 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection):
     """Run migrations with a given connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, include_object=include_object
+    )
     with context.begin_transaction():
         context.run_migrations()
 
