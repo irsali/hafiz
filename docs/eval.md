@@ -96,18 +96,18 @@ and `tests/`, so its recall code is `421ad3c`'s. CPU embeddings, SQLite backend,
 two runs gave identical numbers and identical failures.
 
 <!-- eval:results:start -->
-| Measure | baseline (`ad97fdc`) |
-|---|---|
-| Exact-string recall hit@1 (n=50) | 96.0% |
-| Exact-string recall hit@6 | 98.0% |
-| Exact string visible in injected text | 98.0% |
-| Decision recall hit@1 (n=45) | 77.8% |
-| Decision recall hit@6 | 77.8% |
-| Stale-belief leak rate (n=32) | 0.0% |
-| Tokens injected, on-topic prompts, mean (n=95) | 62 |
-| Tokens injected, on-topic, p95 | 117 |
-| Off-topic prompts that inject nothing (n=20) | 95.0% |
-| Tokens injected, off-topic prompts, mean | 3.0 |
+| Measure | baseline (`ad97fdc`) | after-improvements (`8031aea`) |
+|---|---|---|
+| Exact-string recall hit@1 (n=50) | 96.0% | 96.0% |
+| Exact-string recall hit@6 | 98.0% | 98.0% |
+| Exact string visible in injected text | 98.0% | 98.0% |
+| Decision recall hit@1 (n=45) | 77.8% | 77.8% |
+| Decision recall hit@6 | 77.8% | 77.8% |
+| Stale-belief leak rate (n=32) | 0.0% | 0.0% |
+| Tokens injected, on-topic prompts, mean (n=95) | 62 | 62 |
+| Tokens injected, on-topic, p95 | 117 | 117 |
+| Off-topic prompts that inject nothing (n=20) | 95.0% | 95.0% |
+| Tokens injected, off-topic prompts, mean | 3.0 | 3.0 |
 <!-- eval:results:end -->
 
 ## How to read it
@@ -136,6 +136,20 @@ against:
   above, so it falls as recall improves. All off-topic prompts but one inject
   nothing; the exception (`a process and a thread`) pulled in the unrelated
   "solver is not thread-safe" warning on a shared word.
+
+**after-improvements** adds the keyword channel (migration `0012`) and the
+every-turn hooks, and moves nothing — every number and every failure is
+identical. That is a statement about this dataset, not about the channel: the
+keyword index is built and used here (verified), but with 103 memories the
+vector path already ranks almost every exact string first, so there is no
+headroom for keyword search to win. On a 3,270-annotation real store, replaying
+40 exact-string questions, the same channel took hit@6 from 16/40 to 40/40. The
+decision misses are unchanged because their cause is the relevance floor, which
+neither change touches. Two consequences: the next lever for this eval is the
+floor on short decisions, and the dataset needs a harder exact-string set (more
+memories, needles past the reranker's 400-character window) before it can show
+keyword gains. The hook's earlier-conversation fallback is not exercised here at
+all — the eval stores no transcripts.
 
 ## Limits — please read before quoting a number
 
