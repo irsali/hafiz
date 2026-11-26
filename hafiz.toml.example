@@ -56,6 +56,17 @@ candidate_multiplier = 3
 # Env override: HAFIZ_RERANK__CONDENSE_QUERIES=false
 condense_queries = true
 
+[recall]
+# Keyword (full-text) search beside the vector search in `query --observations`
+# and `context`. An embedding smears exact strings — a port, an error code, a
+# file name — so rows that contain them verbatim are added to the vector
+# candidates before reranking; the reranker and `--min-score` decide what
+# survives. Runs only when reranking does. Same filters as the vector search.
+# Env override: HAFIZ_RECALL__KEYWORD_CHANNEL=false
+keyword_channel = true
+# Most keyword-only candidates added per searched text (each costs a rerank).
+keyword_candidates = 6
+
 [dedup]
 # Near-duplicate detection on `observe` (not `note`). Before writing, Hafiz
 # cosine-compares the new annotation against live rows of the same kind +

@@ -21,6 +21,7 @@ model reference.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -42,12 +43,16 @@ from hafiz.core.dialect import (
     backend_of,
     clustered_annotations_sql,
     cosine_distance,
+    keyword_match,
     similarity,
     tags_overlap,
+    weigh_keyword_terms,
 )
 from hafiz.core.embeddings import embed_query
 from hafiz.core.git_context import current_git_context
 from hafiz.core.results import AnnotationResult  # re-exported
+
+logger = logging.getLogger(__name__)
 
 
 async def _classify_target_kind(target_uuid: uuid.UUID) -> str | None:
@@ -1112,23 +1117,21 @@ async def _ranked_candidates(
     tags: list[str] | None,
     active_only: bool,
 ) -> list[AnnotationResult]:
-    """One text's vector candidates, cross-encoder reranked when asked, best first."""
-    from hafiz.core.reranker import rerank_scored
+    """One text's candidates, cross-encoder reranked when asked, best first.
+
+    Candidates are the vector top-N, plus — when reranking will arbitrate — the
+    top few keyword matches, merged by id. See ``recall.keyword_channel``.
+    """
+    from hafiz.core.config import load_settings
+    from hafiz.core.keyword import focus_text
+    from hafiz.core.reranker import RERANK_DOC_CHARS, rerank_scored
 
     query_embedding = await embed_query(query)
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        stmt = (
-            select(
-                Annotation,
-                similarity(Annotation.embedding, query_embedding).label("similarity"),
-            )
-            .where(Annotation.embedding.isnot(None))
-            .order_by(cosine_distance(Annotation.embedding, query_embedding))
-            .limit(fetch_limit)
-        )
-
+    def narrow(stmt):
+        """The filters both channels share. A keyword hit must never leak a row
+        the vector path would have filtered out, so there is exactly one copy."""
+        stmt = stmt.where(Annotation.embedding.isnot(None))
         if isinstance(project, list):
             stmt = stmt.where(Annotation.project.in_(project))
         elif project:
@@ -1144,9 +1147,24 @@ async def _ranked_candidates(
             now = datetime.now(UTC)
             stmt = stmt.where(Annotation.valid_from <= now)
             stmt = stmt.where((Annotation.valid_until.is_(None)) | (Annotation.valid_until > now))
+        return stmt
 
-        result = await session.execute(stmt)
-        rows = result.all()
+    cosine = similarity(Annotation.embedding, query_embedding).label("similarity")
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = narrow(
+            select(Annotation, cosine)
+            .order_by(cosine_distance(Annotation.embedding, query_embedding))
+            .limit(fetch_limit)
+        )
+        rows = (await session.execute(stmt)).all()
+
+    recall_cfg = load_settings().recall
+    focus: list[tuple[str, ...]] = []
+    if do_rerank and recall_cfg.keyword_channel and recall_cfg.keyword_candidates > 0:
+        seen = {ann.id for ann, _ in rows}
+        kw_rows, focus = await _keyword_rows(query, narrow, cosine, recall_cfg.keyword_candidates)
+        rows += [(ann, score) for ann, score in kw_rows if ann.id not in seen]
 
     candidates = [
         AnnotationResult(
@@ -1171,11 +1189,42 @@ async def _ranked_candidates(
         # be applied to the reranked order, and truncating first would discard
         # rows that clear it in favour of rows that don't.
         for result, rerank_score in await rerank_scored(
-            query, candidates, text_of=lambda r: r.content
+            query, candidates, text_of=lambda r: focus_text(r.content, focus, RERANK_DOC_CHARS)
         ):
             result.rerank_score = rerank_score
         candidates.sort(key=lambda r: r.ranking_score, reverse=True)
     return candidates
+
+
+async def _keyword_rows(query: str, narrow, cosine, cap: int) -> tuple[list, list[tuple[str, ...]]]:
+    """The best ``cap`` full-text matches for ``query``, and the terms that were looked up.
+
+    Rows are ``(annotation, cosine)``; the terms are the distinctive ones that
+    survived weighing, for the caller to show the reranker (see ``focus_text``).
+
+    ``narrow`` applies the vector channel's own filters; ``cosine`` is the same
+    similarity expression, so a keyword-only row carries the real score the
+    vector channel would have given it. Never raises: recall is read on every
+    prompt and a store that predates the index, or a query the engine rejects,
+    must cost the extra candidates and nothing more.
+    """
+    from hafiz.core.keyword import match_terms
+
+    terms = match_terms(query)
+    if not terms:
+        return [], []
+    try:
+        async with get_session_factory()() as session:
+            weighted = await weigh_keyword_terms(session, terms)
+            if not weighted:
+                return [], []
+            stmt, rank = keyword_match(select(Annotation, cosine), backend_of(session), weighted)
+            stmt = narrow(stmt).order_by(rank.desc(), Annotation.valid_from.desc()).limit(cap)
+            rows = list((await session.execute(stmt)).all())
+        return rows, [term for term, _ in weighted]
+    except Exception as exc:  # noqa: BLE001 — degrade to vector-only, never fail a recall
+        logger.warning("keyword channel skipped (%s)", exc)
+        return [], []
 
 
 async def list_annotations(

@@ -63,4 +63,4 @@ async def test_rerank_truncates_long_docs_before_scoring(monkeypatch):
     monkeypatch.setattr(reranker, "get_reranker", lambda: StubModel())
     long_doc = "x" * 5000
     await reranker.rerank("q", [{"c": long_doc}], text_of=lambda r: r["c"])
-    assert len(seen["docs"][0]) == reranker._RERANK_DOC_CHARS
+    assert len(seen["docs"][0]) == reranker.RERANK_DOC_CHARS

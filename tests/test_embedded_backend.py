@@ -600,4 +600,4 @@ async def test_init_on_an_existing_store_runs_pending_migrations(embedded_url):
     assert kinds == ["doc.heading"]
     assert commits == [None, None]  # next ingest re-reads the project, code as plain text
     assert "edges" not in tables
-    assert version == "0011"
+    assert version == "0012"

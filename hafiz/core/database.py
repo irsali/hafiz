@@ -67,6 +67,7 @@ from hafiz.core.config import get_settings
 from hafiz.core.dialect import (
     db_file_path,
     engine_options,
+    ensure_keyword_index,
     is_embedded,
     json_col,
     normalize_url,
@@ -751,6 +752,9 @@ async def create_tables(url: str | None = None) -> list[str | None]:
     else:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Not in the ORM, and a new store is stamped rather than migrated,
+            # so revision 0012 never runs for it.
+            await conn.run_sync(ensure_keyword_index)
         await loop.run_in_executor(None, command.stamp, cfg, "head")
     secure_db_file(db_url)
     return reingest

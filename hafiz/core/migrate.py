@@ -60,6 +60,7 @@ from hafiz.core.database import (
 from hafiz.core.dialect import (
     backend_of_url,
     engine_options,
+    ensure_keyword_index,
     is_embedded,
     normalize_url,
     prepare_engine,
@@ -243,6 +244,9 @@ async def _prepare_target(engine, url: str) -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Not modelled by the ORM, and this schema is stamped rather than
+        # migrated, so revision 0012 never runs against it.
+        await conn.run_sync(ensure_keyword_index)
 
     head = ScriptDirectory.from_config(_alembic_config(url)).get_current_head()
     async with engine.begin() as conn:
