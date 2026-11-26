@@ -12,17 +12,6 @@ import os
 import sys
 import threading
 
-import typer
-
-hook_app = typer.Typer(
-    name="hook",
-    help=(
-        "Agent-harness hook entry points (installed by `hafiz agent install --hooks`). "
-        "Reads the harness JSON on stdin; prints context for the model; always exits 0."
-    ),
-    no_args_is_help=True,
-)
-
 # Slack beyond the in-process timeout before the watchdog gives up on a wedged
 # native call (an ONNX run that ignores task cancellation).
 _WATCHDOG_GRACE = 3.0
@@ -35,7 +24,8 @@ def _read_stdin() -> str:
         return ""
 
 
-def _emit(mode: str) -> None:
+def run_hook_cmd(mode: str) -> None:
+    """Run one hook mode: harness JSON on stdin, markdown on stdout, always exit 0."""
     from hafiz.core.recall_hook import _settings, run_hook
 
     watchdog = None
@@ -60,15 +50,3 @@ def _emit(mode: str) -> None:
     finally:
         if watchdog is not None:
             watchdog.cancel()
-
-
-@hook_app.command("session")
-def session() -> None:
-    """SessionStart: pinned rules (tag `always`) plus recall for this repo and branch."""
-    _emit("session")
-
-
-@hook_app.command("prompt")
-def prompt() -> None:
-    """UserPromptSubmit: recall observations relevant to the submitted prompt."""
-    _emit("prompt")

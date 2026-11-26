@@ -1472,9 +1472,31 @@ hooks_app = typer.Typer(name="hooks", help="Git hook management.")
 app.add_typer(hooks_app)
 
 # `hook` (singular) is the agent-harness side: what `agent install --hooks` wires in.
-from hafiz.commands.hook import hook_app  # noqa: E402
-
+hook_app = typer.Typer(
+    name="hook",
+    help=(
+        "Agent-harness hook entry points (installed by `hafiz agent install --hooks`). "
+        "Reads the harness JSON on stdin; prints context for the model; always exits 0."
+    ),
+    no_args_is_help=True,
+)
 app.add_typer(hook_app)
+
+
+@hook_app.command("session")
+def hook_session() -> None:
+    """SessionStart: pinned rules (tag `always`) plus recall for this repo and branch."""
+    from hafiz.commands.hook import run_hook_cmd
+
+    run_hook_cmd("session")
+
+
+@hook_app.command("prompt")
+def hook_prompt() -> None:
+    """UserPromptSubmit: recall observations relevant to the submitted prompt."""
+    from hafiz.commands.hook import run_hook_cmd
+
+    run_hook_cmd("prompt")
 
 
 @hooks_app.command("install")
