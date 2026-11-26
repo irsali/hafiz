@@ -2,7 +2,8 @@
 
 A small eval of what a coding agent actually feels from Hafiz: *does the right
 memory come back, does a retired decision stay buried, and how much does it cost
-in context window?* Anyone can rerun it on a laptop in about ten minutes.
+in context window?* Anyone can rerun it on a laptop in about ten minutes on an idle machine (a run is ~230 short hafiz processes;
+it took 15 minutes on a heavily loaded 20-core box).
 
 It measures **Hafiz only**. Vendor benchmarks for agent memory (LongMemEval,
 LoCoMo, BEAM) are mostly self-run, use different setups and are not comparable
@@ -89,7 +90,24 @@ Each run is saved in [`eval/results/`](../eval/results/) (full per-question
 detail in the `.json`). The table below is regenerated from those files by
 `python eval/run.py --update-docs`; do not edit it by hand.
 
+**baseline** is `dev` at `421ad3c` (before every-turn hooks and the keyword
+search channel) plus this eval; `ad97fdc` adds only files under `eval/`, `docs/`
+and `tests/`, so its recall code is `421ad3c`'s. CPU embeddings, SQLite backend,
+two runs gave identical numbers and identical failures.
+
 <!-- eval:results:start -->
+| Measure | baseline (`ad97fdc`) |
+|---|---|
+| Exact-string recall hit@1 (n=50) | 96.0% |
+| Exact-string recall hit@6 | 98.0% |
+| Exact string visible in injected text | 98.0% |
+| Decision recall hit@1 (n=45) | 77.8% |
+| Decision recall hit@6 | 77.8% |
+| Stale-belief leak rate (n=32) | 0.0% |
+| Tokens injected, on-topic prompts, mean (n=95) | 62 |
+| Tokens injected, on-topic, p95 | 117 |
+| Off-topic prompts that inject nothing (n=20) | 95.0% |
+| Tokens injected, off-topic prompts, mean | 3.0 |
 <!-- eval:results:end -->
 
 ## How to read it
