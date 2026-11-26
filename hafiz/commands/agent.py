@@ -7,6 +7,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from hafiz.core.agent_plugins import (
+    PLUGINS,
+    install_hermes,
+    manual_config_lines,
+    uninstall_hermes,
+)
 from hafiz.core.agents import (
     AGENTS,
     current_skills_version,
@@ -156,6 +162,78 @@ def run_agent_uninstall_hooks(
     )
 
 
+def _run_plugin_install(name: str, path_override: str | None) -> None:
+    """Install a plugin-style agent integration (Hermes)."""
+    plugin = PLUGINS[name]
+    home = plugin.home(path_override)
+    console.print(f"Installing hafiz memory plugin for [bold]{plugin.display_name}[/bold]...")
+    try:
+        result = install_hermes(home, explicit_home=bool(path_override))
+    except (ValueError, OSError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+
+    icon = "[green]+[/green]" if result["plugin_action"] == "created" else "[yellow]~[/yellow]"
+    console.print(f"  {icon} {result['plugin_dir']}  [dim]({result['plugin_action']})[/dim]")
+
+    cfg = result["config"]
+    action = cfg["action"]
+    if action == "set":
+        console.print(f"  [yellow]~[/yellow] {cfg['path']}  [dim](memory.provider: hafiz)[/dim]")
+    elif action == "already":
+        console.print(f"  [dim]= {cfg['path']} already uses hafiz[/dim]")
+    elif action == "conflict":
+        console.print(
+            f"  [yellow]![/yellow] memory.provider is already '{cfg['current']}' in "
+            f"{cfg['path']} — left as is. To switch to hafiz, set it to: provider: hafiz"
+        )
+    else:
+        reason = (
+            f"No Hermes config at {cfg['path']} yet. Once it exists, add:"
+            if action == "no_config"
+            else f"Could not safely edit {cfg['path']} (unusual memory: layout). Add:"
+        )
+        console.print(f"  [yellow]![/yellow] {reason}")
+        console.print(manual_config_lines(), markup=False, highlight=False)
+
+    console.print(
+        f"\n[green]Done.[/green] {plugin.restart_hint}\n"
+        "[dim]Recall comes from your local hafiz store; each Hermes session is captured "
+        "to the transcript layer when it ends.\n"
+        "  Check:   hafiz status            (capture freshness)\n"
+        f"  Remove:  hafiz agent uninstall {name}[/dim]"
+    )
+
+
+def _run_plugin_uninstall(name: str, path_override: str | None) -> None:
+    """Remove a plugin-style agent integration, and only what hafiz wrote."""
+    plugin = PLUGINS[name]
+    home = plugin.home(path_override)
+    console.print(f"Uninstalling hafiz memory plugin for [bold]{plugin.display_name}[/bold]...")
+    result = uninstall_hermes(home)
+
+    if result["action"] == "not_found":
+        console.print(f"  [dim]- {result['plugin_dir']}  (not_found)[/dim]")
+        return
+    if result["action"] == "skipped":
+        console.print(
+            f"  [yellow]![/yellow] {result['plugin_dir']} was not installed by hafiz "
+            "(no .hafiz-managed marker) — left untouched."
+        )
+        return
+
+    console.print(f"  [red]x[/red] {result['plugin_dir']}  [dim](removed)[/dim]")
+    cfg = result["config"] or {}
+    if cfg.get("action") == "restored":
+        console.print(f"  [yellow]~[/yellow] {cfg['path']}  [dim](memory.provider restored)[/dim]")
+    elif cfg.get("action") == "left":
+        console.print(
+            f"  [yellow]![/yellow] memory.provider is still 'hafiz' in {cfg['path']} and "
+            "hafiz did not set it, so it was left alone. Change or clear it yourself."
+        )
+    console.print(f"\n[green]Done.[/green] Hafiz memory plugin removed from {plugin.display_name}.")
+
+
 def run_agent_install(
     name: str | None = None,
     *,
@@ -164,6 +242,10 @@ def run_agent_install(
     file_override: str | None = None,
 ) -> None:
     """Install hafiz skills for an agent."""
+    if name in PLUGINS:
+        _run_plugin_install(name, path_override)
+        return
+
     try:
         target, agent = resolve_target(
             name, local=local, path_override=path_override, file_override=file_override
@@ -216,6 +298,10 @@ def run_agent_uninstall(
     force: bool = False,
 ) -> None:
     """Uninstall hafiz skills for an agent."""
+    if name in PLUGINS:
+        _run_plugin_uninstall(name, path_override)
+        return
+
     try:
         target, agent = resolve_target(
             name, local=local, path_override=path_override, file_override=file_override
@@ -253,6 +339,12 @@ def run_agent_list() -> None:
     table.add_column("Local", justify="center")
 
     for agent in AGENTS.values():
+        if agent.name in PLUGINS:
+            marker = PLUGINS[agent.name].home() / "plugins" / "hafiz" / ".hafiz-managed"
+            state = "[green]installed[/green]" if marker.exists() else "[dim]available[/dim]"
+            table.add_row(agent.display_name, f"{state} [dim](plugin)[/dim]", "[dim]n/a[/dim]")
+            continue
+
         # Check global status
         if agent.supports_global:
             global_path = Path(agent.instructions["global"]).expanduser()

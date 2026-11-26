@@ -461,6 +461,7 @@ Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` wi
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file`, `--hooks` |
 | `hafiz agent install <name> --hooks` | Wire every-turn memory recall (`SessionStart` + `UserPromptSubmit`) and transcript capture (`PreCompact` + `SessionEnd`) into the agent. `claude-code` only. | `--local`, `--path`, `--file` |
+| `hafiz agent install hermes` | Install the Hermes memory plugin and select it in Hermes' config. | `--path` |
 | `hafiz import claude-code [path]` | Import session transcripts. Accepts a directory or a single `.jsonl`. | `--project`, `--since`, `--dry-run`, `--no-embed`, `--from-hook` |
 
 **Language support.** Hafiz ships a prose parser for **Markdown** (`doc.heading` / `doc.paragraph` units). Everything else — including code — is indexed whole-file as one `file.raw` unit per file, still searchable by meaning with `hafiz query`. Run `hafiz parsers list` to see what's active.
@@ -625,9 +626,21 @@ Hafiz is designed as a standalone tool that any AI agent can use via CLI. Instal
 hafiz agent install claude-code   # Claude Code
 hafiz agent install cursor        # Cursor IDE
 hafiz agent install github-copilot # GitHub Copilot
+hafiz agent install codex         # Codex CLI (writes ~/.codex/AGENTS.md)
+hafiz agent install hermes        # Hermes memory plugin (writes ~/.hermes/plugins/hafiz)
 ```
 
 This writes a skill file to the agent's configuration directory (e.g. `~/.claude/CLAUDE.md` for Claude Code). The skill teaches the agent to use `hafiz context`, `hafiz query`, and `hafiz observe` as part of its workflow.
+
+Hermes is a plugin rather than an instruction file: the install copies the
+provider into Hermes' plugin directory and sets `memory.provider: hafiz` in its
+`config.yaml`, editing that single line and nothing else. If another provider is
+already active it is left alone and you are told what to change. Use
+`--path <hermes-home>` (or `$HERMES_HOME`) for a non-default location, and
+`hafiz agent uninstall hermes` to remove exactly what was written. Every agent
+reads and writes the same local store, so a decision recorded from Claude Code
+is recalled in Hermes and Codex.
+
 
 | Flag | Description |
 |------|-------------|
