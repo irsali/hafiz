@@ -436,6 +436,13 @@ class HooksSettings(BaseModel):
     max_chars: int = Field(default=9000, ge=500)
     # Whole-call wall-clock budget, daemon spawn and model load included.
     timeout_seconds: float = Field(default=20.0, gt=0)
+    # When a prompt recalls no observation, fall back to the best matching turns
+    # from EARLIER agent conversations (never the current one; never forgotten or
+    # past-retention ones). 0.70 cosine kept every useful hit in a replay of 40
+    # empty-recall prompts and let a minority of the noise through.
+    transcript_fallback: bool = True
+    transcript_min_score: float = Field(default=0.70, ge=0, le=1)
+    transcript_limit: int = Field(default=2, ge=0)
 
 
 class WorkspaceSettings(BaseModel):

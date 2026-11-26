@@ -4,7 +4,9 @@ Two entry points, both driven by harness hooks (see ``hafiz agent install
 claude-code --hooks``):
 
 ``prompt``   UserPromptSubmit. Reads the harness JSON on stdin, takes ``.prompt``
-             and recalls the observations relevant to *that* task.
+             and recalls the observations relevant to *that* task. When none
+             match, it falls back to the best matching turns from EARLIER agent
+             conversations (``[hooks] transcript_*``), labelled as unverified.
 ``session``  SessionStart. Injects the PINNED always-on rules, then a recall
              scoped to the repo and branch the session opened in.
 
@@ -74,8 +76,12 @@ TOPICAL_LIMIT = 5
 #: the footer says so (more rows than this come back as exactly this many).
 PIN_LIMIT = 60
 
+#: Each earlier-conversation snippet is cut to about this many characters.
+TRANSCRIPT_SNIPPET_CHARS = 400
+
 PIN_HEADING = "## Always applies (hafiz — pinned)"
 PROMPT_HEADING = "## Relevant prior decisions (hafiz)"
+TRANSCRIPT_HEADING = "## From earlier conversations (hafiz — unverified, not a recorded decision)"
 
 _PIN_LIST_CMD = (
     f'hafiz query "{PIN_TAG}" --observations --tags {PIN_TAG} --no-rerank '
@@ -152,6 +158,22 @@ def render_topical(row: dict) -> str | None:
     if snippet:
         meta.append(f"excerpt of {len(content)} chars")
     return f"- **[{row.get('kind') or 'note'}]** {snippet or content}\n  _({' · '.join(meta)})_"
+
+
+def render_transcript(hit) -> str | None:
+    """An earlier-conversation turn as a bullet: trimmed, and plainly not a decision.
+
+    ``hit`` is a :class:`hafiz.core.communications.EarlierHit`. The role, age and
+    agent ride along so the model can weigh it — this is somebody's past chatter,
+    not something anyone recorded as true.
+    """
+    text = _one_line(hit.message.content)
+    if not text:
+        return None
+    if len(text) > TRANSCRIPT_SNIPPET_CHARS:
+        text = text[:TRANSCRIPT_SNIPPET_CHARS].rstrip() + "…"
+    meta = [hit.message.role, _age(hit.message.ts), hit.agent]
+    return f"- {text}\n  _({' · '.join(meta)})_"
 
 
 def assemble(
@@ -239,6 +261,18 @@ async def _recall(
     budget = load_settings().annotations.snippet_chars if snippet else 0
     rows = await query_recall(query, snippet_budget=budget, **kwargs)
     return [dataclasses.asdict(r) for r in rows]
+
+
+async def _earlier_conversations(
+    query: str, *, current_session: str | None, min_score: float, limit: int
+) -> list:
+    """Turns from earlier sessions. In-process: there is no daemon op for message
+    search, and this only runs when observation recall came back empty."""
+    from hafiz.core.communications import search_earlier_messages
+
+    return await search_earlier_messages(
+        query, exclude_external_id=current_session, min_score=min_score, limit=limit
+    )
 
 
 async def _session_projects(cwd: str | None) -> frozenset[str]:
@@ -332,10 +366,12 @@ async def run_prompt(payload: dict, *, max_chars: int) -> str:
     text = clean_prompt(payload.get("prompt"))
     if should_skip_prompt(text):
         return ""
-    rows = await _recall(
-        text[:MAX_QUERY_CHARS], limit=PROMPT_LIMIT, min_score=MIN_SCORE, snippet=True
-    )
+    query = text[:MAX_QUERY_CHARS]
+    rows = await _recall(query, limit=PROMPT_LIMIT, min_score=MIN_SCORE, snippet=True)
     bullets = [b for b in (render_topical(r) for r in rows) if b]
+
+    if not bullets:
+        return await _earlier_conversation_section(query, payload, max_chars=max_chars)
 
     def footer(dropped: list[int]) -> str:
         return (
@@ -344,6 +380,30 @@ async def run_prompt(payload: dict, *, max_chars: int) -> str:
         )
 
     return assemble([(PROMPT_HEADING, bullets)], max_chars=max_chars, footer=footer)
+
+
+async def _earlier_conversation_section(query: str, payload: dict, *, max_chars: int) -> str:
+    """The fallback for a prompt no observation answered. Best-effort: any failure
+    here degrades to printing nothing, like the rest of the hook."""
+    try:
+        cfg = _settings()
+        if not cfg.transcript_fallback or cfg.transcript_limit <= 0:
+            return ""
+        sid = payload.get("session_id")
+        hits = await _earlier_conversations(
+            query,
+            current_session=sid if isinstance(sid, str) and sid else None,
+            min_score=cfg.transcript_min_score,
+            limit=cfg.transcript_limit,
+        )
+        bullets = [b for b in (render_transcript(h) for h in hits[: cfg.transcript_limit]) if b]
+    except Exception:  # noqa: BLE001 — a hook may not fail on an optional extra
+        return ""
+    return assemble(
+        [(TRANSCRIPT_HEADING, bullets)],
+        max_chars=max_chars,
+        footer=lambda dropped: f"_hafiz: {sum(dropped)} earlier-conversation row(s) not shown._",
+    )
 
 
 async def run_session(payload: dict, *, max_chars: int) -> str:

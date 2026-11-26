@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 
 from hafiz.cli import app
 from hafiz.core import recall_hook
+from hafiz.core.communications import EarlierHit, MessageRow
 from hafiz.core.config import HooksSettings
 
 NOW = datetime.now(UTC)
@@ -67,14 +68,56 @@ class FakeStore:
         return [c for c in self.calls if not c[1].get("tags")]
 
 
+def earlier(content: str, *, role: str = "user", agent: str = "claude-code") -> EarlierHit:
+    msg = MessageRow(
+        id="m",
+        communication_id="c",
+        seq=0,
+        role=role,
+        author=None,
+        content=content,
+        ts=NOW,
+        tool_calls=None,
+        marked_salient=False,
+        metadata={},
+    )
+    return EarlierHit(message=msg, agent=agent, score=0.8)
+
+
+class FakeEarlier:
+    """Stands in for `_earlier_conversations` (the DB-backed transcript search)."""
+
+    def __init__(self, hits=(), error: Exception | None = None):
+        self.hits, self.error, self.calls = list(hits), error, []
+
+    async def __call__(self, query, **kwargs):
+        self.calls.append((query, kwargs))
+        if self.error:
+            raise self.error
+        return list(self.hits)
+
+
 @pytest.fixture
 def hook(monkeypatch):
     """Install a FakeStore and budgets; returns a function to invoke the CLI."""
     state = {"settings": HooksSettings(max_chars=9000, timeout_seconds=5)}
 
-    def configure(store: FakeStore, *, max_chars=9000, timeout=5, projects=(), topic="repo topic"):
-        state["settings"] = HooksSettings(max_chars=max_chars, timeout_seconds=timeout)
+    def configure(
+        store: FakeStore,
+        *,
+        max_chars=9000,
+        timeout=5,
+        projects=(),
+        topic="repo topic",
+        earlier_hits=None,
+        **hooks_overrides,
+    ):
+        state["settings"] = HooksSettings(
+            max_chars=max_chars, timeout_seconds=timeout, **hooks_overrides
+        )
         monkeypatch.setattr(recall_hook, "_recall", store)
+        # Never reach the real transcript search from a unit test.
+        monkeypatch.setattr(recall_hook, "_earlier_conversations", earlier_hits or FakeEarlier())
 
         async def resolve(cwd):
             return frozenset(projects)
@@ -179,6 +222,127 @@ def test_prompt_cap_is_enforced_with_a_not_shown_line(hook):
     assert 0 < shown < 6
     assert f"{6 - shown} more recalled row(s) not shown" in out
     assert "hafiz query" in out and "--observations" in out
+
+
+# ── prompt: earlier-conversation fallback ─────────────────────────────────
+
+
+def test_fallback_fires_only_when_observation_recall_is_empty(hook):
+    fallback = FakeEarlier([earlier("we fixed this by raising the lease timeout")])
+    hook.configure(
+        FakeStore(topical=[row(1, content="use httponly cookies")]), earlier_hits=fallback
+    )
+
+    out = hook("prompt", {"prompt": "why does the lease expire early?"}).output
+
+    assert out.startswith("## Relevant prior decisions (hafiz)")
+    assert "earlier conversations" not in out
+    assert fallback.calls == []
+
+
+def test_fallback_renders_a_labelled_unverified_section(hook):
+    fallback = FakeEarlier(
+        [
+            earlier("we fixed this by raising the lease timeout", role="assistant", agent="codex"),
+            earlier("the   queue\n stalls on restart"),
+        ]
+    )
+    hook.configure(FakeStore(topical=[]), earlier_hits=fallback)
+
+    result = hook("prompt", {"prompt": "why does the lease expire early?", "session_id": "s-1"})
+
+    assert result.exit_code == 0
+    out = result.output
+    assert out.startswith(
+        "## From earlier conversations (hafiz — unverified, not a recorded decision)\n"
+    )
+    assert "- we fixed this by raising the lease timeout\n  _(assistant · " in out
+    assert "· codex)_" in out and "· claude-code)_" in out
+    assert "the queue stalls on restart" in out  # whitespace collapsed
+    assert "Relevant prior decisions" not in out
+
+
+def test_fallback_asks_for_earlier_sessions_only_with_the_configured_floor_and_limit(hook):
+    fallback = FakeEarlier([earlier("something relevant to the question")])
+    hook.configure(
+        FakeStore(topical=[]),
+        earlier_hits=fallback,
+        transcript_min_score=0.8,
+        transcript_limit=1,
+    )
+
+    hook("prompt", {"prompt": "why does the lease expire early?", "session_id": "sess-42"})
+
+    query, kwargs = fallback.calls[0]
+    assert query == "why does the lease expire early?"
+    assert kwargs == {"current_session": "sess-42", "min_score": 0.8, "limit": 1}
+
+
+def test_fallback_without_a_session_id_excludes_nothing(hook):
+    fallback = FakeEarlier([earlier("something relevant to the question")])
+    hook.configure(FakeStore(topical=[]), earlier_hits=fallback)
+
+    hook("prompt", {"prompt": "why does the lease expire early?"})
+
+    assert fallback.calls[0][1]["current_session"] is None
+
+
+def test_fallback_defaults_are_pinned():
+    cfg = HooksSettings()
+    assert cfg.transcript_fallback is True
+    assert cfg.transcript_min_score == 0.70
+    assert cfg.transcript_limit == 2
+
+
+def test_fallback_can_be_switched_off(hook):
+    fallback = FakeEarlier([earlier("something relevant to the question")])
+    hook.configure(FakeStore(topical=[]), earlier_hits=fallback, transcript_fallback=False)
+
+    result = hook("prompt", {"prompt": "why does the lease expire early?"})
+
+    assert result.exit_code == 0 and result.output == ""
+    assert fallback.calls == []
+
+
+def test_fallback_never_shows_more_than_the_limit(hook):
+    hits = [earlier(f"relevant earlier turn number {i}") for i in range(5)]
+    hook.configure(FakeStore(topical=[]), earlier_hits=FakeEarlier(hits), transcript_limit=2)
+
+    out = hook("prompt", {"prompt": "why does the lease expire early?"}).output
+
+    assert out.count("relevant earlier turn") == 2
+
+
+def test_fallback_snippets_are_trimmed(hook):
+    hook.configure(FakeStore(topical=[]), earlier_hits=FakeEarlier([earlier("word " * 500)]))
+
+    out = hook("prompt", {"prompt": "why does the lease expire early?"}).output
+
+    bullet = out.split("\n\n", 1)[1].splitlines()[0]
+    assert 400 <= len(bullet) <= 410 and bullet.endswith("…")
+
+
+def test_fallback_respects_the_output_cap(hook):
+    hits = [earlier("y" * 600), earlier("z" * 600)]
+    hook.configure(FakeStore(topical=[]), earlier_hits=FakeEarlier(hits), max_chars=600)
+
+    out = hook("prompt", {"prompt": "why does the lease expire early?"}).output
+
+    assert 0 < len(out) <= 600
+
+
+def test_fallback_failure_prints_nothing_and_exits_zero(hook):
+    hook.configure(FakeStore(topical=[]), earlier_hits=FakeEarlier(error=RuntimeError("db down")))
+
+    result = hook("prompt", {"prompt": "why does the lease expire early?"})
+
+    assert result.exit_code == 0 and result.output == ""
+
+
+def test_fallback_with_no_hits_prints_nothing(hook):
+    hook.configure(FakeStore(topical=[]), earlier_hits=FakeEarlier([]))
+    result = hook("prompt", {"prompt": "why does the lease expire early?"})
+    assert result.exit_code == 0 and result.output == ""
 
 
 # ── session: pins ─────────────────────────────────────────────────────────

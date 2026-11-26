@@ -119,6 +119,15 @@ max_chars = 9000
 # On overrun the hook prints nothing and exits 0. Env override:
 # HAFIZ_HOOKS__TIMEOUT_SECONDS=20
 timeout_seconds = 20
+# When a prompt recalls NO observation, `hafiz hook prompt` falls back to the best
+# matching turns from earlier agent conversations (never the current session, and
+# never a forgotten or past-retention one), labelled as unverified earlier
+# conversation, not a recorded decision. Turn it off with false. Env override:
+# HAFIZ_HOOKS__TRANSCRIPT_FALLBACK=false
+transcript_fallback = true
+# Cosine floor for a turn to be shown, and the most snippets per prompt.
+transcript_min_score = 0.70
+transcript_limit = 2
 
 [distill]
 # How the promotable backlog is assembled. `distill` stays a scanner and never

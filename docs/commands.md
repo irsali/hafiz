@@ -45,7 +45,7 @@ Config keys are resolved against the settings models rather than an allowlist, s
 | `agent uninstall hermes [--path HOME]` | Remove only what install wrote (tracked in `plugins/hafiz/.hafiz-managed`) and restore the `memory.provider` line hafiz changed. A hand-installed plugin with no marker is skipped; a `provider: hafiz` hafiz did not set is left and reported. | — | same | rich output |
 | `agent uninstall <agent> --hooks` | Remove the recall and capture hooks, leaving user-authored hooks intact. Already-captured transcripts are untouched. | — | same | rich output |
 | `hook session` | **Harness entry point** (SessionStart). Reads the harness JSON on stdin (`.cwd`), prints markdown for the model: (1) *Always applies* — every observation tagged `always`, no reranking, no floor, rendered **whole** (never excerpted); (2) *Relevant to <repo> <branch>* — recall for the repo name + branch subject, `--min-score 0.05`, limit 5, deduped against the pins. **Never fails**: any error prints nothing, exit 0. | Embed (daemon-first) | markdown only — not a `--json` command | markdown |
-| `hook prompt` | **Harness entry point** (UserPromptSubmit). Reads `.prompt` from the harness JSON on stdin and prints *Relevant prior decisions* — `--min-score 0.05`, limit 6, long records excerpted and marked. Skips (prints nothing) prompts under 12 characters, `/loop` and `<<autonomous-loop` ticks, and harness messages (`<task-notification>`); editor preambles (`<ide_opened_file>`, `<ide_selection>`, `<system-reminder>`) are stripped first. **Never fails**: exit 0 always. | Embed (daemon-first) | markdown only | markdown |
+| `hook prompt` | **Harness entry point** (UserPromptSubmit). Reads `.prompt` from the harness JSON on stdin and prints *Relevant prior decisions* — `--min-score 0.05`, limit 6, long records excerpted and marked. Skips (prints nothing) prompts under 12 characters, `/loop` and `<<autonomous-loop` ticks, and harness messages (`<task-notification>`); editor preambles (`<ide_opened_file>`, `<ide_selection>`, `<system-reminder>`) are stripped first. When observation recall returns **nothing**, falls back to up to 2 turns from *earlier* agent conversations (cosine ≥ 0.70, never the current session, never forgotten or past-retention ones), under *From earlier conversations (hafiz — unverified, not a recorded decision)* — see *Agent hooks and pinned rules*. **Never fails**: exit 0 always. | Embed (daemon-first); transcript fallback runs in-process | markdown only | markdown |
 | `agent list` | Show which agents have skills installed | — | same | rich output |
 | `parsers list` | List registered parsers (in-tree + entry-point-loaded) and their language coverage. In-tree: prose (Markdown) and whole-file fallback. | — | `--json` | rich table |
 | `embedding status` | Show current embedding device + provenance (config / sticky cache / probe). `--json` `sticky` object carries `probe_fingerprint`, `stale`, and `stale_reason`. | — | `--json` | rich table |
@@ -157,6 +157,30 @@ them: hafiz query "always" --observations --tags always --no-rerank --limit 60
 20) bounds the whole call, daemon start and model load included; on overrun the
 hook prints nothing. Both hooks call the warm daemon first (falling back
 in-process), so the embedding model stays loaded between prompts.
+
+*Earlier-conversation fallback.* When `hook prompt` recalls **no observation**
+for a prompt, it searches the source layer for the best matching turns from
+**earlier** agent sessions and prints them under `## From earlier conversations
+(hafiz — unverified, not a recorded decision)`, each trimmed to ~400 characters
+with its role, age and agent. It never fires when an observation matched. A
+replay of 40 empty-recall prompts found the best earlier turn clearly useful 10
+times, partly useful 7 and noise 23; a cosine floor of 0.70 kept all 10 useful
+hits and let 4 noise hits through. Because transcripts are retention-bounded and
+user-redactable, the search **never** returns a message from a communication that
+was forgotten (`hafiz forget`) or is past `retention_until` (even if the sweep
+has not run), nor from the session in progress (the harness's `session_id`,
+matched against the communication's `external_id`). The same live-only filter
+now applies to `hafiz recall --query` and `--include-transcripts`; before, those
+could return turns of a forgotten or expired communication. The search runs
+in-process (there is no daemon op for message search), costing one embedding on
+a prompt that already found nothing; any failure prints nothing. Config, under
+`[hooks]`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `transcript_fallback` | `true` | Set `false` to turn the fallback off. Env: `HAFIZ_HOOKS__TRANSCRIPT_FALLBACK` |
+| `transcript_min_score` | `0.70` | Cosine floor for a turn to be shown |
+| `transcript_limit` | `2` | Most snippets per prompt (`0` also disables) |
 
 *Cursor* is instructions-only. Its hooks API
 ([cursor.com/docs/agent/hooks](https://cursor.com/docs/agent/hooks)) can inject

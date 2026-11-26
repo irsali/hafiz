@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from hafiz.core.database import (
     Communication,
@@ -555,6 +555,34 @@ async def list_messages(
         ]
 
 
+def _live_communication(now: datetime):
+    """SQL predicate: the communication is neither forgotten nor past retention.
+
+    ``hafiz forget`` tombstones via ``valid_until``; retention is bounded by
+    ``retention_until`` and only swept by an explicit command, so a row can be
+    past retention yet not tombstoned. Neither may be surfaced by a search.
+    """
+    return (
+        or_(Communication.valid_until.is_(None), Communication.valid_until > now),
+        or_(Communication.retention_until.is_(None), Communication.retention_until > now),
+    )
+
+
+def _message_row(msg: CommunicationMessage) -> MessageRow:
+    return MessageRow(
+        id=str(msg.id),
+        communication_id=str(msg.communication_id),
+        seq=msg.seq,
+        role=msg.role,
+        author=msg.author,
+        content=msg.content,
+        ts=msg.ts,
+        tool_calls=msg.tool_calls,
+        marked_salient=msg.marked_salient,
+        metadata=msg.metadata_ or {},
+    )
+
+
 async def search_messages(
     query: str,
     *,
@@ -569,6 +597,9 @@ async def search_messages(
     this — it's the implementation behind ``hafiz recall`` and the
     ``--include-transcripts`` opt-in. The wisdom layer must remain
     primary by default.
+
+    Messages of a forgotten (tombstoned) or past-retention communication are
+    never returned, however the search is narrowed.
     """
     query_embedding = await embed_query(query)
     similarity_label = similarity(CommunicationMessage.embedding, query_embedding).label(
@@ -579,44 +610,75 @@ async def search_messages(
     async with factory() as session:
         stmt = (
             select(CommunicationMessage, similarity_label)
+            .join(Communication, Communication.id == CommunicationMessage.communication_id)
             .where(CommunicationMessage.embedding.isnot(None))
+            .where(*_live_communication(datetime.now(UTC)))
             .order_by(cosine_distance(CommunicationMessage.embedding, query_embedding))
             .limit(limit)
         )
         if communication_id is not None:
             stmt = stmt.where(CommunicationMessage.communication_id == communication_id)
-        elif agent is not None or session_id is not None:
-            stmt = stmt.join(
-                Communication,
-                Communication.id == CommunicationMessage.communication_id,
-            )
-            if agent is not None:
-                stmt = stmt.where(Communication.agent == agent)
-            if session_id is not None:
-                stmt = stmt.where(Communication.session_id == session_id)
+        if agent is not None:
+            stmt = stmt.where(Communication.agent == agent)
+        if session_id is not None:
+            stmt = stmt.where(Communication.session_id == session_id)
 
         rows = (await session.execute(stmt)).all()
 
-    out: list[tuple[MessageRow, float]] = []
-    for msg, sim in rows:
-        out.append(
-            (
-                MessageRow(
-                    id=str(msg.id),
-                    communication_id=str(msg.communication_id),
-                    seq=msg.seq,
-                    role=msg.role,
-                    author=msg.author,
-                    content=msg.content,
-                    ts=msg.ts,
-                    tool_calls=msg.tool_calls,
-                    marked_salient=msg.marked_salient,
-                    metadata=msg.metadata_ or {},
-                ),
-                round(float(sim), 4),
-            )
+    return [(_message_row(msg), round(float(sim), 4)) for msg, sim in rows]
+
+
+@dataclass(frozen=True)
+class EarlierHit:
+    """One message from an earlier conversation, with where it came from."""
+
+    message: MessageRow
+    agent: str
+    score: float
+
+
+async def search_earlier_messages(
+    query: str,
+    *,
+    exclude_external_id: str | None,
+    min_score: float,
+    limit: int,
+) -> list[EarlierHit]:
+    """Best matching turns from conversations OTHER than the current one.
+
+    Backs the per-prompt recall hook's fallback. Two guarantees, both enforced
+    in SQL so a caller cannot forget them: forgotten / past-retention
+    communications never match (see :func:`_live_communication`), and neither
+    does the communication the harness calls ``exclude_external_id`` (the
+    session in progress — its own turns are already in the model's context).
+    Only messages scoring at least ``min_score`` (cosine) are returned.
+    """
+    if limit <= 0:
+        return []
+    query_embedding = await embed_query(query)
+    sim = similarity(CommunicationMessage.embedding, query_embedding)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = (
+            select(CommunicationMessage, Communication.agent, sim.label("similarity"))
+            .join(Communication, Communication.id == CommunicationMessage.communication_id)
+            .where(CommunicationMessage.embedding.isnot(None))
+            .where(*_live_communication(datetime.now(UTC)))
+            .where(sim >= min_score)
+            .order_by(cosine_distance(CommunicationMessage.embedding, query_embedding))
+            .limit(limit)
         )
-    return out
+        if exclude_external_id:
+            stmt = stmt.where(
+                or_(
+                    Communication.external_id.is_(None),
+                    Communication.external_id != exclude_external_id,
+                )
+            )
+        rows = (await session.execute(stmt)).all()
+
+    return [EarlierHit(_message_row(m), agent, round(float(s), 4)) for m, agent, s in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +806,8 @@ __all__ = [
     "get_communication",
     "list_messages",
     "search_messages",
+    "search_earlier_messages",
+    "EarlierHit",
     "count_overdue_communications",
     "tombstone_expired_communications",
     "forget_communication",
