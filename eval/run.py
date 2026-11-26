@@ -156,6 +156,11 @@ def verify_isolation(sb: Sandbox) -> dict[str, str]:
         )
     if (sb.cwd / "hafiz.toml").exists():
         raise EvalError("sandbox cwd unexpectedly contains a hafiz.toml")
+    # The one config location the sandbox cannot redirect. It cannot reach the
+    # store (the URL is pinned by env), but it can change ranking settings and
+    # make the numbers irreproducible.
+    if Path("/etc/hafiz/hafiz.toml").exists():
+        raise EvalError("/etc/hafiz/hafiz.toml exists and would change eval settings; move it")
     return {"hafiz_file": str(hafiz_file), "database_url": cfg["value"], "source": cfg["source"]}
 
 
