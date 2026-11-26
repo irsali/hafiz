@@ -24,8 +24,18 @@ from hafiz.core.communications import DEFAULT_RETENTION_DAYS
 console = Console()
 
 
-def _resolve_hooks_target(name: str | None, *, local: bool) -> tuple[Path, object]:
-    """Locate the settings file whose hooks we manage for ``name``."""
+def _resolve_hooks_target(
+    name: str | None,
+    *,
+    local: bool,
+    path_override: str | None = None,
+    file_override: str | None = None,
+) -> tuple[Path, object]:
+    """Locate the settings file whose hooks we manage for ``name``.
+
+    ``--path`` / ``--file`` redirect it exactly as they redirect an instruction
+    file, which is how a trial run avoids the real ``~/.claude/settings.json``.
+    """
     if not name:
         raise ValueError(
             "Specify which agent's hooks to manage, e.g. `hafiz agent install claude-code --hooks`."
@@ -47,6 +57,8 @@ def _resolve_hooks_target(name: str | None, *, local: bool) -> tuple[Path, objec
             f"{agent.display_name} does not support {scope} hooks (available: {available})."
         )
     target = Path(raw).expanduser()
+    if path_override or file_override:
+        target = Path(path_override or target.parent).expanduser() / (file_override or target.name)
     if local and not target.is_absolute():
         target = Path.cwd() / target
     return target, agent
@@ -56,15 +68,19 @@ def run_agent_install_hooks(
     name: str | None = None,
     *,
     local: bool = False,
+    path_override: str | None = None,
+    file_override: str | None = None,
 ) -> None:
-    """Install automatic transcript-capture hooks for an agent."""
+    """Install the agent's capture and recall hooks."""
     try:
-        target, agent = _resolve_hooks_target(name, local=local)
+        target, agent = _resolve_hooks_target(
+            name, local=local, path_override=path_override, file_override=file_override
+        )
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
 
-    console.print(f"Installing hafiz capture hooks for [bold]{agent.display_name}[/bold]...")
+    console.print(f"Installing hafiz hooks for [bold]{agent.display_name}[/bold]...")
     try:
         result = install_hooks(target, agent.hooks)
     except ValueError as e:
@@ -77,10 +93,22 @@ def run_agent_install_hooks(
     if result["replaced"]:
         console.print(f"  [dim]replaced {result['replaced']} previous hafiz hook entry(ies)[/dim]")
 
+    for command in result["foreign_recall"]:
+        console.print(
+            "  [yellow]![/yellow] you already have a hook that recalls from hafiz by hand:\n"
+            f"    [dim]{command}[/dim]\n"
+            "    It will inject the same rules a second time — remove it from the settings file."
+        )
+
     console.print(
-        f"\n[green]Done.[/green] {agent.display_name} transcripts will now be captured "
-        "automatically before compaction and at session end.\n"
-        "[dim]Transcripts are stored locally, scoped to the project they ran in, and "
+        f"\n[green]Done.[/green] {agent.display_name} now gets hafiz memory automatically:\n"
+        "  [bold]recall[/bold]   pinned rules + repo context at session start, and relevant "
+        "decisions on every prompt\n"
+        "  [bold]capture[/bold]  transcripts saved before compaction and at session end\n"
+        "[dim]Pin a rule so it applies in every session:  "
+        'hafiz observe "<rule>" --type learning --tags always\n'
+        "Recall output is capped at [hooks] max_chars (default 9000) per call.\n"
+        "Transcripts are stored locally, scoped to the project they ran in, and "
         f"retained for {DEFAULT_RETENTION_DAYS} days.\n"
         "  Inspect:  hafiz status            (capture freshness)\n"
         "  Redact:   hafiz forget <session>\n"
@@ -94,10 +122,14 @@ def run_agent_uninstall_hooks(
     name: str | None = None,
     *,
     local: bool = False,
+    path_override: str | None = None,
+    file_override: str | None = None,
 ) -> None:
-    """Remove hafiz capture hooks for an agent."""
+    """Remove hafiz capture and recall hooks for an agent."""
     try:
-        target, agent = _resolve_hooks_target(name, local=local)
+        target, agent = _resolve_hooks_target(
+            name, local=local, path_override=path_override, file_override=file_override
+        )
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
@@ -118,7 +150,7 @@ def run_agent_uninstall_hooks(
     console.print(f"[green]Removed[/green] {result['removed']} hafiz hook entry(ies)")
     console.print(f"  [dim]{result['path']}[/dim]")
     console.print(
-        "\n[yellow]Automatic transcript capture is now off.[/yellow] "
+        "\n[yellow]Automatic recall and transcript capture are now off.[/yellow] "
         "[dim]Already-captured transcripts are untouched; "
         "remove them with `hafiz forget`.[/dim]"
     )

@@ -95,6 +95,20 @@ max_recommended_chars = 1500
 # Env override: HAFIZ_ANNOTATIONS__SNIPPET_CHARS=0
 snippet_chars = 480
 
+[hooks]
+# Budgets for the agent recall hooks installed by `hafiz agent install
+# claude-code --hooks` (`hafiz hook session` / `hafiz hook prompt`).
+# Hard cap on characters printed per call. Claude Code cuts hook output over
+# 10,000 characters (the model then sees only a ~2 KB preview), so keep this
+# below that. Pinned rules (tag `always`) fill it first, then topical recall;
+# anything dropped is counted in a one-line footer. Env override:
+# HAFIZ_HOOKS__MAX_CHARS=8000
+max_chars = 9000
+# Wall-clock budget for one hook call, daemon start and model load included.
+# On overrun the hook prints nothing and exits 0. Env override:
+# HAFIZ_HOOKS__TIMEOUT_SECONDS=20
+timeout_seconds = 20
+
 [distill]
 # How the promotable backlog is assembled. `distill` stays a scanner and never
 # calls an LLM — "automatic" means the backlog drains, groups and surfaces

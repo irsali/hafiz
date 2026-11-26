@@ -1471,6 +1471,11 @@ def projects_merge_cmd(
 hooks_app = typer.Typer(name="hooks", help="Git hook management.")
 app.add_typer(hooks_app)
 
+# `hook` (singular) is the agent-harness side: what `agent install --hooks` wires in.
+from hafiz.commands.hook import hook_app  # noqa: E402
+
+app.add_typer(hook_app)
+
 
 @hooks_app.command("install")
 def hooks_install(
@@ -1553,8 +1558,10 @@ def agent_install(
         False,
         "--hooks",
         help=(
-            "Install automatic transcript-capture hooks instead of the skills file. "
-            "Captures each session before compaction and at session end."
+            "Install the agent's hooks instead of the skills file: memory recall "
+            "(pinned rules at session start, relevant decisions on every prompt) and "
+            "transcript capture (before compaction and at session end). With --path/--file "
+            "they redirect the settings file."
         ),
     ),
 ) -> None:
@@ -1562,7 +1569,7 @@ def agent_install(
     if hooks:
         from hafiz.commands.agent import run_agent_install_hooks
 
-        run_agent_install_hooks(name, local=local)
+        run_agent_install_hooks(name, local=local, path_override=path, file_override=file)
         return
 
     from hafiz.commands.agent import run_agent_install
@@ -1580,14 +1587,14 @@ def agent_uninstall(
     hooks: bool = typer.Option(
         False,
         "--hooks",
-        help="Remove the automatic transcript-capture hooks instead of the skills file.",
+        help="Remove the recall and capture hooks instead of the skills file.",
     ),
 ) -> None:
     """Remove hafiz skills for an AI coding agent."""
     if hooks:
         from hafiz.commands.agent import run_agent_uninstall_hooks
 
-        run_agent_uninstall_hooks(name, local=local)
+        run_agent_uninstall_hooks(name, local=local, path_override=path, file_override=file)
         return
 
     from hafiz.commands.agent import run_agent_uninstall

@@ -46,29 +46,58 @@ def prepend_cursor_frontmatter(content: str) -> str:
 HOOK_SENTINEL = "# hafiz-managed"
 
 
-@dataclass
-class AgentHooks:
-    """How to wire automatic transcript capture into an agent harness.
+@dataclass(frozen=True)
+class HookSpec:
+    """One hook entry: which harness event fires which command.
 
-    ``events`` are the harness's own hook-event names. For capture we want
-    the moments *before context is destroyed*: compaction discards turns
-    mid-session, and session end is the last chance at the rest. Both fire
-    the same idempotent command, so double-firing costs one no-op query.
+    ``timeout`` is the harness's own kill timer in seconds. Keep it above the
+    ``timeout`` the command wraps itself in, so the shell guard fires first and
+    the harness never sees a hung hook.
     """
 
-    settings: dict[str, str]  # {"global": "~/.claude/settings.json", …}
-    events: tuple[str, ...]
+    event: str
     command: str
     timeout: int = 30
 
 
-# `--from-hook` reads the harness payload on stdin and always exits 0, so
-# the installed command needs no shell JSON handling and no `jq`. The
-# `timeout` guard and `|| true` cover the one failure hafiz itself cannot:
-# the process hanging (timeout exits 124).
+@dataclass
+class AgentHooks:
+    """How hafiz wires itself into an agent harness's hook surface.
+
+    Two jobs, each a different moment in the session:
+
+    * **Capture** (``PreCompact``, ``SessionEnd``) — the moments *before
+      context is destroyed*: compaction discards turns mid-session and session
+      end is the last chance at the rest. Both fire the same idempotent
+      command, so double-firing costs one no-op query.
+    * **Recall** (``SessionStart``, ``UserPromptSubmit``) — memory delivered
+      into the model's context at the start of a session and on every prompt.
+      Their stdout *is* the injected context, so it must stay clean.
+    """
+
+    settings: dict[str, str]  # {"global": "~/.claude/settings.json", …}
+    specs: tuple[HookSpec, ...]
+
+    @property
+    def events(self) -> tuple[str, ...]:
+        """Distinct event names, in install order."""
+        return tuple(dict.fromkeys(spec.event for spec in self.specs))
+
+
+# Every command is bounded (`timeout`), quiet (stderr discarded) and exits 0
+# (`|| true`): a hook that can break a turn gets removed. The `timeout` guard
+# covers the one failure hafiz itself cannot — the process hanging (exit 124).
+#
+# Capture: `--from-hook` reads the harness payload on stdin, needs no `jq`,
+# and always exits 0. Stdout is discarded — nothing here is for the model.
 _CAPTURE_COMMAND = (
     f"timeout 25s hafiz import claude-code --from-hook >/dev/null 2>&1 || true  {HOOK_SENTINEL}"
 )
+# Recall: stdout is the context the harness injects, so it is NOT discarded.
+# `hafiz hook` enforces its own time budget (`[hooks] timeout_seconds`, 20s by
+# default); the shell guard sits just above it.
+_RECALL_SESSION_COMMAND = f"timeout 25s hafiz hook session 2>/dev/null || true  {HOOK_SENTINEL}"
+_RECALL_PROMPT_COMMAND = f"timeout 25s hafiz hook prompt 2>/dev/null || true  {HOOK_SENTINEL}"
 
 
 @dataclass
@@ -104,8 +133,12 @@ AGENTS: dict[str, AgentDefaults] = {
                 "global": "~/.claude/settings.json",
                 "local": ".claude/settings.json",
             },
-            events=("PreCompact", "SessionEnd"),
-            command=_CAPTURE_COMMAND,
+            specs=(
+                HookSpec("SessionStart", _RECALL_SESSION_COMMAND),
+                HookSpec("UserPromptSubmit", _RECALL_PROMPT_COMMAND),
+                HookSpec("PreCompact", _CAPTURE_COMMAND),
+                HookSpec("SessionEnd", _CAPTURE_COMMAND),
+            ),
         ),
     ),
     "cursor": AgentDefaults(
@@ -330,6 +363,24 @@ def _strip_hafiz_hooks(events: dict) -> int:
     return removed
 
 
+def _foreign_recall_hooks(events: dict) -> list[str]:
+    """Commands of user-authored hooks that already shell out to hafiz recall.
+
+    A hand-rolled ``hafiz query`` script on ``SessionStart`` /
+    ``UserPromptSubmit`` — what everyone wrote before ``hafiz hook`` existed —
+    would inject its rules a second time next to ours. Reported, never touched:
+    the file is the user's.
+    """
+    found = []
+    for event in ("SessionStart", "UserPromptSubmit"):
+        for group in events.get(event, []) or []:
+            for entry in (group.get("hooks") or []) if isinstance(group, dict) else []:
+                command = str(entry.get("command", "")) if isinstance(entry, dict) else ""
+                if HOOK_SENTINEL not in command and re.search(r"hafiz[-_ ](recall|query)", command):
+                    found.append(command)
+    return found
+
+
 def _load_settings(target: Path) -> dict:
     """Read an agent settings file, tolerating absent/corrupt content.
 
@@ -371,13 +422,15 @@ def _write_settings(target: Path, data: dict) -> None:
 
 
 def install_hooks(target: Path, hooks: AgentHooks) -> dict:
-    """Install hafiz capture hooks into an agent's settings file.
+    """Install hafiz hooks (capture + recall) into an agent's settings file.
 
     Idempotent: existing hafiz-owned entries are stripped first, so
     re-running updates the command in place rather than stacking copies.
     User-authored hooks — and every other key in the file — are preserved.
 
-    Returns ``{"action", "path", "events", "replaced"}``.
+    Returns ``{"action", "path", "events", "replaced", "foreign_recall"}`` —
+    the last lists user-authored hook commands that already inject hafiz
+    recall by hand and would now double up.
     """
     data = _load_settings(target)
     existed = target.exists()
@@ -388,17 +441,17 @@ def install_hooks(target: Path, hooks: AgentHooks) -> dict:
 
     replaced = _strip_hafiz_hooks(events)
 
-    for event in hooks.events:
-        groups = events.setdefault(event, [])
+    for spec in hooks.specs:
+        groups = events.setdefault(spec.event, [])
         if not isinstance(groups, list):
-            raise ValueError(f"{target} has a non-list hooks.{event}; refusing to edit it")
+            raise ValueError(f"{target} has a non-list hooks.{spec.event}; refusing to edit it")
         groups.append(
             {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hooks.command,
-                        "timeout": hooks.timeout,
+                        "command": spec.command,
+                        "timeout": spec.timeout,
                     }
                 ]
             }
@@ -410,6 +463,7 @@ def install_hooks(target: Path, hooks: AgentHooks) -> dict:
         "path": str(target),
         "events": list(hooks.events),
         "replaced": replaced,
+        "foreign_recall": _foreign_recall_hooks(events),
     }
 
 

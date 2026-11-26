@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 19 -->
-# Hafiz — Workspace Intelligence (v19)
+<!-- SKILLS_VERSION: 20 -->
+# Hafiz — Workspace Intelligence (v20)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just a file index. It indexes
@@ -99,6 +99,12 @@ You MUST follow these rules in every session:
 
    Pick the kind from content: preference/rule → `learning`; claim/truth →
    `fact`; architectural choice → `decision`; gotcha → `warning`.
+
+   **A rule that must apply in every session — whatever the topic — is
+   pinned with `--tags always`** (e.g. "never merge X", "no AI attribution in
+   commits"). Pins are delivered by tag, not by similarity, so no query can
+   substitute for the tag. Pin sparingly: every pin costs context in every
+   session. Add `--project <name>` to scope a pin to one workspace.
 
    At session start, pull durable user-scoped preferences so prior
    "remembers" shape your behavior without the user re-asking:
@@ -213,9 +219,17 @@ A recall hook can forward the harness prompt as-is.
 line. Under a floor, "no rows" is the ordinary answer to an off-topic prompt, so
 a per-task hook can pipe the output straight into context without filtering it.
 
-**Wiring a per-task recall hook.** The whole thing is one command; everything
-that used to need a wrapper script — relevance floor, hit gate, compact
-rendering, dedup of byte-identical rows — is in the CLI now:
+**Recall hooks ship with hafiz.** `hafiz agent install claude-code --hooks`
+wires every-turn memory into Claude Code: `hafiz hook session` (SessionStart)
+injects the pinned rules (tag `always`, rendered whole) plus a recall for the
+repo and branch, and `hafiz hook prompt` (UserPromptSubmit) recalls what is
+relevant to each prompt. Both cap their output (`[hooks] max_chars`, default
+9000 — Claude Code truncates hook output over 10,000 characters), never fail a
+turn, and end with a one-line count plus the command to list anything that did
+not fit. You do not need to hand-write this for Claude Code. For any other
+harness, the whole thing is one command; everything that used to need a
+wrapper script — relevance floor, hit gate, compact rendering, dedup of
+byte-identical rows — is in the CLI now:
 
 ```bash
 # Read the harness's prompt from stdin, not from an env var, and only recall
@@ -587,8 +601,9 @@ hafiz agent install claude-code --hooks       # stop the drift for good
 idempotency keys a real run would, so use it before importing a store you
 have not imported before.
 
-`--hooks` wires capture into the harness on `PreCompact` + `SessionEnd`,
-preserving the user's own hooks. Under the hood each fires
+`--hooks` wires capture into the harness on `PreCompact` + `SessionEnd`
+(and recall on `SessionStart` + `UserPromptSubmit`, see **Retrieval
+hygiene**), preserving the user's own hooks. Under the hood each capture hook fires
 `hafiz import claude-code --from-hook`, which reads the harness payload
 on stdin, imports only that session, and always exits 0 — never use it
 by hand; it's the hook's entry point.
