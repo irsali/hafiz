@@ -1,0 +1,115 @@
+{"id": "ex01", "measure": "exact", "query": "what port does gatewayd use in production?", "expect": ["f01"], "needle": "9443"}
+{"id": "ex02", "measure": "exact", "query": "which port is scanlink gRPC on", "expect": ["f02"], "needle": "7311"}
+{"id": "ex03", "measure": "exact", "query": "where do I scrape scanlink metrics from", "expect": ["f02"], "needle": "7312"}
+{"id": "ex04", "measure": "exact", "query": "what is manifestd's readiness check path", "expect": ["f03"], "needle": "/ready"}
+{"id": "ex05", "measure": "exact", "query": "which env var changes the retry cap for manifest uploads", "expect": ["f04"], "needle": "MANIFESTD_RETRY_LIMIT"}
+{"id": "ex06", "measure": "exact", "query": "how many times will a handheld retry a sync, and what setting controls it", "expect": ["f05"], "needle": "SCANLINK_RETRY_LIMIT"}
+{"id": "ex07", "measure": "exact", "query": "how do I limit how long the solver may run for one request", "expect": ["f06"], "needle": "ROUTEKIT_SOLVER_TIMEOUT_MS"}
+{"id": "ex08", "measure": "exact", "query": "gatewayd is returning E4012, what does that mean", "expect": ["f07"], "needle": "E4012"}
+{"id": "ex09", "measure": "exact", "query": "we got E4021 back after posting a manifest, what is wrong", "expect": ["f08"], "needle": "E4021"}
+{"id": "ex10", "measure": "exact", "query": "a scanner keeps failing with SL-209", "expect": ["f09"], "needle": "SL-209"}
+{"id": "ex11", "measure": "exact", "query": "what does MF_DUP_BARCODE mean", "expect": ["f10"], "needle": "MF_DUP_BARCODE"}
+{"id": "ex12", "measure": "exact", "query": "when does the nightly reconciliation run and where is the job defined", "expect": ["f11"], "needle": "deploy/cron/reconcile.yaml"}
+{"id": "ex13", "measure": "exact", "query": "how do I start the local stack without wiping my volumes", "expect": ["f12"], "needle": "make dev-stop"}
+{"id": "ex14", "measure": "exact", "query": "can I preview routes with tern-cli without saving them", "expect": ["f13"], "needle": "--dry-run-routes"}
+{"id": "ex15", "measure": "exact", "query": "how do I change the maximum stops per route in the planner", "expect": ["f14"], "needle": "--max-stops"}
+{"id": "ex16", "measure": "exact", "query": "which ticket tracks the duplicate barcode import bug", "expect": ["f15"], "needle": "PW-1042"}
+{"id": "ex17", "measure": "exact", "query": "which ticket is the pagination request for parcels", "expect": ["f16"], "needle": "PW-1024"}
+{"id": "ex18", "measure": "exact", "query": "what is the name of the staging firmware bucket", "expect": ["f17"], "needle": "tern-fw-staging-eu"}
+{"id": "ex19", "measure": "exact", "query": "where do SQL migrations live and how are they named", "expect": ["f18"], "needle": "db/migrations"}
+{"id": "ex20", "measure": "exact", "query": "which env var holds the database url the tests use", "expect": ["f19"], "needle": "PARCELWISE_TEST_DB_URL"}
+{"id": "ex21", "measure": "exact", "query": "which flag gates the new route matrix cache", "expect": ["f20"], "needle": "route_cache_v2"}
+{"id": "ex22", "measure": "exact", "query": "what is the dead-letter queue for label printing called", "expect": ["f21"], "needle": "labels:print:dlq"}
+{"id": "ex23", "measure": "exact", "query": "how do I switch the SMS provider for beacon", "expect": ["f22"], "needle": "BEACON_SMS_PROVIDER"}
+{"id": "ex24", "measure": "exact", "query": "where is the monthly invoice job", "expect": ["f23"], "needle": "ledgerbox/jobs/invoice.py"}
+{"id": "ex25", "measure": "exact", "query": "what is the command for the k6 spike test", "expect": ["f24"], "needle": "scripts/loadtest/spike.js"}
+{"id": "ex26", "measure": "exact", "query": "what is the grafana uid for the solver latency dashboard", "expect": ["f25"], "needle": "rk-solver-latency"}
+{"id": "ex27", "measure": "exact", "query": "what is the pager alias for the primary on-call", "expect": ["f26"], "needle": "tern-primary"}
+{"id": "ex28", "measure": "exact", "query": "what column order does the depot csv import need", "expect": ["f27"], "needle": "depot_id, name, lat, lon, timezone"}
+{"id": "ex29", "measure": "exact", "query": "which docker base image do the python services build on", "expect": ["f28"], "needle": "py312:2026.10"}
+{"id": "ex30", "measure": "exact", "query": "what is the mypy command for routekit", "expect": ["f29"], "needle": "mypy --strict services/routekit"}
+{"id": "ex31", "measure": "exact", "query": "why are all my integration tests being skipped", "expect": ["f30"], "needle": "TERN_IT_ENABLED=1"}
+{"id": "ex32", "measure": "exact", "query": "where does gatewayd publish its signing keys", "expect": ["f31"], "needle": "/.well-known/jwks.json"}
+{"id": "ex33", "measure": "exact", "query": "how are scanner firmware versions formatted", "expect": ["f32"], "needle": "fw-<major>.<minor>.<patch>-<channel>"}
+{"id": "ex34", "measure": "exact", "query": "I ran dev-down while pointed at the staging cluster and the manifestd volume is gone", "expect": ["w01"], "needle": "make dev-down"}
+{"id": "ex35", "measure": "exact", "query": "can I call the routekit solver from a thread pool to go faster", "expect": ["w02"], "needle": "not thread-safe"}
+{"id": "ex36", "measure": "exact", "query": "what happens to barcodes longer than 48 characters in manifestd", "expect": ["w03"], "needle": "48"}
+{"id": "ex37", "measure": "exact", "query": "I set SCANLINK_RETRY_LIMIT to 20 and nothing changed", "expect": ["w04"], "needle": "default of 3"}
+{"id": "ex38", "measure": "exact", "query": "the test data I created in staging disappeared over the weekend", "expect": ["w05"], "needle": "Sunday at 03:00 UTC"}
+{"id": "ex39", "measure": "exact", "query": "is it fine to run the k6 spike test against production", "expect": ["w06"], "needle": "k6 spike test"}
+{"id": "ex40", "measure": "exact", "query": "manifest timestamps look wrong when I compare depots", "expect": ["w07"], "needle": "timezone column"}
+{"id": "ex41", "measure": "exact", "query": "someone hand-edited proto_gen, how do I regenerate it", "expect": ["w08"], "needle": "make proto"}
+{"id": "ex42", "measure": "exact", "query": "the service refuses to boot after I renamed an applied migration", "expect": ["w09"], "needle": "checksums"}
+{"id": "ex43", "measure": "exact", "query": "gatewayd will not start locally because port 8443 is already in use", "expect": ["w10"], "needle": "GATEWAYD_PORT"}
+{"id": "ex44", "measure": "exact", "query": "big ZPL label jobs never print and there is no error", "expect": ["w11"], "needle": "64 KB"}
+{"id": "ex45", "measure": "exact", "query": "why did the next CI build take ten extra minutes after touching poetry.lock", "expect": ["w12"], "needle": "poetry.lock"}
+{"id": "ex46", "measure": "exact", "query": "which index fixed the solver latency spikes", "expect": ["l01"], "needle": "idx_depot_region"}
+{"id": "ex47", "measure": "exact", "query": "scanlink tests are flaky because of the clock, what fixed it", "expect": ["l02"], "needle": "fake_clock"}
+{"id": "ex48", "measure": "exact", "query": "which autovacuum setting did we change for parcel_events", "expect": ["l07"], "needle": "autovacuum_vacuum_scale_factor"}
+{"id": "ex49", "measure": "exact", "query": "what heartbeat interval stopped handhelds on 2G showing offline", "expect": ["l08"], "needle": "20 seconds"}
+{"id": "ex50", "measure": "exact", "query": "how do we wrap errors that cross a service boundary", "expect": ["p05"], "needle": "ServiceError(code, message, retryable)"}
+{"id": "dc01", "measure": "decision", "query": "what do we use as the broker for label printing", "expect": ["d01b"], "forbid": ["d01a"]}
+{"id": "dc02", "measure": "decision", "query": "why did we get rid of RabbitMQ", "expect": ["d01b"], "forbid": ["d01a"]}
+{"id": "dc03", "measure": "decision", "query": "how do tenants authenticate with gatewayd", "expect": ["d02c"], "forbid": ["d02a", "d02b"]}
+{"id": "dc04", "measure": "decision", "query": "are static API keys still accepted", "expect": ["d02c"], "forbid": ["d02a", "d02b"]}
+{"id": "dc05", "measure": "decision", "query": "what is our primary route solver", "expect": ["d03b"], "forbid": ["d03a"]}
+{"id": "dc06", "measure": "decision", "query": "why is CP-SAT no longer the main solver", "expect": ["d03b"], "forbid": ["d03a"]}
+{"id": "dc07", "measure": "decision", "query": "which python version do the services target", "expect": ["d04b"], "forbid": ["d04a"]}
+{"id": "dc08", "measure": "decision", "query": "do we still support Python 3.11", "expect": ["d04b"], "forbid": ["d04a"]}
+{"id": "dc09", "measure": "decision", "query": "how do we manage database schema migrations", "expect": ["d05b"], "forbid": ["d05a"]}
+{"id": "dc10", "measure": "decision", "query": "should I generate a migration with alembic autogenerate", "expect": ["d05b"], "forbid": ["d05a"]}
+{"id": "dc11", "measure": "decision", "query": "what branching strategy do we use", "expect": ["d06b"], "forbid": ["d06a"]}
+{"id": "dc12", "measure": "decision", "query": "do we still cut long-lived release branches", "expect": ["d06b"], "forbid": ["d06a"]}
+{"id": "dc13", "measure": "decision", "query": "how should I log from a new service", "expect": ["d07b"], "forbid": ["d07a"]}
+{"id": "dc14", "measure": "decision", "query": "what must every log line contain", "expect": ["d07b"], "forbid": ["d07a"]}
+{"id": "dc15", "measure": "decision", "query": "how long do we keep parcel scan events", "expect": ["d08b"], "forbid": ["d08a"]}
+{"id": "dc16", "measure": "decision", "query": "what is our scan event retention policy", "expect": ["d08b"], "forbid": ["d08a"]}
+{"id": "dc17", "measure": "decision", "query": "where are route matrices cached", "expect": ["d09b"], "forbid": ["d09a"]}
+{"id": "dc18", "measure": "decision", "query": "do replicas share the route matrix cache", "expect": ["d09b"], "forbid": ["d09a"]}
+{"id": "dc19", "measure": "decision", "query": "which CI system do we use", "expect": ["d10b"], "forbid": ["d10a"]}
+{"id": "dc20", "measure": "decision", "query": "what happened to Jenkins", "expect": ["d10b"], "forbid": ["d10a"]}
+{"id": "dc21", "measure": "decision", "query": "how are customers notified about delivery", "expect": ["d11b"], "forbid": ["d11a"]}
+{"id": "dc22", "measure": "decision", "query": "why do we send push before SMS", "expect": ["d11b"], "forbid": ["d11a"]}
+{"id": "dc23", "measure": "decision", "query": "how do handhelds sync with the backend", "expect": ["d12b"], "forbid": ["d12a"]}
+{"id": "dc24", "measure": "decision", "query": "do the scanners still poll the REST API", "expect": ["d12b"], "forbid": ["d12a"]}
+{"id": "dc25", "measure": "decision", "query": "does the API version go in a header or in the path", "expect": ["d13b"], "forbid": ["d13a"]}
+{"id": "dc26", "measure": "decision", "query": "how is the public API versioned", "expect": ["d13b"], "forbid": ["d13a"]}
+{"id": "dc27", "measure": "decision", "query": "what database do our tests run against", "expect": ["d14b"], "forbid": ["d14a"]}
+{"id": "dc28", "measure": "decision", "query": "can I use sqlite in the unit tests for speed", "expect": ["d14b"], "forbid": ["d14a"]}
+{"id": "dc29", "measure": "decision", "query": "how are secrets managed for the services", "expect": ["d15b"], "forbid": ["d15a"]}
+{"id": "dc30", "measure": "decision", "query": "are there sops encrypted env files in the repo", "expect": ["d15b"], "forbid": ["d15a"]}
+{"id": "dc31", "measure": "decision", "query": "does every service have its own repository", "expect": ["d16b"], "forbid": ["d16a"]}
+{"id": "dc32", "measure": "decision", "query": "why did we create the monorepo", "expect": ["d16b"], "forbid": ["d16a"]}
+{"id": "dc33", "measure": "decision", "query": "how do we store money amounts", "expect": ["s01"]}
+{"id": "dc34", "measure": "decision", "query": "can I parse the depot id prefix to work out the region", "expect": ["s02"]}
+{"id": "dc35", "measure": "decision", "query": "what format are parcel ids", "expect": ["s03"]}
+{"id": "dc36", "measure": "decision", "query": "what is the per-tenant rate limit on the gateway", "expect": ["s04"]}
+{"id": "dc37", "measure": "decision", "query": "can we deploy to production on a Friday", "expect": ["s05"]}
+{"id": "dc38", "measure": "decision", "query": "do we still support scanners on firmware 3.x", "expect": ["s06"]}
+{"id": "dc39", "measure": "decision", "query": "how many approvals does a pull request need", "expect": ["s07"]}
+{"id": "dc40", "measure": "decision", "query": "how much notice do we give before deprecating an endpoint", "expect": ["s08"]}
+{"id": "dc41", "measure": "decision", "query": "should an endpoint handler import the repository module directly", "expect": ["p02"]}
+{"id": "dc42", "measure": "decision", "query": "how should a new feature be rolled out", "expect": ["p07"]}
+{"id": "dc43", "measure": "decision", "query": "how do background jobs avoid doing the work twice when they retry", "expect": ["p03"]}
+{"id": "dc44", "measure": "decision", "query": "should I read os.environ inside a request handler", "expect": ["p04"]}
+{"id": "dc45", "measure": "decision", "query": "what commit message format do we use", "expect": ["p08"]}
+{"id": "off01", "measure": "offtopic", "query": "yes please go ahead", "expect": []}
+{"id": "off02", "measure": "offtopic", "query": "thanks, that works for me", "expect": []}
+{"id": "off03", "measure": "offtopic", "query": "can you explain how photosynthesis works", "expect": []}
+{"id": "off04", "measure": "offtopic", "query": "what is a good recipe for banana bread", "expect": []}
+{"id": "off05", "measure": "offtopic", "query": "how do I reverse a linked list in Python", "expect": []}
+{"id": "off06", "measure": "offtopic", "query": "who won the football world cup in 2010", "expect": []}
+{"id": "off07", "measure": "offtopic", "query": "what is the difference between a process and a thread", "expect": []}
+{"id": "off08", "measure": "offtopic", "query": "what is the capital of Australia", "expect": []}
+{"id": "off09", "measure": "offtopic", "query": "summarize the plot of Hamlet in three sentences", "expect": []}
+{"id": "off10", "measure": "offtopic", "query": "how do I stretch my lower back after sitting all day", "expect": []}
+{"id": "off11", "measure": "offtopic", "query": "recommend a few science fiction novels", "expect": []}
+{"id": "off12", "measure": "offtopic", "query": "what is the difference between affect and effect", "expect": []}
+{"id": "off13", "measure": "offtopic", "query": "please continue with what you were doing", "expect": []}
+{"id": "off14", "measure": "offtopic", "query": "how many ounces are in a cup", "expect": []}
+{"id": "off15", "measure": "offtopic", "query": "write a regular expression that matches an email address", "expect": []}
+{"id": "off16", "measure": "offtopic", "query": "what is the time zone of Tokyo", "expect": []}
+{"id": "off17", "measure": "offtopic", "query": "explain how a bill becomes a law", "expect": []}
+{"id": "off18", "measure": "offtopic", "query": "good morning, how are you today", "expect": []}
+{"id": "off19", "measure": "offtopic", "query": "what is the boiling point of water at high altitude", "expect": []}
+{"id": "off20", "measure": "offtopic", "query": "explain what a hash map is and how collisions are handled", "expect": []}

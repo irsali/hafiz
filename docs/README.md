@@ -9,6 +9,7 @@ going**.
 | [architecture.md](architecture.md) | Five-level view of the system (context, architecture+ingest, module map, knowledge-layer data model, key flows), plus a code-grounded analysis of what Hafiz captures today and where the gaps are. | You want to understand how Hafiz works end-to-end, or decide where to fill a capability gap. |
 | [commands.md](commands.md) | Authoritative command reference — flags, `--json` shapes, brain types, agent-vs-human surfaces. | You're adding a command, wiring an agent, or parsing `--json` output. |
 | [roadmap.md](roadmap.md) | Product vision, shipped phases, open work, design principles. | You want to know *why* Hafiz is shaped the way it is, or what's coming next. |
+| [eval.md](eval.md) | The recall eval: what it measures (exact-string recall, decision recall and stale-belief leaks, tokens injected per turn), how to rerun it in a few minutes, results by commit, and its honest limits. | You want to know how well recall works, or you changed retrieval and need to check you did not make it worse. |
 | [agents.md](agents.md) | Legacy agent-integration playbook. **Stale** — predates the Structural Grounding rewrite. | Only for historical context. The live agent contract is [`../hafiz/data/agents/skills.md`](../hafiz/data/agents/skills.md); the live architecture is [architecture.md](architecture.md). |
 
 ## What lives elsewhere

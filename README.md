@@ -668,6 +668,8 @@ All agents should use `--json` for machine-readable output. The recommended work
 4. `hafiz observe "<decision>" --type decision` after deciding (`--supersedes <old-id>` if replacing a prior decision)
 5. `hafiz journal --since 7d` / `hafiz distill --since 7d` periodically to review and promote raw notes into decisions
 
+**How well does recall work?** There is a small, synthetic, rerunnable eval — exact-string recall, decision recall (including superseded decisions) and tokens injected per prompt: [docs/eval.md](docs/eval.md).
+
 ## Development
 
 ```bash

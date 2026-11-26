@@ -1,0 +1,103 @@
+{"id": "f01", "kind": "fact", "content": "gatewayd listens on port 8443 in staging and 9443 in production; its health probe is GET /healthz on the admin port 8444."}
+{"id": "f02", "kind": "fact", "content": "scanlink serves gRPC on port 7311 and exposes Prometheus metrics on port 7312."}
+{"id": "f03", "kind": "fact", "content": "manifestd binds port 8610; its readiness endpoint is /ready, not /healthz."}
+{"id": "f04", "kind": "fact", "content": "The retry cap for manifest uploads is set with MANIFESTD_RETRY_LIMIT (default 5)."}
+{"id": "f05", "kind": "fact", "content": "scanlink reads SCANLINK_RETRY_LIMIT for handheld sync retries; the default is 3 and the maximum accepted value is 10."}
+{"id": "f06", "kind": "fact", "content": "Set ROUTEKIT_SOLVER_TIMEOUT_MS to cap how long the route solver may run for one request; the default is 1500."}
+{"id": "f07", "kind": "fact", "content": "Error code E4012 from gatewayd means the API key is valid but the tenant is suspended."}
+{"id": "f08", "kind": "fact", "content": "Error code E4021 from gatewayd means the request body failed schema validation; check the X-Manifest-Version header first."}
+{"id": "f09", "kind": "fact", "content": "Error code SL-209 from scanlink means the handheld clock skew exceeds 90 seconds."}
+{"id": "f10", "kind": "fact", "content": "manifestd returns MF_DUP_BARCODE when two parcels in one manifest share a barcode."}
+{"id": "f11", "kind": "fact", "content": "The nightly manifest reconciliation job is defined in deploy/cron/reconcile.yaml and runs at 02:15 UTC."}
+{"id": "f12", "kind": "fact", "content": "Start the local stack with `make dev-up`; `make dev-down` also removes volumes, so use `make dev-stop` to keep your data."}
+{"id": "f13", "kind": "fact", "content": "The flag --dry-run-routes on `tern-cli plan` prints the computed routes without writing them to the database."}
+{"id": "f14", "kind": "fact", "content": "`tern-cli plan --max-stops 40` limits the number of stops per route; the default is 25."}
+{"id": "f15", "kind": "fact", "content": "Ticket PW-1042 tracks the duplicate-barcode bug in manifest import; it was fixed in release 2.14.1."}
+{"id": "f16", "kind": "fact", "content": "Ticket PW-1024 is the request to add pagination to the /v2/parcels endpoint; it is still open."}
+{"id": "f17", "kind": "fact", "content": "The staging S3 bucket for scanner firmware is tern-fw-staging-eu; production uses tern-fw-prod-eu."}
+{"id": "f18", "kind": "fact", "content": "SQL migrations live in db/migrations and carry a four-digit prefix, for example 0087_add_depot_index.sql."}
+{"id": "f19", "kind": "fact", "content": "The local dev Postgres connection string is read from PARCELWISE_DB_URL; the test suite uses PARCELWISE_TEST_DB_URL."}
+{"id": "f20", "kind": "fact", "content": "Feature flags are defined in config/flags.toml; the flag route_cache_v2 gates the new route matrix cache."}
+{"id": "f21", "kind": "fact", "content": "The label printing queue is named labels:print:v1 and its dead-letter queue is labels:print:dlq."}
+{"id": "f22", "kind": "fact", "content": "beacon sends SMS through the provider named in BEACON_SMS_PROVIDER; the allowed values are gateway-a and gateway-b."}
+{"id": "f23", "kind": "fact", "content": "ledgerbox generates invoices on the 3rd of each month with the job invoice_monthly in ledgerbox/jobs/invoice.py."}
+{"id": "f24", "kind": "fact", "content": "The load-test script is scripts/loadtest/spike.js; run it with `k6 run -e TARGET=staging scripts/loadtest/spike.js`."}
+{"id": "f25", "kind": "fact", "content": "The Grafana dashboard UID for solver latency is rk-solver-latency."}
+{"id": "f26", "kind": "fact", "content": "The on-call rotation changes at 09:00 Monday Europe/Berlin; the pager alias is tern-primary."}
+{"id": "f27", "kind": "fact", "content": "The depot import CSV must be UTF-8 without a BOM, with columns in the order depot_id, name, lat, lon, timezone."}
+{"id": "f28", "kind": "fact", "content": "The Docker base image for every Python service is registry.tern.example/base/py312:2026.10."}
+{"id": "f29", "kind": "fact", "content": "Lint with `ruff check services/` and type-check with `mypy --strict services/routekit`."}
+{"id": "f30", "kind": "fact", "content": "Integration tests need TERN_IT_ENABLED=1 in the environment; without it they are skipped silently."}
+{"id": "f31", "kind": "fact", "content": "JWT signing keys rotate every 30 days; tokens carry the key id in the kid header and gatewayd publishes keys at /.well-known/jwks.json."}
+{"id": "f32", "kind": "fact", "content": "Scanner firmware versions are written fw-<major>.<minor>.<patch>-<channel>, for example fw-4.2.0-beta."}
+{"id": "w01", "kind": "warning", "content": "Never run `make dev-down` with the shared staging cluster as your kubectl context; it drops the manifestd volume. Check `kubectl config current-context` first."}
+{"id": "w02", "kind": "warning", "content": "The routekit solver is not thread-safe: calling Solver.solve from a thread pool corrupts the cost matrix. Use one process per worker."}
+{"id": "w03", "kind": "warning", "content": "manifestd silently truncates barcodes longer than 48 characters; validate the length before import."}
+{"id": "w04", "kind": "warning", "content": "A SCANLINK_RETRY_LIMIT above 10 is ignored without any warning and falls back to the default of 3."}
+{"id": "w05", "kind": "warning", "content": "The staging database is reset every Sunday at 03:00 UTC, so any test data created there is lost."}
+{"id": "w06", "kind": "warning", "content": "Never point the k6 spike test at production; the gatewayd rate limiter trips and pages the on-call."}
+{"id": "w07", "kind": "warning", "content": "Timestamps inside manifests are local to the depot, not UTC; convert with the depot timezone column before comparing."}
+{"id": "w08", "kind": "warning", "content": "Do not hand-edit files under services/routekit/proto_gen; regenerate them with `make proto`."}
+{"id": "w09", "kind": "warning", "content": "Never renumber an applied migration in db/migrations; checksums are verified at startup and the service refuses to boot."}
+{"id": "w10", "kind": "warning", "content": "Port 8443 collides with the Docker Desktop Kubernetes dashboard on some laptops; set GATEWAYD_PORT to move gatewayd locally."}
+{"id": "w11", "kind": "warning", "content": "The label printer firmware drops jobs larger than 64 KB without raising an error; split big ZPL payloads."}
+{"id": "w12", "kind": "warning", "content": "The CI cache key includes the lockfile hash, so any change to poetry.lock throws away the 4 GB wheel cache and slows the next build by about ten minutes."}
+{"id": "l01", "kind": "learning", "content": "Route solver latency spikes were caused by unindexed depot lookups; adding idx_depot_region cut p95 from 2.1s to 340ms."}
+{"id": "l02", "kind": "learning", "content": "Flaky scanlink tests came from real clocks; freezing time with the fake_clock fixture removed the flakes."}
+{"id": "l03", "kind": "learning", "content": "Printing labels in batches of 50 beat per-parcel prints; the printer queue stopped backing up."}
+{"id": "l04", "kind": "learning", "content": "Most E4021 errors seen in staging came from clients still posting manifest schema v1 after the move to v3."}
+{"id": "l05", "kind": "learning", "content": "manifestd cold starts are dominated by loading the depot cache (about 8 seconds); keep at least two warm replicas."}
+{"id": "l06", "kind": "learning", "content": "A solver timeout paired with a greedy fallback gave the best on-time rate; exact solving only paid off beyond 60 stops."}
+{"id": "l07", "kind": "learning", "content": "Autovacuum lagged on the parcel_events table during bulk imports; lowering autovacuum_vacuum_scale_factor to 0.02 fixed the bloat."}
+{"id": "l08", "kind": "learning", "content": "Handhelds on 2G looked offline because the heartbeat interval was 5 seconds; raising it to 20 seconds fixed the false offline state."}
+{"id": "l09", "kind": "learning", "content": "Property-based tests on the route cost function found a negative-weight edge case that example tests missed."}
+{"id": "l10", "kind": "learning", "content": "Invoice rounding drift came from summing rounded line items; sum integer cents and round once at the end."}
+{"id": "p01", "kind": "pattern", "content": "Every service exposes /healthz for liveness only and /ready for dependency checks."}
+{"id": "p02", "kind": "pattern", "content": "New endpoints follow handler, then service, then repository layering; handlers never import repository modules directly."}
+{"id": "p03", "kind": "pattern", "content": "Background jobs are idempotent and keyed by job_key; retries reuse the same key."}
+{"id": "p04", "kind": "pattern", "content": "Config is read once at startup into a frozen Settings dataclass; there are no os.environ reads in request paths."}
+{"id": "p05", "kind": "pattern", "content": "Errors that cross a service boundary are wrapped as ServiceError(code, message, retryable)."}
+{"id": "p06", "kind": "pattern", "content": "Database tests use a per-test transaction rolled back at teardown, through the db_session fixture."}
+{"id": "p07", "kind": "pattern", "content": "New features ship behind a flag in config/flags.toml first; removing the flag is its own PR within two releases."}
+{"id": "p08", "kind": "pattern", "content": "Commit messages follow conventional commits and carry the ticket id, for example feat(routekit): cache matrices [PW-1187]."}
+{"id": "d01a", "kind": "decision", "content": "Use RabbitMQ as the broker for the label printing queue."}
+{"id": "d01b", "kind": "decision", "content": "Label printing moved from RabbitMQ to Redis streams because ops no longer wanted to run a separate broker.", "supersedes": "d01a"}
+{"id": "d02a", "kind": "decision", "content": "gatewayd authenticates tenants with static API keys only."}
+{"id": "d02b", "kind": "decision", "content": "gatewayd moves to short-lived JWTs signed with rotating keys; static API keys stay only for legacy tenants until PW-1100 lands.", "supersedes": "d02a"}
+{"id": "d02c", "kind": "decision", "content": "Static API keys are removed entirely as of release 2.16; the legacy tenants were migrated to JWTs.", "supersedes": "d02b"}
+{"id": "d03a", "kind": "decision", "content": "Use OR-Tools CP-SAT as the primary route solver."}
+{"id": "d03b", "kind": "decision", "content": "Replaced CP-SAT with a custom insertion heuristic plus local search because CP-SAT was too slow beyond 40 stops; CP-SAT is kept only for offline audits.", "supersedes": "d03a"}
+{"id": "d04a", "kind": "decision", "content": "All services target Python 3.11."}
+{"id": "d04b", "kind": "decision", "content": "The baseline is raised to Python 3.12 and 3.11 support is dropped, so every service shares one base image.", "supersedes": "d04a"}
+{"id": "d05a", "kind": "decision", "content": "Use Alembic for schema migrations."}
+{"id": "d05b", "kind": "decision", "content": "Schema changes are plain numbered SQL files run by a checksum runner; Alembic autogenerate produced diffs nobody could review.", "supersedes": "d05a"}
+{"id": "d06a", "kind": "decision", "content": "Branch with GitFlow, using long-lived release branches."}
+{"id": "d06b", "kind": "decision", "content": "Switched to trunk-based development with short-lived branches and release tags, because long-lived release branches caused merge drift.", "supersedes": "d06a"}
+{"id": "d07a", "kind": "decision", "content": "Services log plain text lines through logging.basicConfig."}
+{"id": "d07b", "kind": "decision", "content": "Services log structured JSON with structlog and put request_id on every line, so logs can be joined across services.", "supersedes": "d07a"}
+{"id": "d08a", "kind": "decision", "content": "Keep parcel scan events for 365 days."}
+{"id": "d08b", "kind": "decision", "content": "Scan event retention is cut to 180 days to meet the data-minimisation policy; older events are aggregated and the raw rows deleted.", "supersedes": "d08a"}
+{"id": "d09a", "kind": "decision", "content": "Cache route matrices in process memory."}
+{"id": "d09b", "kind": "decision", "content": "Route matrices are cached in Redis under the key prefix rk:matrix: so replicas share them; the change is behind the flag route_cache_v2.", "supersedes": "d09a"}
+{"id": "d10a", "kind": "decision", "content": "CI runs on self-hosted Jenkins."}
+{"id": "d10b", "kind": "decision", "content": "CI moved to GitHub Actions with hosted runners; Jenkins was decommissioned at the end of Q3 because nobody wanted to patch it.", "supersedes": "d10a"}
+{"id": "d11a", "kind": "decision", "content": "beacon sends delivery notifications by SMS only."}
+{"id": "d11b", "kind": "decision", "content": "Delivery notifications go out as push first and fall back to SMS after 10 minutes, because SMS was the largest beacon cost.", "supersedes": "d11a"}
+{"id": "d12a", "kind": "decision", "content": "Handhelds sync by polling the REST API every 30 seconds."}
+{"id": "d12b", "kind": "decision", "content": "Handhelds sync over a persistent gRPC stream to scanlink instead of polling, because polling drained batteries.", "supersedes": "d12a"}
+{"id": "d13a", "kind": "decision", "content": "Version the public API with an X-Api-Version request header."}
+{"id": "d13b", "kind": "decision", "content": "The public API is versioned in the URL path (/v2/...); header versioning confused caching proxies.", "supersedes": "d13a"}
+{"id": "d14a", "kind": "decision", "content": "Tests run against SQLite for speed."}
+{"id": "d14b", "kind": "decision", "content": "Tests run against a real Postgres container, because SQLite hid dialect bugs in the parcel_events queries.", "supersedes": "d14a"}
+{"id": "d15a", "kind": "decision", "content": "Secrets live in .env files committed encrypted with sops."}
+{"id": "d15b", "kind": "decision", "content": "Secrets are fetched from the vault at boot and the sops-encrypted .env files were deleted from the repo.", "supersedes": "d15a"}
+{"id": "d16a", "kind": "decision", "content": "Each service lives in its own repository."}
+{"id": "d16b", "kind": "decision", "content": "Services were merged into one monorepo called tern-platform so proto changes land atomically.", "supersedes": "d16a"}
+{"id": "s01", "kind": "decision", "content": "Money is stored as integer cents plus an ISO currency code, never as floats."}
+{"id": "s02", "kind": "decision", "content": "Depot ids are opaque strings; code must never parse meaning out of the prefix."}
+{"id": "s03", "kind": "decision", "content": "Parcel ids are ULIDs so that they sort by creation time."}
+{"id": "s04", "kind": "decision", "content": "gatewayd rate limits each tenant to 600 requests per minute with a token bucket."}
+{"id": "s05", "kind": "decision", "content": "Production deploys happen on Tuesdays and Thursdays only; there are no Friday deploys."}
+{"id": "s06", "kind": "decision", "content": "We support only the latest two scanner firmware majors; fw-3.x handhelds are end-of-life."}
+{"id": "s07", "kind": "decision", "content": "Code review needs one approval, and two for any change under services/ledgerbox."}
+{"id": "s08", "kind": "decision", "content": "Public API deprecations get six months notice and a Sunset response header."}
