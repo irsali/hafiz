@@ -1,4 +1,4 @@
-"""Automatic transcript-capture hooks — `hafiz agent install --hooks`.
+"""Agent hooks (recall + transcript capture) — `hafiz agent install --hooks`.
 
 These tests guard a file hafiz does not own. An agent's settings.json is
 hand-edited configuration containing the user's own hooks, permissions and
@@ -26,7 +26,9 @@ from hafiz.core.agents import (
     uninstall_hooks,
 )
 
+RECALL_EVENTS = ("SessionStart", "UserPromptSubmit")
 CAPTURE_EVENTS = ("PreCompact", "SessionEnd")
+ALL_EVENTS = RECALL_EVENTS + CAPTURE_EVENTS
 
 
 # A realistic pre-existing settings.json: user hooks on two events (one of
@@ -82,13 +84,13 @@ def _theirs(path: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def test_install_adds_one_entry_per_capture_event(settings: Path, hooks_spec):
+def test_install_adds_one_entry_per_event(settings: Path, hooks_spec):
     result = install_hooks(settings, hooks_spec)
 
     assert result["action"] == "updated"
-    assert result["events"] == list(CAPTURE_EVENTS)
+    assert result["events"] == list(ALL_EVENTS)
     data = json.loads(settings.read_text(encoding="utf-8"))
-    for event in CAPTURE_EVENTS:
+    for event in ALL_EVENTS:
         ours = [
             e
             for g in data["hooks"][event]
@@ -126,19 +128,46 @@ def test_install_creates_the_file_when_absent(tmp_path: Path, hooks_spec):
 
     assert result["action"] == "created"
     assert target.is_file()
-    assert len(_ours(target)) == len(CAPTURE_EVENTS)
+    assert len(_ours(target)) == len(ALL_EVENTS)
 
 
-def test_installed_command_is_hook_safe(settings: Path, hooks_spec):
+def test_installed_commands_are_hook_safe(settings: Path, hooks_spec):
     """The house rule for anything in a hook: bounded, quiet, exit 0."""
     install_hooks(settings, hooks_spec)
-    command = _ours(settings)[0]["command"]
 
-    assert command.startswith("timeout ")
-    assert "--from-hook" in command
-    assert ">/dev/null 2>&1" in command
-    assert command.rstrip().endswith(HOOK_SENTINEL)
-    assert "|| true" in command
+    for entry in _ours(settings):
+        command = entry["command"]
+        assert command.startswith("timeout "), command
+        assert "2>" in command and "/dev/null" in command, command
+        assert command.rstrip().endswith(HOOK_SENTINEL), command
+        assert "|| true" in command, command
+        # The harness kill timer must outlast the shell guard, or the
+        # harness reports a hung hook instead of the guard exiting quietly.
+        guard = int(command.split()[1].rstrip("s"))
+        assert entry["timeout"] > guard, command
+
+
+def test_capture_hooks_discard_stdout_recall_hooks_keep_it(settings: Path, hooks_spec):
+    """Recall's stdout IS the injected context; capture's must never leak into it."""
+    install_hooks(settings, hooks_spec)
+    data = json.loads(settings.read_text(encoding="utf-8"))
+
+    def ours(event: str) -> str:
+        return next(
+            e["command"]
+            for g in data["hooks"][event]
+            for e in g["hooks"]
+            if HOOK_SENTINEL in e["command"]
+        )
+
+    for event in CAPTURE_EVENTS:
+        assert "--from-hook" in ours(event)
+        assert ">/dev/null" in ours(event)
+    assert "hafiz hook session" in ours("SessionStart")
+    assert "hafiz hook prompt" in ours("UserPromptSubmit")
+    for event in RECALL_EVENTS:
+        assert " >/dev/null" not in ours(event)
+        assert "2>/dev/null" in ours(event)
 
 
 # ---------------------------------------------------------------------------
@@ -151,16 +180,16 @@ def test_reinstall_replaces_rather_than_stacks(settings: Path, hooks_spec):
     second = install_hooks(settings, hooks_spec)
     third = install_hooks(settings, hooks_spec)
 
-    assert second["replaced"] == len(CAPTURE_EVENTS)
-    assert third["replaced"] == len(CAPTURE_EVENTS)
-    assert len(_ours(settings)) == len(CAPTURE_EVENTS)
+    assert second["replaced"] == len(ALL_EVENTS)
+    assert third["replaced"] == len(ALL_EVENTS)
+    assert len(_ours(settings)) == len(ALL_EVENTS)
     assert len(_theirs(settings)) == 2
 
 
 def test_reinstall_updates_a_stale_command_in_place(settings: Path, hooks_spec):
     install_hooks(settings, hooks_spec)
     data = json.loads(settings.read_text(encoding="utf-8"))
-    for group in data["hooks"]["SessionEnd"]:
+    for group in data["hooks"]["SessionEnd"] + data["hooks"]["UserPromptSubmit"]:
         for entry in group["hooks"]:
             if HOOK_SENTINEL in entry["command"]:
                 entry["command"] = f"old-hafiz-command  {HOOK_SENTINEL}"
@@ -170,7 +199,7 @@ def test_reinstall_updates_a_stale_command_in_place(settings: Path, hooks_spec):
 
     commands = [e["command"] for e in _ours(settings)]
     assert not any(c.startswith("old-hafiz-command") for c in commands)
-    assert all("--from-hook" in c for c in commands)
+    assert len(commands) == len(ALL_EVENTS)
 
 
 def test_install_keeps_one_backup_and_never_overwrites_it(settings: Path, hooks_spec):
@@ -198,7 +227,7 @@ def test_uninstall_restores_the_original_file(settings: Path, hooks_spec):
     result = uninstall_hooks(settings)
 
     assert result["action"] == "removed"
-    assert result["removed"] == len(CAPTURE_EVENTS)
+    assert result["removed"] == len(ALL_EVENTS)
     assert json.loads(settings.read_text(encoding="utf-8")) == before
 
 
@@ -209,7 +238,9 @@ def test_uninstall_drops_events_it_emptied(settings: Path, hooks_spec):
 
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert "PreCompact" not in data["hooks"]
+    assert "UserPromptSubmit" not in data["hooks"]
     assert "SessionEnd" in data["hooks"]  # user's own hook keeps it alive
+    assert "SessionStart" in data["hooks"]
 
 
 def test_uninstall_is_a_noop_when_nothing_of_ours_is_present(settings: Path):
@@ -262,7 +293,7 @@ def test_install_treats_an_empty_file_as_no_settings(tmp_path: Path, hooks_spec)
     target.write_text("   \n", encoding="utf-8")
 
     install_hooks(target, hooks_spec)
-    assert len(_ours(target)) == len(CAPTURE_EVENTS)
+    assert len(_ours(target)) == len(ALL_EVENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -335,3 +366,54 @@ def test_from_hook_always_exits_zero(payload: str):
     """
     result = CliRunner().invoke(app, ["import", "claude-code", "--from-hook"], input=payload)
     assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# Recall hooks: coexistence, redirection, the hand-rolled-script warning
+# ---------------------------------------------------------------------------
+
+
+def test_recall_hook_joins_a_user_hook_on_session_start(settings: Path, hooks_spec):
+    install_hooks(settings, hooks_spec)
+
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    commands = [e["command"] for g in data["hooks"]["SessionStart"] for e in g["hooks"]]
+    assert "echo mine" in commands
+    assert any("hafiz hook session" in c for c in commands)
+
+
+def test_install_flags_a_hand_rolled_recall_hook_but_leaves_it(tmp_path: Path, hooks_spec):
+    """Two injectors would print every pinned rule twice — say so, never edit."""
+    mine = "python3 ~/.claude/hooks/hafiz-recall.py session"
+    target = tmp_path / "settings.json"
+    target.write_text(
+        json.dumps(
+            {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": mine}]}]}}
+        ),
+        encoding="utf-8",
+    )
+
+    result = install_hooks(target, hooks_spec)
+
+    assert result["foreign_recall"] == [mine]
+    assert mine in {e["command"] for e in _theirs(target)}
+
+
+def test_install_reports_no_foreign_recall_on_a_clean_file(settings: Path, hooks_spec):
+    assert install_hooks(settings, hooks_spec)["foreign_recall"] == []
+
+
+def test_cli_install_and_uninstall_honour_path_and_file(tmp_path: Path):
+    """`--path`/`--file` redirect the settings file, so a trial never touches the real one."""
+    runner = CliRunner()
+    args = ["--hooks", "--path", str(tmp_path), "--file", "trial.json"]
+
+    result = runner.invoke(app, ["agent", "install", "claude-code", *args])
+    assert result.exit_code == 0, result.output
+    target = tmp_path / "trial.json"
+    assert len(_ours(target)) == len(ALL_EVENTS)
+    assert "--tags always" in result.output
+
+    result = runner.invoke(app, ["agent", "uninstall", "claude-code", *args])
+    assert result.exit_code == 0, result.output
+    assert _ours(target) == []

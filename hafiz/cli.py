@@ -1471,6 +1471,33 @@ def projects_merge_cmd(
 hooks_app = typer.Typer(name="hooks", help="Git hook management.")
 app.add_typer(hooks_app)
 
+# `hook` (singular) is the agent-harness side: what `agent install --hooks` wires in.
+hook_app = typer.Typer(
+    name="hook",
+    help=(
+        "Agent-harness hook entry points (installed by `hafiz agent install --hooks`). "
+        "Reads the harness JSON on stdin; prints context for the model; always exits 0."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(hook_app)
+
+
+@hook_app.command("session")
+def hook_session() -> None:
+    """SessionStart: pinned rules (tag `always`) plus recall for this repo and branch."""
+    from hafiz.commands.hook import run_hook_cmd
+
+    run_hook_cmd("session")
+
+
+@hook_app.command("prompt")
+def hook_prompt() -> None:
+    """UserPromptSubmit: recall observations relevant to the submitted prompt."""
+    from hafiz.commands.hook import run_hook_cmd
+
+    run_hook_cmd("prompt")
+
 
 @hooks_app.command("install")
 def hooks_install(
@@ -1553,8 +1580,10 @@ def agent_install(
         False,
         "--hooks",
         help=(
-            "Install automatic transcript-capture hooks instead of the skills file. "
-            "Captures each session before compaction and at session end."
+            "Install the agent's hooks instead of the skills file: memory recall "
+            "(pinned rules at session start, relevant decisions on every prompt) and "
+            "transcript capture (before compaction and at session end). With --path/--file "
+            "they redirect the settings file."
         ),
     ),
 ) -> None:
@@ -1562,7 +1591,7 @@ def agent_install(
     if hooks:
         from hafiz.commands.agent import run_agent_install_hooks
 
-        run_agent_install_hooks(name, local=local)
+        run_agent_install_hooks(name, local=local, path_override=path, file_override=file)
         return
 
     from hafiz.commands.agent import run_agent_install
@@ -1580,14 +1609,14 @@ def agent_uninstall(
     hooks: bool = typer.Option(
         False,
         "--hooks",
-        help="Remove the automatic transcript-capture hooks instead of the skills file.",
+        help="Remove the recall and capture hooks instead of the skills file.",
     ),
 ) -> None:
     """Remove hafiz skills for an AI coding agent."""
     if hooks:
         from hafiz.commands.agent import run_agent_uninstall_hooks
 
-        run_agent_uninstall_hooks(name, local=local)
+        run_agent_uninstall_hooks(name, local=local, path_override=path, file_override=file)
         return
 
     from hafiz.commands.agent import run_agent_uninstall

@@ -313,21 +313,33 @@ cat conversation.md | hafiz capture --title "JWT design meeting"
 
 Every observation auto-captures git context (commit hash, branch, dirty state) so you can later ask "what did I decide on `main` at commit `abc123`?".
 
-#### Automatic transcript capture
+#### Automatic recall and transcript capture
 
-Agent harnesses rotate their own transcripts, so a session you don't capture is
-gone for good. Wire capture into the harness once and stop thinking about it:
+One command wires hafiz into Claude Code:
 
 ```bash
 hafiz agent install claude-code --hooks
 ```
 
-This adds two entries to `~/.claude/settings.json` — on `PreCompact` (where
-context actually dies, mid-session) and `SessionEnd` — each running a bounded,
-silent, always-exit-0 import of just that session. Your own hooks and every
-other setting are preserved; re-running updates in place instead of stacking
-duplicates; and `hafiz agent uninstall claude-code --hooks` restores the file
-byte-for-byte. A settings file hafiz can't parse is refused, never overwritten.
+This adds four entries to `~/.claude/settings.json`:
+
+- **`SessionStart` / `UserPromptSubmit` — recall.** Your pinned rules, plus what
+  hafiz knows about the repo and branch, arrive at session start; relevant prior
+  decisions arrive with each prompt. Pin a rule so it applies in every session
+  with `hafiz observe "<rule>" --type learning --tags always` (add
+  `--project <name>` to scope it to one workspace). Output is capped at
+  `[hooks] max_chars` (default 9000, since Claude Code truncates hook output
+  over 10,000 characters) and says how many rules were left out.
+- **`PreCompact` / `SessionEnd` — capture.** Agent harnesses rotate their own
+  transcripts, so a session you don't capture is gone for good; these save
+  each one before context dies.
+
+Every hook is bounded, silent, and always exits 0 — it can't break a turn. Your
+own hooks and every other setting are preserved; re-running updates in place
+instead of stacking duplicates; and `hafiz agent uninstall claude-code --hooks`
+restores the file byte-for-byte. A settings file hafiz can't parse is refused,
+never overwritten. If you already have a hand-written recall hook, install
+warns you so the same rules aren't injected twice.
 
 Captured transcripts are scoped to the project the session ran in, stay on your
 machine, and are retained for 90 days. `hafiz forget <session>` redacts;
@@ -448,7 +460,7 @@ Per-TTY named threads that auto-tag subsequent `observe` / `note` / `capture` wi
 | `hafiz prune` | Remove chunks for deleted files | `--project/-p`, `--dry-run`, `--json/-j` |
 | `hafiz hooks install [path]` | Install git hooks (post-commit + post-merge) | `--project/-p` |
 | `hafiz agent install <name>` | Install hafiz skills into an AI agent | `--local`, `--path`, `--file`, `--hooks` |
-| `hafiz agent install <name> --hooks` | Wire automatic transcript capture into the agent (`PreCompact` + `SessionEnd`). `claude-code` only. | `--local` |
+| `hafiz agent install <name> --hooks` | Wire every-turn memory recall (`SessionStart` + `UserPromptSubmit`) and transcript capture (`PreCompact` + `SessionEnd`) into the agent. `claude-code` only. | `--local`, `--path`, `--file` |
 | `hafiz import claude-code [path]` | Import session transcripts. Accepts a directory or a single `.jsonl`. | `--project`, `--since`, `--dry-run`, `--no-embed`, `--from-hook` |
 
 **Language support.** Hafiz ships a prose parser for **Markdown** (`doc.heading` / `doc.paragraph` units). Everything else — including code — is indexed whole-file as one `file.raw` unit per file, still searchable by meaning with `hafiz query`. Run `hafiz parsers list` to see what's active.

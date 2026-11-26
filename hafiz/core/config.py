@@ -402,6 +402,22 @@ class DaemonSettings(BaseModel):
     idle_timeout: float = 1800.0  # 30 minutes; 0 disables shutdown
 
 
+class HooksSettings(BaseModel):
+    """Budgets for the agent recall hooks (``hafiz hook session|prompt``).
+
+    Both numbers exist because the hook runs inside someone else's process.
+    Claude Code truncates hook output over 10,000 characters (it saves the
+    full text to a file and the model sees only a ~2 KB preview), so the
+    output cap sits safely below that. A hook that outruns its time budget
+    must give up silently rather than stall the user's turn.
+    """
+
+    # Hard cap on characters printed per hook call. Pins fill it first.
+    max_chars: int = Field(default=9000, ge=500)
+    # Whole-call wall-clock budget, daemon spawn and model load included.
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+
 class WorkspaceSettings(BaseModel):
     root: str = "."
     projects: list[str] = Field(default_factory=list)
@@ -434,6 +450,7 @@ class HafizSettings(BaseSettings):
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     daemon: DaemonSettings = Field(default_factory=DaemonSettings)
+    hooks: HooksSettings = Field(default_factory=HooksSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
 
 
