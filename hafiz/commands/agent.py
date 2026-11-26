@@ -107,7 +107,7 @@ def run_agent_install_hooks(
         "  [bold]capture[/bold]  transcripts saved before compaction and at session end\n"
         "[dim]Pin a rule so it applies in every session:  "
         'hafiz observe "<rule>" --type learning --tags always\n'
-        "Recall output is capped at [hooks] max_chars (default 9000) per call.\n"
+        "Recall output is capped at \\[hooks] max_chars (default 9000) per call.\n"
         "Transcripts are stored locally, scoped to the project they ran in, and "
         f"retained for {DEFAULT_RETENTION_DAYS} days.\n"
         "  Inspect:  hafiz status            (capture freshness)\n"
