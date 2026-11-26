@@ -426,6 +426,30 @@ async def test_session_projects_exclude_an_unrelated_workspace(workspace):
     assert "alpha" not in got and "beta" not in got
 
 
+async def test_an_unindexed_repo_and_its_unindexed_git_siblings_count_by_folder_name(workspace):
+    """A write from an unindexed repo is scoped to its folder name, so its pins
+    must reach sessions there and in sibling repos (the 2026-11-26 regression:
+    pins scoped to an unindexed hub repo showed in no session at all)."""
+    import subprocess
+
+    for d in ("ws/hub", "ws/notes"):
+        subprocess.run(["git", "init", "-q", str(workspace / d)], check=True)
+    in_hub = await recall_hook._session_projects(str(workspace / "ws" / "hub"))
+    in_alpha = await recall_hook._session_projects(str(workspace / "ws" / "alpha"))
+    in_gamma = await recall_hook._session_projects(str(workspace / "other" / "gamma"))
+
+    assert {"hub", "alpha", "beta", "notes"} <= in_hub
+    assert "hub" in in_alpha
+    assert "hub" not in in_gamma
+
+
+def test_pin_scope_matches_spelling_variants():
+    projects = frozenset({"control-room"})
+    assert recall_hook.pin_visible({"project": "Control Room"}, projects)
+    assert recall_hook.pin_visible({"project": None}, projects)
+    assert not recall_hook.pin_visible({"project": "elsewhere"}, projects)
+
+
 @pytest.mark.parametrize("cwd", [None, "", "/definitely/not/a/real/dir"])
 async def test_session_projects_are_empty_when_cwd_is_unusable(workspace, cwd):
     assert await recall_hook._session_projects(cwd) == frozenset()

@@ -53,6 +53,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from hafiz.core.projects import project_key
+
 PIN_TAG = "always"
 
 #: "continue", "yes", "go on" retrieve nothing useful.
@@ -250,38 +252,47 @@ async def _session_projects(cwd: str | None) -> frozenset[str]:
     session opened in any of its siblings, and must not leak into an unrelated
     workspace.
 
-    Each half is best-effort and an empty set is the honest "don't know":
-    only unscoped pins then show, rather than guessing a project.
+    A repo does not have to be indexed to be a project: ``observe`` run from an
+    unindexed repo scopes the write to the repo's folder name, so the session's
+    own repo and its sibling git repos count by folder name as well.
+
+    Returned as :func:`project_key` forms so ``Control Room`` and
+    ``control-room`` match. Each source is best-effort and an empty set is the
+    honest "don't know": only unscoped pins then show, rather than guessing.
     """
-    if not cwd:
+    if not cwd or not Path(cwd).is_dir():
         return frozenset()
-    projects: set[str] = set()
-    try:
-        from hafiz.core.store import project_for_path
+    from hafiz.core.context import resolve_workspace_projects
+    from hafiz.core.git_context import _git
+    from hafiz.core.projects import project_from_cwd
+    from hafiz.core.store import project_for_path
 
-        own = await project_for_path(cwd)
-        if own:
-            projects.add(own)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from hafiz.core.context import resolve_workspace_projects
-        from hafiz.core.git_context import _git
+    async def best_effort(coro):
+        try:
+            return await coro
+        except Exception:  # noqa: BLE001 — recall must never fail a turn
+            return None
 
-        path = Path(cwd)
-        # Siblings are siblings of the *repo*, not of whichever subdirectory
-        # the session happened to open in.
-        root = await asyncio.to_thread(_git, ["rev-parse", "--show-toplevel"], path)
-        projects.update(await resolve_workspace_projects(Path(root) if root else path))
-    except Exception:  # noqa: BLE001
-        pass
-    return frozenset(projects)
+    path = Path(cwd)
+    names: set[str | None] = {
+        await best_effort(project_for_path(cwd)),
+        await best_effort(project_from_cwd(path)),
+    }
+    # Siblings are siblings of the *repo*, not of whichever subdirectory the
+    # session happened to open in.
+    root = await asyncio.to_thread(_git, ["rev-parse", "--show-toplevel"], path)
+    base = Path(root) if root else path
+    if root:
+        names.add(base.name)
+        names.update(s.name for s in base.parent.iterdir() if (s / ".git").exists())
+    names.update(await best_effort(resolve_workspace_projects(base)) or ())
+    return frozenset(project_key(n) for n in names if n)
 
 
 def pin_visible(row: dict, projects: frozenset[str]) -> bool:
     """Unscoped pins always apply; a scoped pin only inside its own workspace."""
     scope = row.get("project")
-    return not scope or scope in projects
+    return not scope or project_key(scope) in projects
 
 
 def repo_context(cwd: str | None) -> str:
