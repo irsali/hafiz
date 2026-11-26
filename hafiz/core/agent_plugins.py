@@ -77,6 +77,17 @@ _TOP_KEY_RE = re.compile(r"^([A-Za-z_][\w-]*)\s*:(.*)$")
 _PROVIDER_RE = re.compile(r"^(\s+)provider\s*:[ \t]*(.*?)[ \t]*$")
 
 
+def _comment_suffix(value_part: str, scalar: str) -> str:
+    """The ``# comment`` after ``scalar``, with the space YAML needs before ``#``.
+
+    For an empty value (``provider:   # note``) the regex has already eaten the
+    spaces, and pasting the comment straight after a new value would make it
+    part of the scalar (``hafiz# note``).
+    """
+    comment = value_part[len(scalar) :]
+    return f" {comment}" if comment and not comment[0].isspace() else comment
+
+
 def _strip_comment(value: str) -> str:
     """Drop a trailing ``# comment`` from a YAML scalar (quote-aware enough
     for the simple scalars ``provider`` holds)."""
@@ -199,7 +210,7 @@ def write_memory_provider(text: str, raw_value: str) -> tuple[str, dict[str, Any
     assert m is not None
     previous_raw = _strip_comment(m.group(2))
     value_part = m.group(2)
-    comment = value_part[len(previous_raw) :]  # keeps any trailing "  # comment"
+    comment = _comment_suffix(value_part, previous_raw)  # keeps any "  # comment"
     nl = "\n" if old.endswith("\n") else ""
     lines[block.provider_idx] = f"{m.group(1)}provider: {raw_value}{comment}{nl}"
     return "".join(lines), {"previous_raw": previous_raw, "created_block": False}
@@ -217,7 +228,7 @@ def restore_memory_provider(text: str, undo: dict[str, Any]) -> str:
         m = _PROVIDER_RE.match(old.rstrip("\n"))
         assert m is not None
         value_part = m.group(2)
-        comment = value_part[len(_strip_comment(value_part)) :]
+        comment = _comment_suffix(value_part, _strip_comment(value_part))
         nl = "\n" if old.endswith("\n") else ""
         lines[block.provider_idx] = f"{m.group(1)}provider: {previous}{comment}{nl}"
         return "".join(lines)
@@ -234,9 +245,16 @@ def restore_memory_provider(text: str, undo: dict[str, Any]) -> str:
 # ── file helpers ──────────────────────────────────────────────────────────
 
 
-def _atomic_write(target: Path, text: str) -> None:
+def _read_config(path: Path) -> tuple[str, str]:
+    """``(text with LF endings, the file's own newline)`` — so a CRLF config is
+    written back CRLF instead of having every line ending rewritten."""
+    raw = path.read_bytes().decode("utf-8")
+    return raw.replace("\r\n", "\n"), "\r\n" if "\r\n" in raw else "\n"
+
+
+def _atomic_write(target: Path, text: str, newline: str = "\n") -> None:
     tmp = target.with_suffix(target.suffix + ".hafiz-tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_bytes(text.replace("\n", newline).encode("utf-8"))
     os.replace(tmp, target)
 
 
@@ -322,7 +340,7 @@ def _configure_hermes(config_path: Path, marker: dict[str, Any] | None) -> dict[
         # here could shadow its defaults, so hand over the lines instead.
         return {**result, "action": "no_config", "lines": manual_config_lines()}
 
-    text = config_path.read_text(encoding="utf-8")
+    text, newline = _read_config(config_path)
     status, raw = read_memory_provider(text)
     if status == "unsupported":
         return {**result, "action": "manual", "lines": manual_config_lines()}
@@ -340,7 +358,7 @@ def _configure_hermes(config_path: Path, marker: dict[str, Any] | None) -> dict[
         return {**result, "action": "manual", "lines": manual_config_lines()}
     new_text, undo = edited
     _backup_once(config_path)
-    _atomic_write(config_path, new_text)
+    _atomic_write(config_path, new_text, newline)
     return {**result, "action": "set", "undo": undo}
 
 
@@ -387,7 +405,7 @@ def _unconfigure_hermes(config_path: Path, marker: dict[str, Any]) -> dict[str, 
     undo = marker.get("config")
     if not config_path.exists():
         return {"path": str(config_path), "action": "none"}
-    text = config_path.read_text(encoding="utf-8")
+    text, newline = _read_config(config_path)
     status, raw = read_memory_provider(text)
     still_ours = status == "set" and provider_name(raw) == HERMES_PLUGIN_NAME
     if not still_ours:
@@ -397,5 +415,5 @@ def _unconfigure_hermes(config_path: Path, marker: dict[str, Any]) -> dict[str, 
         # not ours to unset. Say so rather than leave a silent dangling name.
         return {"path": str(config_path), "action": "left", "current": HERMES_PLUGIN_NAME}
     _backup_once(config_path)
-    _atomic_write(config_path, restore_memory_provider(text, undo))
+    _atomic_write(config_path, restore_memory_provider(text, undo), newline)
     return {"path": str(config_path), "action": "restored"}

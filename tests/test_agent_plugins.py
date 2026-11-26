@@ -24,6 +24,7 @@ from hafiz.core.agent_plugins import (
     install_hermes,
     load_plugin_file,
     read_memory_provider,
+    restore_memory_provider,
     uninstall_hermes,
     write_memory_provider,
 )
@@ -70,6 +71,14 @@ def test_set_provider_keeps_trailing_comment():
     text = "memory:\n  provider: ''  # none yet\n"
     new, _ = write_memory_provider(text, "hafiz")
     assert new == "memory:\n  provider: hafiz  # none yet\n"
+
+
+def test_empty_provider_with_comment_keeps_the_space_before_hash():
+    """`provider:   # note` — the comment must not fuse into the new value."""
+    text = "memory:\n  provider:   # pick one\n"
+    new, undo = write_memory_provider(text, "hafiz")
+    assert new == "memory:\n  provider: hafiz # pick one\n"
+    assert restore_memory_provider(new, undo) == "memory:\n  provider:  # pick one\n"
 
 
 def test_set_provider_inserts_when_block_has_no_key():
@@ -129,6 +138,17 @@ def test_uninstall_restores_config_exactly(home: Path):
     assert result["config"]["action"] == "restored"
     assert (home / "config.yaml").read_text() == CONFIG
     assert not _plugin(home).exists()
+
+
+def test_crlf_config_keeps_its_line_endings(home: Path):
+    crlf = CONFIG.replace("\n", "\r\n").encode()
+    (home / "config.yaml").write_bytes(crlf)
+    install_hermes(home)
+    after = (home / "config.yaml").read_bytes()
+    assert b"  provider: hafiz\r\n" in after
+    assert after.count(b"\n") == after.count(b"\r\n")
+    uninstall_hermes(home)
+    assert (home / "config.yaml").read_bytes() == crlf
 
 
 def test_uninstall_after_reinstall_still_restores(home: Path):
