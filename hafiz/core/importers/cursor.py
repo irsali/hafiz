@@ -11,8 +11,10 @@ macOS, ``%APPDATA%`` on Windows). Three pieces matter:
 
 ``cursorDiskKV['composerData:<composerId>']``
     The conversation body. ``fullConversationHeadersOnly`` is the ordered
-    list of turn references — this is the only reliable ordering, since
-    the turns themselves are stored as independent key/value rows.
+    list of turn references when present. Newer Cursor builds leave that
+    list empty (and may set ``blobEncryptionKey``); turns still live as
+    independent ``bubbleId:…`` rows, ordered by each bubble's
+    ``createdAt``.
 
 ``cursorDiskKV['bubbleId:<composerId>:<bubbleId>']``
     One turn, Cursor's *bubble*. ``type`` is 1 for user and 2 for
@@ -175,6 +177,56 @@ def _parse_bubble(raw: str) -> _Bubble | None:
     )
 
 
+def _message_from_bubble(
+    bubble: _Bubble,
+    *,
+    seq: int,
+    started: datetime,
+    bubble_type: Any = None,
+    entry_created_at: Any = None,
+) -> MessageInput:
+    metadata: dict = {"bubble_type": bubble_type}
+    if bubble.thinking:
+        # Kept off `content` for the same reason as the
+        # claude-code importer: high value for debugging, but
+        # it would pollute the embedding corpus.
+        metadata["thinking"] = bubble.thinking
+    return MessageInput(
+        id=uuid.uuid4(),
+        seq=seq,
+        role=bubble.role,
+        content=bubble.text,
+        ts=bubble.created_at or _coerce_ts(entry_created_at) or started,
+        tool_calls=bubble.tool_calls,
+        source_message_id=bubble.bubble_id,
+        metadata=metadata,
+    )
+
+
+def _bubbles_for_composer(conn: sqlite3.Connection, composer_id: str) -> list[_Bubble]:
+    """Load every usable bubble for a composer, ordered by created_at.
+
+    Used when ``fullConversationHeadersOnly`` is empty — newer Cursor
+    versions leave that list blank while the bubble rows remain.
+    """
+    # A key range, not LIKE: SQLite's LIKE is case-insensitive and cannot use
+    # the BINARY primary-key index, so it would scan the whole table per
+    # composer. ';' is the byte after ':', so this is exactly the prefix.
+    rows = conn.execute(
+        "SELECT value FROM cursorDiskKV WHERE key > ? AND key < ?",
+        (f"bubbleId:{composer_id}:", f"bubbleId:{composer_id};"),
+    ).fetchall()
+    bubbles: list[_Bubble] = []
+    for row in rows:
+        bubble = _parse_bubble(row["value"])
+        if bubble is not None:
+            bubbles.append(bubble)
+    # None created_at sorts first; bubble_id breaks ties for determinism.
+    _min = datetime.min.replace(tzinfo=UTC)
+    bubbles.sort(key=lambda b: (b.created_at or _min, b.bubble_id))
+    return bubbles
+
+
 def workspace_folders(storage_dir: Path | None = None) -> dict[str, str]:
     """Map Cursor ``workspaceId`` → the filesystem folder it was opened on.
 
@@ -263,41 +315,35 @@ def parse_conversations(
 
             order = data.get("fullConversationHeadersOnly") or []
             messages: list[MessageInput] = []
-            for seq, entry in enumerate(order):
-                if not isinstance(entry, dict):
-                    continue
-                bubble_id = entry.get("bubbleId")
-                if not bubble_id:
-                    continue
-                brow = conn.execute(
-                    "SELECT value FROM cursorDiskKV WHERE key = ?",
-                    (f"bubbleId:{composer_id}:{bubble_id}",),
-                ).fetchone()
-                if brow is None:
-                    continue
-                bubble = _parse_bubble(brow["value"])
-                if bubble is None:
-                    continue
-
-                metadata: dict = {"bubble_type": entry.get("type")}
-                if bubble.thinking:
-                    # Kept off `content` for the same reason as the
-                    # claude-code importer: high value for debugging, but
-                    # it would pollute the embedding corpus.
-                    metadata["thinking"] = bubble.thinking
-
-                messages.append(
-                    MessageInput(
-                        id=uuid.uuid4(),
-                        seq=seq,
-                        role=bubble.role,
-                        content=bubble.text,
-                        ts=bubble.created_at or _coerce_ts(entry.get("createdAt")) or started,
-                        tool_calls=bubble.tool_calls,
-                        source_message_id=bubble.bubble_id,
-                        metadata=metadata,
+            if order:
+                for seq, entry in enumerate(order):
+                    if not isinstance(entry, dict):
+                        continue
+                    bubble_id = entry.get("bubbleId")
+                    if not bubble_id:
+                        continue
+                    brow = conn.execute(
+                        "SELECT value FROM cursorDiskKV WHERE key = ?",
+                        (f"bubbleId:{composer_id}:{bubble_id}",),
+                    ).fetchone()
+                    if brow is None:
+                        continue
+                    bubble = _parse_bubble(brow["value"])
+                    if bubble is None:
+                        continue
+                    messages.append(
+                        _message_from_bubble(
+                            bubble,
+                            seq=seq,
+                            started=started,
+                            bubble_type=entry.get("type"),
+                            entry_created_at=entry.get("createdAt"),
+                        )
                     )
-                )
+            else:
+                # Newer Cursor: headers list empty, bubbles still present.
+                for seq, bubble in enumerate(_bubbles_for_composer(conn, composer_id)):
+                    messages.append(_message_from_bubble(bubble, seq=seq, started=started))
 
             if not messages:
                 continue

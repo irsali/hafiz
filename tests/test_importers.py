@@ -196,6 +196,67 @@ def test_cursor_missing_database_is_not_an_error(tmp_path: Path):
     assert parse_conversations(tmp_path / "nope.vscdb") == []
 
 
+def test_cursor_empty_headers_falls_back_to_bubble_created_at(tmp_path: Path):
+    """Newer Cursor leaves fullConversationHeadersOnly empty; bubbles remain."""
+    from hafiz.core.importers.cursor import parse_conversations
+
+    cid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    db = tmp_path / "state.vscdb"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INT,"
+        " lastUpdatedAt INT, isArchived INT, isSubagent INT, recency INT, checkpointAt INT,"
+        " value TEXT, subagentTypeName TEXT)"
+    )
+    conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(
+        "INSERT INTO composerHeaders VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            cid,
+            None,
+            1785927840271,
+            1785928721962,
+            0,
+            0,
+            0,
+            0,
+            json.dumps({"name": "Headerless"}),
+            "",
+        ),
+    )
+    # Empty headers list — the shape that was silently skipped before.
+    conn.execute(
+        "INSERT INTO cursorDiskKV VALUES (?,?)",
+        (
+            f"composerData:{cid}",
+            json.dumps(
+                {
+                    "name": "Headerless",
+                    "fullConversationHeadersOnly": [],
+                    "blobEncryptionKey": "not-used-here",
+                }
+            ),
+        ),
+    )
+    # Insert out of time order so sort-by-createdAt is what the assertion pins.
+    late = _bubble("late", 2, text="third", createdAt=1785927860000)
+    early = _bubble("early", 1, text="first", createdAt=1785927840000)
+    mid = _bubble("mid", 2, text="second", createdAt=1785927850000)
+    for bid, val in (("late", late), ("early", early), ("mid", mid)):
+        conn.execute("INSERT INTO cursorDiskKV VALUES (?,?)", (f"bubbleId:{cid}:{bid}", val))
+    conn.commit()
+    conn.close()
+
+    convos = parse_conversations(db)
+    assert len(convos) == 1
+    c = convos[0]
+    assert c.external_id == cid
+    assert c.title == "Headerless"
+    assert [m.source_message_id for m in c.messages] == ["early", "mid", "late"]
+    assert [m.seq for m in c.messages] == [0, 1, 2]
+    assert [m.content for m in c.messages] == ["first", "second", "third"]
+
+
 # ---------------------------------------------------------------------------
 # ChatGPT export
 # ---------------------------------------------------------------------------
