@@ -1,0 +1,1765 @@
+{
+  "meta": {
+    "label": "baseline",
+    "commit": "ad97fdc",
+    "branch": "feat/recall-eval",
+    "dirty": false,
+    "hafiz_version": "hafiz 0.1.0",
+    "python": "3.14.4",
+    "finished_at": "2026-11-26T14:51:00+00:00",
+    "elapsed_s": 913.2,
+    "backend": "sqlite",
+    "embedding_device": "cpu",
+    "query_args": [
+      "--observations",
+      "--min-score",
+      "0.05",
+      "--limit",
+      "6"
+    ],
+    "token_estimate": "ceil(chars / 4)",
+    "dataset": {
+      "memories_sha256": "45c4f1939388e3b7",
+      "questions_sha256": "aa6c7e137fd34667"
+    }
+  },
+  "aggregate": {
+    "exact": {
+      "n": 50,
+      "hit_at_1": 0.96,
+      "hit_at_6": 0.98,
+      "mrr": 0.97,
+      "needle_surfaced": 0.98
+    },
+    "decision": {
+      "n": 45,
+      "hit_at_1": 0.7777777777777778,
+      "hit_at_6": 0.7777777777777778,
+      "mrr": 0.7777777777777778,
+      "n_superseded_chain": 32,
+      "stale_leak_rate": 0.0
+    },
+    "tokens": {
+      "on_topic_n": 95,
+      "on_topic_mean": 61.93684210526316,
+      "on_topic_median": 55,
+      "on_topic_p95": 117,
+      "on_topic_max": 133,
+      "off_topic_n": 20,
+      "off_topic_silent_rate": 0.95,
+      "off_topic_mean": 3.05
+    }
+  },
+  "questions": [
+    {
+      "id": "ex01",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f01",
+        "w10",
+        "w06"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 3,
+      "tokens": 131,
+      "silent": false
+    },
+    {
+      "id": "ex02",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f02",
+        "d12b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 79,
+      "silent": false
+    },
+    {
+      "id": "ex03",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f02"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 43,
+      "silent": false
+    },
+    {
+      "id": "ex04",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f03"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 42,
+      "silent": false
+    },
+    {
+      "id": "ex05",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f04"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 48,
+      "silent": false
+    },
+    {
+      "id": "ex06",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f05"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 61,
+      "silent": false
+    },
+    {
+      "id": "ex07",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f06"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 55,
+      "silent": false
+    },
+    {
+      "id": "ex08",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f07",
+        "f08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 87,
+      "silent": false
+    },
+    {
+      "id": "ex09",
+      "measure": "exact",
+      "rank": 2,
+      "returned": [
+        "l04",
+        "f08"
+      ],
+      "hit1": false,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 95,
+      "silent": false
+    },
+    {
+      "id": "ex10",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f09"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 42,
+      "silent": false
+    },
+    {
+      "id": "ex11",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f10"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 41,
+      "silent": false
+    },
+    {
+      "id": "ex12",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f11"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 56,
+      "silent": false
+    },
+    {
+      "id": "ex13",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f12"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 58,
+      "silent": false
+    },
+    {
+      "id": "ex14",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f13",
+        "f14"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 86,
+      "silent": false
+    },
+    {
+      "id": "ex15",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f14"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "ex16",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f15"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 51,
+      "silent": false
+    },
+    {
+      "id": "ex17",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f16"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 49,
+      "silent": false
+    },
+    {
+      "id": "ex18",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f17"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "ex19",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f18"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 52,
+      "silent": false
+    },
+    {
+      "id": "ex20",
+      "measure": "exact",
+      "rank": null,
+      "returned": [
+        "p06"
+      ],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": false,
+      "n_returned": 1,
+      "tokens": 51,
+      "silent": false
+    },
+    {
+      "id": "ex21",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f20",
+        "d09b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 95,
+      "silent": false
+    },
+    {
+      "id": "ex22",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f21",
+        "l03"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 85,
+      "silent": false
+    },
+    {
+      "id": "ex23",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f22",
+        "d11b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 94,
+      "silent": false
+    },
+    {
+      "id": "ex24",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f23"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 49,
+      "silent": false
+    },
+    {
+      "id": "ex25",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f24",
+        "w06"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 88,
+      "silent": false
+    },
+    {
+      "id": "ex26",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f25",
+        "l01"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 84,
+      "silent": false
+    },
+    {
+      "id": "ex27",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f26"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 48,
+      "silent": false
+    },
+    {
+      "id": "ex28",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f27"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 53,
+      "silent": false
+    },
+    {
+      "id": "ex29",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f28",
+        "d04b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 87,
+      "silent": false
+    },
+    {
+      "id": "ex30",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f29"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 44,
+      "silent": false
+    },
+    {
+      "id": "ex31",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f30"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 49,
+      "silent": false
+    },
+    {
+      "id": "ex32",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f31",
+        "f01"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 98,
+      "silent": false
+    },
+    {
+      "id": "ex33",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "f32",
+        "f17",
+        "s06"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 3,
+      "tokens": 117,
+      "silent": false
+    },
+    {
+      "id": "ex34",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w01"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 75,
+      "silent": false
+    },
+    {
+      "id": "ex35",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w02"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 63,
+      "silent": false
+    },
+    {
+      "id": "ex36",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w03",
+        "f10"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 85,
+      "silent": false
+    },
+    {
+      "id": "ex37",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w04",
+        "f05",
+        "f04"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 3,
+      "tokens": 121,
+      "silent": false
+    },
+    {
+      "id": "ex38",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w05"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 54,
+      "silent": false
+    },
+    {
+      "id": "ex39",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w06",
+        "f24"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 91,
+      "silent": false
+    },
+    {
+      "id": "ex40",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w07"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 56,
+      "silent": false
+    },
+    {
+      "id": "ex41",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "ex42",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w09"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 60,
+      "silent": false
+    },
+    {
+      "id": "ex43",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w10",
+        "f01"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 102,
+      "silent": false
+    },
+    {
+      "id": "ex44",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w11"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 53,
+      "silent": false
+    },
+    {
+      "id": "ex45",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "w12"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 71,
+      "silent": false
+    },
+    {
+      "id": "ex46",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "l01",
+        "f25"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 2,
+      "tokens": 81,
+      "silent": false
+    },
+    {
+      "id": "ex47",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "l02"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 56,
+      "silent": false
+    },
+    {
+      "id": "ex48",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "l07"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 61,
+      "silent": false
+    },
+    {
+      "id": "ex49",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "l08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 63,
+      "silent": false
+    },
+    {
+      "id": "ex50",
+      "measure": "exact",
+      "rank": 1,
+      "returned": [
+        "p05"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": true,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "dc01",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d01b",
+        "f21"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 86,
+      "silent": false
+    },
+    {
+      "id": "dc02",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d01b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 48,
+      "silent": false
+    },
+    {
+      "id": "dc03",
+      "measure": "decision",
+      "rank": null,
+      "returned": [
+        "s04",
+        "f07"
+      ],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 76,
+      "silent": false
+    },
+    {
+      "id": "dc04",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d02c",
+        "f07"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 79,
+      "silent": false
+    },
+    {
+      "id": "dc05",
+      "measure": "decision",
+      "rank": null,
+      "returned": [
+        "w02",
+        "l01"
+      ],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 96,
+      "silent": false
+    },
+    {
+      "id": "dc06",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d03b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 62,
+      "silent": false
+    },
+    {
+      "id": "dc07",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d04b",
+        "f28"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 84,
+      "silent": false
+    },
+    {
+      "id": "dc08",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d04b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 49,
+      "silent": false
+    },
+    {
+      "id": "dc09",
+      "measure": "decision",
+      "rank": null,
+      "returned": [
+        "f18"
+      ],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "dc10",
+      "measure": "decision",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "dc11",
+      "measure": "decision",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "dc12",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d06b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 59,
+      "silent": false
+    },
+    {
+      "id": "dc13",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d07b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 52,
+      "silent": false
+    },
+    {
+      "id": "dc14",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d07b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 51,
+      "silent": false
+    },
+    {
+      "id": "dc15",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d08b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 57,
+      "silent": false
+    },
+    {
+      "id": "dc16",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d08b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 57,
+      "silent": false
+    },
+    {
+      "id": "dc17",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d09b",
+        "f20",
+        "p08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 3,
+      "tokens": 133,
+      "silent": false
+    },
+    {
+      "id": "dc18",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d09b",
+        "f20"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 94,
+      "silent": false
+    },
+    {
+      "id": "dc19",
+      "measure": "decision",
+      "rank": null,
+      "returned": [
+        "w12"
+      ],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 59,
+      "silent": false
+    },
+    {
+      "id": "dc20",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d10b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 52,
+      "silent": false
+    },
+    {
+      "id": "dc21",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d11b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 55,
+      "silent": false
+    },
+    {
+      "id": "dc22",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d11b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 53,
+      "silent": false
+    },
+    {
+      "id": "dc23",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d12b",
+        "f05"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 91,
+      "silent": false
+    },
+    {
+      "id": "dc24",
+      "measure": "decision",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "dc25",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d13b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 51,
+      "silent": false
+    },
+    {
+      "id": "dc26",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d13b",
+        "s08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 76,
+      "silent": false
+    },
+    {
+      "id": "dc27",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d14b",
+        "p06"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 85,
+      "silent": false
+    },
+    {
+      "id": "dc28",
+      "measure": "decision",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "dc29",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d15b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "dc30",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d15b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 52,
+      "silent": false
+    },
+    {
+      "id": "dc31",
+      "measure": "decision",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "dc32",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "d16b"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 45,
+      "silent": false
+    },
+    {
+      "id": "dc33",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s01"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 41,
+      "silent": false
+    },
+    {
+      "id": "dc34",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s02"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 47,
+      "silent": false
+    },
+    {
+      "id": "dc35",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s03",
+        "s02"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 2,
+      "tokens": 65,
+      "silent": false
+    },
+    {
+      "id": "dc36",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s04"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 46,
+      "silent": false
+    },
+    {
+      "id": "dc37",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s05"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 46,
+      "silent": false
+    },
+    {
+      "id": "dc38",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s06",
+        "f32",
+        "f17"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 3,
+      "tokens": 117,
+      "silent": false
+    },
+    {
+      "id": "dc39",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s07"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 45,
+      "silent": false
+    },
+    {
+      "id": "dc40",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "s08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 47,
+      "silent": false
+    },
+    {
+      "id": "dc41",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "p02"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 60,
+      "silent": false
+    },
+    {
+      "id": "dc42",
+      "measure": "decision",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "dc43",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "p03"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 50,
+      "silent": false
+    },
+    {
+      "id": "dc44",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "p04"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 54,
+      "silent": false
+    },
+    {
+      "id": "dc45",
+      "measure": "decision",
+      "rank": 1,
+      "returned": [
+        "p08"
+      ],
+      "hit1": true,
+      "hitk": true,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 54,
+      "silent": false
+    },
+    {
+      "id": "off01",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off02",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off03",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off04",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off05",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off06",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off07",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [
+        "w02"
+      ],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 1,
+      "tokens": 61,
+      "silent": false
+    },
+    {
+      "id": "off08",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off09",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off10",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off11",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off12",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off13",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off14",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off15",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off16",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off17",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off18",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off19",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    },
+    {
+      "id": "off20",
+      "measure": "offtopic",
+      "rank": null,
+      "returned": [],
+      "hit1": false,
+      "hitk": false,
+      "leaked": [],
+      "needle_surfaced": null,
+      "n_returned": 0,
+      "tokens": 0,
+      "silent": true
+    }
+  ]
+}
