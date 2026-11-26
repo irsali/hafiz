@@ -1569,12 +1569,16 @@ app.add_typer(agent_app)
 @agent_app.command("install")
 def agent_install(
     name: str | None = typer.Argument(
-        None, help="Agent name (claude-code, cursor, github-copilot)."
+        None, help="Agent name (claude-code, codex, cursor, github-copilot, hermes)."
     ),
     local: bool = typer.Option(
         False, "--local", "-l", help="Install in current project instead of globally."
     ),
-    path: str | None = typer.Option(None, "--path", help="Override destination directory."),
+    path: str | None = typer.Option(
+        None,
+        "--path",
+        help="Override destination directory (for hermes: the Hermes home, default ~/.hermes).",
+    ),
     file: str | None = typer.Option(None, "--file", "-f", help="Override destination filename."),
     hooks: bool = typer.Option(
         False,

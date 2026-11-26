@@ -1,0 +1,5 @@
+name: hafiz
+version: 1.0.0
+description: "Hafiz — sovereign local PostgreSQL+pgvector second brain. Knowledge-layer recall (code, decisions, learnings) auto-injected each turn; explicit hafiz_remember writes; full conversations captured to the hidden source layer at session end. Requires the `hafiz` CLI on PATH + a running hafiz DB. No API key."
+# No pip_dependencies — hafiz is an independent CLI install, not a Python package
+# importable from inside hermes-agent. The provider shells out to `hafiz`.

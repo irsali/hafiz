@@ -152,7 +152,34 @@ AGENTS: dict[str, AgentDefaults] = {
         display_name="GitHub Copilot",
         instructions={"local": ".github/copilot-instructions.md"},
     ),
+    # Codex CLI reads AGENTS.md: ~/.codex/AGENTS.md (or $CODEX_HOME/AGENTS.md)
+    # globally, then AGENTS.md from the repo root down to the cwd.
+    # https://learn.chatgpt.com/docs/agent-configuration/agents-md
+    "codex": AgentDefaults(
+        name="codex",
+        display_name="Codex",
+        instructions={"global": "~/.codex/AGENTS.md", "local": "AGENTS.md"},
+    ),
+    # Hermes is a plugin, not an instruction file: no `instructions` entry.
+    # `hafiz agent install hermes` is handled by hafiz.core.agent_plugins.
+    "hermes": AgentDefaults(
+        name="hermes",
+        display_name="Hermes",
+        instructions={},
+    ),
 }
+
+# Env vars that relocate an agent's whole home directory. When set, the
+# default *global* instruction path moves with it.
+_HOME_ENV: dict[str, tuple[str, str]] = {"codex": ("CODEX_HOME", "~/.codex")}
+
+
+def _apply_home_env(agent_name: str, default_path: str) -> str:
+    """Re-root a default global path under the agent's home env var, if set."""
+    spec = _HOME_ENV.get(agent_name)
+    if spec and os.environ.get(spec[0]) and default_path.startswith(spec[1]):
+        return os.environ[spec[0]] + default_path[len(spec[1]) :]
+    return default_path
 
 
 # ── File operations ───────────────────────────────────────────────────────
@@ -248,6 +275,9 @@ def resolve_target(
                 f"{agent.display_name} does not support {'local' if local else 'global'} "
                 f"installation. Use {'--local' if not local else 'without --local'}."
             )
+
+        if scope == "global":
+            default_path = _apply_home_env(agent.name, default_path)
 
         # Split default into directory and filename
         default_full = Path(default_path)

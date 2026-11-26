@@ -35,6 +35,12 @@ therefore synthesise ``<session-id>:<line-number>``, which is stable
 across re-imports of a growing file. A native ``id`` is preferred
 whenever present.
 
+**Format provenance.** OpenAI documents the AGENTS.md, ``notify`` and hook
+surfaces but not the rollout schema itself; the record shapes above follow
+the layout observed in community references (``developer`` / ``user`` /
+``assistant`` message roles, ``input_text`` / ``output_text`` parts,
+``custom_tool_call`` carrying ``input``). Treat them as a moving target.
+
 **Unverified against a real install.** This parser was written from the
 documented rollout format and is exercised against synthetic fixtures;
 no Codex session data was available on the machine where it was built.
@@ -67,6 +73,10 @@ CODEX_AGENT = "codex"
 # telemetry, future additions) is skipped without complaint.
 _CONVERSATIONAL = {"response_item"}
 _META = {"session_meta"}
+
+# User-role ``message`` items Codex injects itself (the AGENTS.md preamble,
+# which can run to tens of KB). Dropping them keeps them out of the corpus.
+_INJECTED_USER_PREFIXES = ("# AGENTS.md instructions for",)
 
 
 def codex_home() -> Path:
@@ -207,7 +217,16 @@ def parse_rollout_file(path: Path) -> ParsedRollout | None:
 
         if item_type == "message":
             role = role or "assistant"
+            # Codex injects its own permission / agent-role prompts as
+            # ``developer`` messages. They are instructions, not something
+            # the model said, so they must not land as assistant turns.
+            if role == "developer":
+                role = "system"
             text = _collapse_content(flat.get("content"))
+            # Codex re-injects AGENTS.md as a user-role item; it is context,
+            # not something the user typed.
+            if role == "user" and text.startswith(_INJECTED_USER_PREFIXES):
+                continue
         elif item_type == "reasoning":
             # Reasoning is not conversation; the claude-code and cursor
             # importers keep it out of the embedding corpus too.
@@ -220,7 +239,9 @@ def parse_rollout_file(path: Path) -> ParsedRollout | None:
                     "kind": "tool_use",
                     "id": flat.get("call_id") or flat.get("id"),
                     "name": flat.get("name"),
-                    "input": flat.get("arguments") or flat.get("action"),
+                    # function_call: ``arguments`` (JSON string);
+                    # custom_tool_call: ``input``; local_shell_call: ``action``.
+                    "input": flat.get("arguments") or flat.get("input") or flat.get("action"),
                 }
             ]
         elif item_type in ("function_call_output", "custom_tool_call_output"):
