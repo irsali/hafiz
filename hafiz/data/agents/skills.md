@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 20 -->
-# Hafiz — Workspace Intelligence (v20)
+<!-- SKILLS_VERSION: 21 -->
+# Hafiz — Workspace Intelligence (v21)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the
 user's **sovereign second brain** — not just a file index. It indexes
@@ -176,6 +176,12 @@ default, and `--min-score` filters the reranked score, not the raw cosine
 `score`. That matters: under reranking `score` is *not* monotonic down the
 result list, so a floor on it would drop a higher-ranked row and keep a
 lower-ranked one.
+
+One exception, marked so you can see it: the single closest vector match is
+kept under the floor when its cosine is very high (`[recall] strong_match`,
+default 0.70), because the reranker can underrate a plainly worded memory
+against a chatty prompt about exactly it. `--json` flags that row
+`strong_match: true`; at most one row per search carries it.
 
 **Why useful floors are low.** Measured on a 1,200-annotation store, three
 on-topic against three off-topic questions, comparing the best score in each

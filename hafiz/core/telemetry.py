@@ -245,6 +245,20 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
             )
         ).all()
 
+        # What each recall channel contributed. Read from the logged filters in
+        # Python: the JSON column differs by backend, and the window is bounded
+        # by retention, so this is a few thousand small dicts at most.
+        logged = (await session.execute(select(Retrieval.filters).where(window))).scalars().all()
+
+    channels = {"keyword_searches": 0, "keyword_rows": 0, "strong_match_searches": 0}
+    for f in logged:
+        f = f or {}
+        if f.get("keyword_hits"):
+            channels["keyword_searches"] += 1
+            channels["keyword_rows"] += int(f["keyword_hits"])
+        if f.get("strong_match"):
+            channels["strong_match_searches"] += 1
+
     # What was *shown* to agents and whether they used it — the half of the
     # question the retrieval log can't answer. Secondary: a failure here costs
     # this one section, never the report.
@@ -270,6 +284,7 @@ async def retrieval_report(*, since_days: int = 30, limit: int = 20) -> dict:
             }
             for c, n, e, a in by_command
         ],
+        "channels": channels,
         "empty_result_rate": (
             round((empty_rate.empty or 0) / empty_rate.n, 3) if empty_rate.n else None
         ),

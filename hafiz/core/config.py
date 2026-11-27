@@ -211,6 +211,16 @@ class RecallSettings(BaseModel):
     # each one costs a cross-encoder pass, and the channel exists for the few
     # rows a vector search misses, not for a second full result list.
     keyword_candidates: int = 6
+    # The cross-encoder can score a short, plainly worded memory near zero
+    # against a chatty prompt that is about exactly it ("what did we settle on
+    # for X" vs "Switched to Y because Z"), and the ``--min-score`` floor then
+    # drops the one row that mattered. When the closest vector match is at
+    # least this similar, it is kept anyway — one row at most, marked
+    # ``strong_match``. Replayed on a real 3,270-annotation store: 38 of 515
+    # recent prompts that recalled nothing now recall one row, about 6 in 10
+    # on topic and the rest loosely related; 40 off-topic prompts stay silent
+    # (closest 0.63). Set 1.0 to turn it off.
+    strong_match: float = 0.70
 
 
 class DedupSettings(BaseModel):

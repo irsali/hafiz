@@ -481,6 +481,8 @@ def _annotation_to_dict(ann) -> dict:
         "confidence",
         "score",
         "rerank_score",
+        "found_by",
+        "strong_match",
         "age_days",
         "stale",
         "valid_from",

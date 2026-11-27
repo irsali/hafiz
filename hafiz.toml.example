@@ -66,6 +66,12 @@ condense_queries = true
 keyword_channel = true
 # Most keyword-only candidates added per searched text (each costs a rerank).
 keyword_candidates = 6
+# Keep the closest vector match when its cosine similarity is at least this,
+# even if the reranker scores it under `--min-score` (one row at most, marked
+# `strong_match` in --json). Catches plainly worded memories the reranker
+# underrates against a chatty prompt. 1.0 turns it off.
+# Env override: HAFIZ_RECALL__STRONG_MATCH=1.0
+strong_match = 0.70
 
 [dedup]
 # Near-duplicate detection on `observe` (not `note`). Before writing, Hafiz

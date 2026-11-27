@@ -152,6 +152,8 @@ class ContextBundle:
                     "unit_id": a.unit_id,
                     "score": a.score,
                     "rerank_score": a.rerank_score,
+                    "found_by": a.found_by,
+                    "strong_match": a.strong_match,
                 }
                 for a in self.annotations
             ],

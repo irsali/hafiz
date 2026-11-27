@@ -76,6 +76,14 @@ def run_retrievals(
         "Returned nothing",
         f"[yellow]{rate:.0%}[/yellow]" if rate else "0%",
     )
+    channels = report.get("channels") or {}
+    if channels.get("keyword_searches"):
+        table.add_row(
+            "Found only by keyword search",
+            f"{channels['keyword_rows']} rows in {channels['keyword_searches']} searches",
+        )
+    if channels.get("strong_match_searches"):
+        table.add_row("Kept by strong match", f"{channels['strong_match_searches']} searches")
     table.add_row("Never recalled", str(report["never_recalled"]))
     if report["blind_before"]:
         # Without this the "never recalled" count reads as an indictment of rows

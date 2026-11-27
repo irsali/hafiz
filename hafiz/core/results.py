@@ -42,6 +42,14 @@ class AnnotationResult:
     metadata: dict
     score: float
     rerank_score: float | None = None
+    #: Which search found the row: ``"vector"`` (the embedding search) or
+    #: ``"keyword"`` (only the full-text channel found it). See
+    #: ``[recall] keyword_channel``.
+    found_by: str = "vector"
+    #: True when the row is shown only because its cosine ``score`` cleared
+    #: ``[recall] strong_match`` although its ``rerank_score`` fell under the
+    #: ``min_score`` floor. At most one row per search carries it.
+    strong_match: bool = False
     #: Best-matching excerpt, set only for ``compact``/``md`` output and only
     #: when ``content`` exceeded the snippet budget. ``None`` means the full
     #: record is what gets rendered — see :mod:`hafiz.core.snippets`.
