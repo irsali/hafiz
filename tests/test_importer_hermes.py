@@ -251,6 +251,28 @@ def test_compacted_history_is_kept_and_its_live_copies_are_not_doubled(tmp_path:
     ]
 
 
+def test_a_second_compaction_does_not_double_the_archived_turns(tmp_path: Path):
+    """The first compaction's live copies are archived by the second, so the
+    same turn sits in the archive twice — with the original timestamp both
+    times."""
+    db = tmp_path / "state.db"
+    conn = make_db(db)
+    add_session(conn, "s1")
+    t = _epoch()
+    add_message(conn, "s1", "user", "q1", ts=t, active=0, compacted=1)
+    add_message(conn, "s1", "assistant", "a1", ts=t + 1, active=0, compacted=1)
+    # first compaction's copy of the tail, archived by the second compaction
+    add_message(conn, "s1", "assistant", "a1", ts=t + 1, active=0, compacted=1)
+    add_message(conn, "s1", "user", "q2", ts=t + 5, active=0, compacted=1)
+    # second compaction's live copies
+    add_message(conn, "s1", "assistant", "a1", ts=t + 1)
+    add_message(conn, "s1", "user", "q2", ts=t + 5)
+    conn.commit()
+    conn.close()
+
+    assert [m.content for m in _read(db, "s1")] == ["q1", "a1", "q2"]
+
+
 def test_older_schema_without_optional_columns_is_tolerated(tmp_path: Path):
     db = tmp_path / "state.db"
     conn = make_db(
@@ -451,6 +473,21 @@ async def test_a_session_still_in_progress_is_left_for_the_plugin(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_a_session_that_just_ended_is_left_for_the_plugin(tmp_path: Path):
+    """The plugin captures at session end; a session ended moments ago may not
+    be captured yet, so importing it now could store it twice."""
+    db = tmp_path / "state.db"
+    conn = make_db(db)
+    add_session(conn, _sid("justend"), days_ago=0.01)  # ended ~4 min ago
+    add_message(conn, _sid("justend"), "user", "hello there", ts=_epoch(0.01))
+    conn.commit()
+    conn.close()
+
+    got = await hermes.import_hermes(root=db, project=_project(), dry_run=True, embed=False)
+    assert got.communications_created == 0
+
+
+@pytest.mark.asyncio
 async def test_project_resolves_from_git_repo_root_then_cwd(state_db: Path, monkeypatch):
     project = _project()
     conn = sqlite3.connect(state_db)
@@ -617,6 +654,8 @@ def test_pending_counts_only_what_an_import_would_store(tmp_path: Path, monkeypa
     add_simple_session(conn, _sid("already_known"), days_ago=2)  # in the store
     add_simple_session(conn, _sid("ancient"), days_ago=200)  # past retention
     add_session(conn, _sid("empty"), days_ago=2)  # no turns
+    add_session(conn, _sid("blank"), days_ago=2)  # only blank turns: an import keeps nothing
+    add_message(conn, _sid("blank"), "assistant", "", ts=_epoch(2))
     add_simple_session(conn, _sid("just_now"), days_ago=0.0, ended=False)  # still running
     conn.commit()
     conn.close()

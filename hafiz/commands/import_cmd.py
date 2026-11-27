@@ -1,8 +1,8 @@
 """hafiz import — agent-transcript importers.
 
-Currently only ``hafiz import claude-code`` is implemented; the
-command group is shaped so additional harnesses (Cursor, Copilot)
-can slot in additively.
+Five importers share one runner: ``claude-code``, ``cursor``, ``chatgpt``,
+``codex`` and ``hermes``. Each takes the same options and returns the same
+summary, so a new harness slots in as one entry in :data:`IMPORTERS`.
 """
 
 from __future__ import annotations

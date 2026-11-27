@@ -288,10 +288,11 @@ answer the questions an operator or agent actually asks of `status`:
   2026-09-04 while `status` reported `overdue: 0` throughout. **Silence is not
   health.**
 - `pending_on_disk` counts transcripts whose **session id is not in the store at
-  all** (for `hermes`, a session the memory plugin captured counts as stored, and
-  a session past retention or with no turns is not counted — importing it would
-  change nothing), read from each file's head rather than by parsing it (~0.2 s over 201
-  files, since `status` is on the hot path). Two rejected cheaper proxies, both
+  all**, read from each file's head rather than by parsing it (~0.2 s over 201
+  files, since `status` is on the hot path). For `hermes`, whose sessions are
+  rows rather than files, a session the memory plugin captured counts as stored,
+  and a session past retention or with nothing an import would keep is not
+  counted — importing it would change nothing. Two rejected cheaper proxies, both
   measured wrong on a real store: comparing file *mtime* against
   `last_captured_at` (which is `max(started_at)` — a session that ran for more
   than a moment has an mtime past its own start, so it reported as pending while
@@ -899,18 +900,26 @@ All five share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
 
 - **Hermes** keeps all sessions in one SQLite `state.db` (WAL mode), opened
   **read-only**. `PATH` may be the file or the Hermes home directory;
-  `$HERMES_HOME` is honoured. Sessions are visited newest first, so `--limit N`
-  means the N newest. Optional columns are probed with `PRAGMA table_info`, so an
+  `$HERMES_HOME` is honoured. Sessions are visited newest first, and `--limit N`
+  stops after N sessions have been looked at (expired and plugin-captured ones
+  included). A session whose last activity — its end, else its newest turn — is
+  under 30 minutes old is left alone: the plugin captures it at session end, and
+  importing it first would store it twice. Optional columns are probed with `PRAGMA table_info`, so an
   older Hermes with fewer columns still imports. Hermes soft-deletes turns with
   two flags, and the importer follows them:
   - `active = 0, compacted = 0` — the user rewound the turn. **Skipped.**
   - `active = 0, compacted = 1` — archived by context compaction; the only full
     record of the session. **Imported.**
-  - Compaction re-inserts the surviving tail as live rows, so those turns exist
-    twice (202 of 204 live rows on a real session). A live row that exactly
-    matches an archived row (role, content, tool call id, tool calls) is
-    skipped; each archived row cancels at most one live row, so a message
-    genuinely repeated after compaction is kept.
+  - Compaction re-inserts the surviving tail as live rows, and a later
+    compaction archives those copies too, so one turn can exist many times (355
+    copies among 592 rows on a real session). A copy keeps the original's
+    timestamp, so a row with the same role, content, tool call and timestamp as
+    an earlier one is skipped; a message genuinely repeated later has a new
+    timestamp and is kept. (An older Hermes without timestamps: a live row that
+    matches an archived one is skipped, each archived row cancelling at most
+    one.)
+  - **A rewind after an import is not undone.** Turns already imported stay;
+    remove them with `hafiz forget <session>`.
 
   An assistant turn's tool calls become `tool_use` entries and each `tool` row a
   `tool_result` entry (same shape as the other importers); reasoning is kept in

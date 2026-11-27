@@ -88,8 +88,8 @@ _JSON_CONTENT_PREFIX = "\x00json:"
 _ROLES = {"user", "assistant", "tool", "system"}
 # The plugin titles its capture "hermes:<session id>".
 _PLUGIN_TITLE_PREFIX = f"{HERMES_AGENT}:"
-#: A session with no end and activity this recent is treated as still open and
-#: left to the plugin (the same settle window ``status`` uses).
+#: A session whose last activity (its end, else its newest turn) is this recent
+#: is left to the plugin — the same settle window ``status`` uses.
 OPEN_SESSION_MINUTES = 30
 
 
@@ -329,13 +329,25 @@ def read_messages(
             _optional(r, "tool_calls"),
         )
 
-    # Live rows that compaction re-inserted as copies of archived ones.
+    # Compaction re-inserts the surviving tail as copies, and a later
+    # compaction archives those copies in turn, so one turn can exist many
+    # times. A copy keeps the original's timestamp; a turn genuinely repeated
+    # later does not. So with timestamps, the first row of each (turn,
+    # timestamp) wins. Without them (older Hermes), only a live row can be a
+    # copy, and each archived row cancels at most one.
+    has_ts = "timestamp" in cols
+    seen: set[tuple] = set()
     archived = Counter(_key(r) for r in kept if _flag(r, "compacted", 0))
 
     messages: list[MessageInput] = []
     for row in kept:
         compacted = bool(_flag(row, "compacted", 0))
-        if not compacted and archived[_key(row)] > 0:
+        if has_ts:
+            ident = (*_key(row), _optional(row, "timestamp"))
+            if ident in seen:
+                continue
+            seen.add(ident)
+        elif not compacted and archived[_key(row)] > 0:
             archived[_key(row)] -= 1
             continue
 
@@ -488,10 +500,11 @@ async def import_hermes(
                 summary.files_seen += 1
                 summary.communications_existing += 1
                 continue
-            # A session still in progress is left for the plugin, which
-            # captures it when it ends; importing it now would store it twice
-            # (the plugin's capture has its own random key).
-            if header.ended_at is None and _last_activity(conn, header) > open_cutoff:
+            # A session that is still running, or ended moments ago, is left
+            # for the plugin, which captures it at session end; importing it
+            # first would store it twice (the plugin's capture has its own
+            # random key). Same settle window as `status`.
+            if _last_activity(conn, header) > open_cutoff:
                 continue
 
             try:
@@ -557,20 +570,6 @@ def _last_activity(conn: sqlite3.Connection, header: _SessionHeader) -> datetime
     return header.started_at
 
 
-def _has_turns(conn: sqlite3.Connection, session_id: str) -> bool:
-    """Cheap "would an import find anything?" — no row bodies are read."""
-    cols = _columns(conn, "messages")
-    where = "session_id = ?"
-    if "active" in cols and "compacted" in cols:
-        where += " AND (COALESCE(active, 1) = 1 OR COALESCE(compacted, 0) = 1)"
-    elif "active" in cols:
-        where += " AND COALESCE(active, 1) = 1"
-    return (
-        conn.execute(f"SELECT 1 FROM messages WHERE {where} LIMIT 1", (session_id,)).fetchone()
-        is not None
-    )
-
-
 def pending_on_disk(known: set[str], settle_before: datetime) -> tuple[int, int]:
     """(uncaptured, still-open) session counts in Hermes's database.
 
@@ -594,7 +593,9 @@ def pending_on_disk(known: set[str], settle_before: datetime) -> tuple[int, int]
         for header in list_sessions(conn):
             if header.id in known or is_past_retention(header.started_at):
                 continue
-            if not _has_turns(conn, header.id):
+            # The same parse an import runs, so a session an import would skip
+            # (only blank turns) is not reported as pending forever.
+            if not read_messages(conn, header.id, header.started_at):
                 continue
             if _last_activity(conn, header) > settle_before:
                 active += 1
