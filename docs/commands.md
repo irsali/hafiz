@@ -491,7 +491,7 @@ prompt that merely mentions one, or starts with any other tag, is searched as-is
 - **Only when reranking runs.** Under `--no-rerank` (or `rerank.enabled = false`) the keyword channel is skipped: with no cross-encoder to arbitrate, keyword rows would displace vector rows on a lexical-rank guess, and `--no-rerank` is the mode that promises pure vector order — which keeps `--tags` pins exact.
 - **Never fails a recall.** A store that has not run migration `0012`, or a query the engine rejects, costs the extra candidates and logs a warning; recall continues vector-only.
 
-Config: `[recall] keyword_channel` (default `true`; turn it off with `hafiz config set recall.keyword_channel false`); `keyword_candidates = 6` caps the keyword-only rows added per searched text (each costs one more row through the cross-encoder). Measured by replaying a scratch copy of a real 3,270-annotation store (`scripts/replay_keyword_recall.py`): 40 exact-string questions (a file name, flag, port, constant or ticket id plus ordinary words): the note containing the token was in the top 6 for 16 of 40 with the channel off and 40 of 40 on (35% → 90% once the `0.05` floor a recall hook applies is counted). 60 ordinary prompts sampled from the retrieval log: a recall hook shows 157 rows off and 166 on, 95% of the rows it showed before are still shown, the top row changes for 5 of 60, and 8 of 60 lose a row to a better-scoring newcomer. At a hook's `--limit 20` the same 60 prompts show 338 rows off and 357 on, 99% of the old rows are still shown, and 2 of 60 lose one. Cost: the keyword lookup itself is ~10 ms (p50); the rest is up to 6 more rows through the cross-encoder per searched text — median search time +9% at `--limit 20` (1.19 s → 1.29 s, p95 within run-to-run noise on a shared CPU), and up to about a quarter at `--limit 6` on a long condensed prompt. The retrieval log is unchanged.
+Config: `[recall] keyword_channel` (default `true`; turn it off with `hafiz config set recall.keyword_channel false`); `keyword_candidates = 6` caps the keyword-only rows added per searched text (each costs one more row through the cross-encoder). Measured by replaying a scratch copy of a real 3,270-annotation store (`scripts/replay_keyword_recall.py`): 40 exact-string questions (a file name, flag, port, constant or ticket id plus ordinary words): the note containing the token was in the top 6 for 16 of 40 with the channel off and 40 of 40 on (35% → 90% once the `0.05` floor a recall hook applies is counted). 60 ordinary prompts sampled from the retrieval log: a recall hook shows 157 rows off and 166 on, 95% of the rows it showed before are still shown, the top row changes for 5 of 60, and 8 of 60 lose a row to a better-scoring newcomer. At a hook's `--limit 20` the same 60 prompts show 338 rows off and 357 on, 99% of the old rows are still shown, and 2 of 60 lose one. Cost: the keyword lookup itself is ~10 ms (p50); the rest is up to 6 more rows through the cross-encoder per searched text — median search time +9% at `--limit 20` (1.19 s → 1.29 s, p95 within run-to-run noise on a shared CPU), and up to about a quarter at `--limit 6` on a long condensed prompt. A row only the keyword search found carries `found_by: "keyword"` in `--json` (otherwise `"vector"`), and the retrieval log counts such rows in `filters.keyword_hits`, so `hafiz retrievals` can show how often the channel is what found a result.
 
 **Pinning vs. ranking** (`--tags` on `query --observations`): some sets are
 defined by curation, not by content. "The rules that always apply" is the
@@ -523,6 +523,8 @@ filter is applied; there is no such index today.
 |---|---|---|
 | `score` | cosine similarity from the vector stage | 0–1 |
 | `rerank_score` | cross-encoder relevance, or `null` if reranking didn't run | 0–1 |
+| `found_by` | `"vector"`, or `"keyword"` when only the keyword channel found the row | string |
+| `strong_match` | `true` when the row is shown only because its `score` cleared `[recall] strong_match` while its `rerank_score` fell under `--min-score` (see below) | bool |
 
 `rerank_score` is `null` under `--no-rerank`, with a single-row result set, or
 when the model fails — which is how you tell reranked output from vector output.
@@ -566,6 +568,32 @@ every genuinely relevant row, so "no results" *is* the not-relevant signal and a
 separate hit gate (or a set-max heuristic over `score`) is unnecessary. `0.4` is
 aggressive tail-trimming. Re-measure on your own corpus before hard-coding
 anything: this is one workload shape, one embedding model, one reranker.
+
+**Strong-match safety net.** The reranker has one blind spot that matters: a
+short, plainly worded memory scored against a chatty prompt that is about
+exactly it ("go ahead, but first — what did we settle on for the CI system?"
+against "CI moved to GitHub Actions; Jenkins was decommissioned"). It can score
+that pair near zero, and the floor then drops the one row that mattered. So when
+a floor is set and reranking ran, the **single closest vector match** is kept
+even under the floor if its cosine `score` is at least `[recall] strong_match`
+(default `0.70`). It is placed after the rows that cleared the floor — so when
+those already fill `--limit` it does not appear — marked `strong_match: true`
+in `--json`, and counted in the retrieval log as `filters.strong_match`. On a
+condensed long prompt, only similarity to the prompt as a whole counts (a
+single sentence can score high on its own, and the bar was not set for that),
+and that is the `score` reported. `hafiz config set recall.strong_match 1.0`
+turns it off.
+
+Measured on a real 3,270-annotation store by replaying 515 recent hook prompts
+that recalled nothing: 38 now recall one row. Read by hand, about 6 in 10 of
+those were on the prompt's topic and the rest loosely related (a rule asked
+about almost word for word had scored cosine 0.84 and rerank under 0.05). 40
+off-topic prompts (recipes, geography, general programming) recall nothing;
+their closest matches peaked at cosine 0.63, and the 0.62–0.70 band of the real
+prompts was mostly loosely related — which is why the bar is 0.70, not lower.
+Swapping the reranker was tried and rejected: a model that ranked these pairs
+better (`jina-reranker-v1-turbo-en`) lost the off-topic separation, injecting
+something for 6 of 20 off-topic prompts at `0.05`.
 
 #### Output formats
 
@@ -964,10 +992,11 @@ One append-only source-layer table, one INSERT per search.
 
 | Command | Purpose | Brain | Agent use | Terminal use |
 |---------|---------|:-----:|-----------|-------------|
-| `retrievals` | Never-recalled knowledge, most-recalled rows, per-entry-point usage, queries that returned nothing, and **delivery**: what recall hooks showed agents and whether agents appear to have used it. Skipped harness messages are counted in `skipped` and left out of every other figure. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, skipped, by_command[], empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], delivery, telemetry_started, enabled}` | rich tables |
+| `retrievals` | Never-recalled knowledge, most-recalled rows, per-entry-point usage, queries that returned nothing, and **delivery**: what recall hooks showed agents and whether agents appear to have used it. Skipped harness messages are counted in `skipped` and left out of every other figure. `--since-days`, `--limit` | — | `--json` → `{ok, retrievals, skipped, by_command[], channels, empty_result_rate, never_recalled, blind_before, unanswered[], most_recalled[], delivery, telemetry_started, enabled}` | rich tables |
 
 - **Recorded in `hafiz/core/`, not the commands layer.** `hafiz/core/daemon.py` calls `search_annotations` directly, so command-layer telemetry would silently miss every warm request — the exact failure class this audit kept finding. `vector_search` / `search_annotations` default `telemetry_command` to their label, so a *new* caller is recorded without knowing telemetry exists; pass `None` to opt a call out.
 - **Never fails a search.** Recording is best-effort and swallows everything. A memory layer that can break the read path gets removed.
+- **`channels` answers "what does each recall channel add?"** — `{keyword_searches, keyword_rows, strong_match_searches}`: searches where the keyword channel found a row the vector search did not (and how many such rows), and searches that kept a row by strong match. Counted from searches logged after this field existed; older rows count as zero.
 - **`by_command` answers "is anyone calling this?"** — `{command, calls, empty, avg_top_score}` per entry point. Each label is one search against one layer, so a `context` bundle records **two** rows: `context` (units) and `context --observations` (annotations). Those labels exist because they didn't: `context` used to record under `query` / `query --observations`, which made the command the docs open with indistinguishable from a plain query — a 30-day audit could not tell "never used" from "never instrumented". The `enabled` flag and `retrievals` total say whether recording works; `by_command` says whether the *product* is being used.
   - `avg_top_score` is a SQL `AVG`, so it skips rows with a NULL `top_score` — i.e. it averages the **non-empty** calls only. It is not `calls`-weighted; don't multiply the two.
   - It covers the two instrumented layers, not every command. `recall` (source layer) records nothing — `telemetry.RECALL` is defined but unwired — so its absence from `by_command` is "not instrumented", not "not used". That's the same ambiguity these labels fixed for `context`, still open one layer down.

@@ -266,6 +266,31 @@ async def test_the_report_breaks_down_by_command(db):
     assert rows[telemetry.CONTEXT]["avg_top_score"] is None  # NULLs are skipped, not zeroed
 
 
+async def test_the_report_counts_what_each_recall_channel_added(db):
+    """Keyword-only rows and strong-match rescues are logged per search; the
+    report has to add them up, or the log fields have no reader."""
+    before = (await telemetry.retrieval_report(since_days=1))["channels"]
+    await telemetry.record_retrieval(
+        command=telemetry.OBSERVATIONS,
+        query=f"{MARK} channels",
+        result_ids=[uuid.uuid4(), uuid.uuid4()],
+        top_score=0.9,
+        filters={"keyword_hits": 2, "strong_match": None},
+    )
+    await telemetry.record_retrieval(
+        command=telemetry.OBSERVATIONS,
+        query=f"{MARK} channels",
+        result_ids=[uuid.uuid4()],
+        top_score=0.01,
+        filters={"keyword_hits": None, "strong_match": 1},
+    )
+    after = (await telemetry.retrieval_report(since_days=1))["channels"]
+    # Deltas, not absolutes: a live recall hook may be logging alongside.
+    assert after["keyword_searches"] - before["keyword_searches"] >= 1
+    assert after["keyword_rows"] - before["keyword_rows"] >= 2
+    assert after["strong_match_searches"] - before["strong_match_searches"] >= 1
+
+
 # ── Retention ───────────────────────────────────────────────────────────
 
 

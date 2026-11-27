@@ -1061,6 +1061,13 @@ async def search_annotations(
         searched = segments(query) or [query]
 
     pool: dict[str, AnnotationResult] = {}
+    # Per row: its cosine to the prompt as a whole (the strong-match test, see
+    # _strong_match — a single sentence of a long prompt is a looser test the
+    # threshold was not calibrated on), and whether the vector search found it
+    # in any searched text (a keyword-only hit in one may be a vector hit in
+    # another).
+    closest: dict[str, float] = {}
+    via_vector: set[str] = set()
     for text in searched:
         for r in await _ranked_candidates(
             text,
@@ -1074,10 +1081,25 @@ async def search_annotations(
         ):
             if r.id not in pool or r.ranking_score > pool[r.id].ranking_score:
                 pool[r.id] = r
+            if text is searched[0]:
+                closest[r.id] = r.score
+            if r.found_by == "vector":
+                via_vector.add(r.id)
+    for r in pool.values():
+        if r.id in via_vector:
+            r.found_by = "vector"
     candidates = sorted(pool.values(), key=lambda r: r.ranking_score, reverse=True)
 
     if min_score is not None:
-        candidates = [r for r in candidates if r.ranking_score >= min_score]
+        kept = [r for r in candidates if r.ranking_score >= min_score]
+        rescued = _strong_match(candidates, kept, closest, load_settings().recall.strong_match)
+        if rescued is not None:
+            # Report the similarity it was kept for: to the whole prompt, which
+            # on a condensed query may differ from the text that reranked it.
+            rescued.score = closest[rescued.id]
+            rescued.strong_match = True
+            kept.append(rescued)
+        candidates = kept
     final = candidates[:limit]
 
     # Recorded here rather than in the CLI: hafiz/core/daemon.py calls this
@@ -1101,9 +1123,45 @@ async def search_annotations(
                 # How many texts were actually searched, when it wasn't just the
                 # query as given — so condensing can be judged from the log.
                 "segments": len(searched) if searched != [query] else None,
+                # Why rows are in the result, so each channel's worth can be
+                # read from the log: rows only the keyword search found, and
+                # the row kept by similarity despite the floor.
+                "keyword_hits": sum(r.found_by == "keyword" for r in final) or None,
+                "strong_match": sum(r.strong_match for r in final) or None,
             },
         )
     return final
+
+
+def _strong_match(
+    candidates: list[AnnotationResult],
+    kept: list[AnnotationResult],
+    closest: dict[str, float],
+    threshold: float,
+) -> AnnotationResult | None:
+    """The closest vector match, if the floor dropped it and it is similar enough.
+
+    The cross-encoder can score a short, plainly worded memory near zero
+    against a prompt that is about exactly it, and the floor then drops the
+    one row that mattered. Cosine similarity is a weaker signal than the
+    reranker but not a useless one: at ``threshold`` (``[recall]
+    strong_match``) it is rarely wrong on a real store. Only the single row
+    closest to the prompt *as a whole* is considered (``closest``: id → cosine
+    against the whole prompt; rows found only through one sentence of a
+    condensed prompt are not eligible), and only when reranking scored it —
+    without a reranker the floor already *is* the cosine.
+    """
+    if threshold >= 1.0:
+        return None  # documented "off"; a cosine of exactly 1.0 must not slip through
+    eligible = [r for r in candidates if r.id in closest]
+    if not eligible:
+        return None
+    best = max(eligible, key=lambda r: closest[r.id])
+    if best.rerank_score is None or closest[best.id] < threshold:
+        return None
+    if any(r is best for r in kept):
+        return None
+    return best
 
 
 async def _ranked_candidates(
@@ -1161,10 +1219,13 @@ async def _ranked_candidates(
 
     recall_cfg = load_settings().recall
     focus: list[tuple[str, ...]] = []
+    keyword_ids: set = set()
     if do_rerank and recall_cfg.keyword_channel and recall_cfg.keyword_candidates > 0:
         seen = {ann.id for ann, _ in rows}
         kw_rows, focus = await _keyword_rows(query, narrow, cosine, recall_cfg.keyword_candidates)
-        rows += [(ann, score) for ann, score in kw_rows if ann.id not in seen]
+        added = [(ann, score) for ann, score in kw_rows if ann.id not in seen]
+        keyword_ids = {ann.id for ann, _ in added}
+        rows += added
 
     candidates = [
         AnnotationResult(
@@ -1180,6 +1241,7 @@ async def _ranked_candidates(
             unit_id=str(ann.unit_id) if ann.unit_id else None,
             metadata=ann.metadata_ or {},
             score=round(float(score), 4),
+            found_by="keyword" if ann.id in keyword_ids else "vector",
         )
         for ann, score in rows
     ]

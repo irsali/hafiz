@@ -480,6 +480,10 @@ def run_recall(
                     # ranking score. Without this, reranked and vector output
                     # are indistinguishable.
                     "rerank_score": r.rerank_score,
+                    # Additive: which search found the row, and whether it is
+                    # shown only for its similarity despite the floor.
+                    "found_by": r.found_by,
+                    "strong_match": r.strong_match,
                 }
                 for r in results
             ],
