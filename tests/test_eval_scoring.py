@@ -22,7 +22,19 @@ def test_shipped_dataset_is_valid():
     memories = scoring.load_jsonl(DATA / "memories.jsonl")
     questions = scoring.load_jsonl(DATA / "questions.jsonl")
     assert scoring.validate_dataset(memories, questions) == []
-    assert 80 <= len(memories) <= 120
+    assert 150 <= len(memories) <= 250
+    # The long set is what lets the eval show channels the short set cannot:
+    # long multi-topic memories, with needles past the reranker's 400 chars.
+    by_id = {m["id"]: m for m in memories}
+    assert sum(len(m["content"]) > 600 for m in memories) >= 50
+    deep = [
+        q
+        for q in questions
+        if q["measure"] == "exact"
+        and q.get("needle")
+        and any(by_id[e]["content"].find(q["needle"]) > 400 for e in q["expect"])
+    ]
+    assert len(deep) >= 25
     assert sum(1 for m in memories if m.get("supersedes")) >= 15
     by_measure = {m: sum(1 for q in questions if q["measure"] == m) for m in scoring.MEASURES}
     assert by_measure["offtopic"] >= 15
