@@ -166,6 +166,12 @@ async def capture_freshness(*, settle_minutes: int = 30) -> dict[str, dict]:
                     )
                 )
                 known = {e for (e,) in rows.all()}
+            if agent == "hermes":
+                # The Hermes memory plugin captures sessions under a random
+                # external_id; the Hermes session id lives in metadata.
+                from hafiz.core.importers.hermes import plugin_captured_ids
+
+                known |= await plugin_captured_ids()
             pending, active = probe(known, settled_before)
             entry["pending_on_disk"] = pending
             entry["active_on_disk"] = active

@@ -38,6 +38,8 @@ class ImportSummary:
 
     files_seen: int = 0
     files_skipped: int = 0
+    #: Sessions not imported because they were already past retention.
+    skipped_expired: int = 0
     communications_created: int = 0
     communications_existing: int = 0
     messages_written: int = 0
@@ -49,6 +51,7 @@ class ImportSummary:
         return {
             "files_seen": self.files_seen,
             "files_skipped": self.files_skipped,
+            "skipped_expired": self.skipped_expired,
             "communications_created": self.communications_created,
             "communications_existing": self.communications_existing,
             "messages_written": self.messages_written,

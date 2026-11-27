@@ -305,7 +305,7 @@ with `[telemetry] retrieval = false`. Query text stays on the machine.
 | `hafiz distill --since 7d --json` | Promotable backlog — notes + transcript turns grouped into themes, each with a ready observe scaffold |
 | `hafiz distill --brief` | Same backlog, token-lean; prints nothing unless it clears its gate — the form to put in a session-start hook |
 | `hafiz reconcile --json` | Read-only sweep — clusters near-duplicate live annotations and emits the supersede/retire commands. `suggested_action` is `retire`/`review`/`merge`; only `retire` establishes that no wording is lost, and even that cannot rule out a reversal |
-| `hafiz import <claude-code\|cursor\|chatgpt\|codex>` | Post-hoc transcript importers (idempotent; `--dry-run` previews truthfully) |
+| `hafiz import <claude-code\|cursor\|chatgpt\|codex\|hermes>` | Post-hoc transcript importers (idempotent; `--dry-run` previews truthfully) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
 | `hafiz export --out <dir>` | Sovereignty eject — dump the wisdom layer (observations, +``--include-transcripts``) to plain ``.md`` (``--format json`` for lossless JSONL). Excludes code and forgotten/expired rows. Complements ``forget`` |
@@ -587,7 +587,7 @@ hafiz import claude-code                      # rescue what's still on disk
 hafiz agent install claude-code --hooks       # stop the drift for good
 ```
 
-**Four importers, one contract.** Same flags (`--project`, `--limit`,
+**Five importers, one contract.** Same flags (`--project`, `--limit`,
 `--since`, `--dry-run`, `--no-embed`, `--json`) and same summary shape:
 
 | Command | Source | Notes |
@@ -596,8 +596,9 @@ hafiz agent install claude-code --hooks       # stop the drift for good
 | `hafiz import cursor [path]` | Cursor's SQLite store | opened read-only |
 | `hafiz import chatgpt <path>` | a ChatGPT data export | `.zip`, dir, or `conversations.json`; path required |
 | `hafiz import codex [path]` | `$CODEX_HOME/sessions` | + `archived_sessions` |
+| `hafiz import hermes [path]` | `$HERMES_HOME/state.db` | opened read-only; skips sessions the Hermes plugin already captured and sessions past retention (`skipped_expired`) |
 
-`--dry-run` is a true preview on all four — it resolves the same
+`--dry-run` is a true preview on all five — it resolves the same
 idempotency keys a real run would, so use it before importing a store you
 have not imported before.
 

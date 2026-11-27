@@ -1983,6 +1983,53 @@ def import_codex_cmd(
     )
 
 
+@import_app.command("hermes")
+def import_hermes_cmd(
+    path: str | None = typer.Argument(
+        None,
+        help=(
+            "Hermes's state.db or the directory holding it. "
+            "Defaults to $HERMES_HOME/state.db (~/.hermes/state.db)."
+        ),
+    ),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Tag stored communications with this project (default: infer from each session).",
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", "-l", help="Stop after N sessions (newest first)."
+    ),
+    since: str | None = typer.Option(
+        None, "--since", help="Only import sessions that ended within this duration (e.g. 7d)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Parse and report counts without writing."
+    ),
+    no_embed: bool = typer.Option(False, "--no-embed", help="Skip embedding (text only)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Import Hermes agent sessions into the source layer.
+
+    Hermes's database is opened read-only. Sessions the Hermes memory plugin
+    already captured are not imported again, and sessions past the 90-day
+    retention are skipped rather than written and swept.
+    """
+    from hafiz.commands.import_cmd import run_import
+
+    run_import(
+        "hermes",
+        path,
+        project=project,
+        limit=limit,
+        since=since,
+        dry_run=dry_run,
+        no_embed=no_embed,
+        output_json=json_output,
+    )
+
+
 # ─── ERRORS ───────────────────────────────────────────────────────────
 
 errors_app = typer.Typer(
