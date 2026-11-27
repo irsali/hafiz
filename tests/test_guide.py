@@ -72,3 +72,13 @@ def test_skills_topic_table_matches_shipped_topics():
 
 def test_skills_core_stays_lean():
     assert len(load_skills_content()) <= SKILLS_CHAR_BUDGET
+
+
+def test_skills_keeps_install_region_markers():
+    """`agent install` finds the block to replace by these markers; losing either
+    makes the next install append a second copy instead of upgrading in place."""
+    from hafiz.core.agents import END_MARKER, START_MARKER
+
+    skills = load_skills_content()
+    assert skills.startswith(START_MARKER)
+    assert skills.rstrip().endswith(END_MARKER)

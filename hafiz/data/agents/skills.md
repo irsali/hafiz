@@ -127,3 +127,5 @@ You MUST follow these rules in every session:
 
 Annotation kinds: `fact` · `decision` · `learning` · `pattern` · `warning` ·
 `note` · `concept` · `service`.
+
+<!-- /Installed by hafiz — do not edit above this block; re-run `hafiz agent install` to update -->
