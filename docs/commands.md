@@ -573,11 +573,13 @@ against "CI moved to GitHub Actions; Jenkins was decommissioned"). It can score
 that pair near zero, and the floor then drops the one row that mattered. So when
 a floor is set and reranking ran, the **single closest vector match** is kept
 even under the floor if its cosine `score` is at least `[recall] strong_match`
-(default `0.70`). It is placed after the rows that cleared the floor, marked
-`strong_match: true` in `--json`, and counted in the retrieval log as
-`filters.strong_match`. On a condensed long prompt its `score` is its closest
-cosine across the searched texts. Set `hafiz config set recall.strong_match 1.0`
-to turn it off.
+(default `0.70`). It is placed after the rows that cleared the floor — so when
+those already fill `--limit` it does not appear — marked `strong_match: true`
+in `--json`, and counted in the retrieval log as `filters.strong_match`. On a
+condensed long prompt, only similarity to the prompt as a whole counts (a
+single sentence can score high on its own, and the bar was not set for that),
+and that is the `score` reported. `hafiz config set recall.strong_match 1.0`
+turns it off.
 
 Measured on a real 3,270-annotation store by replaying 515 recent hook prompts
 that recalled nothing: 38 now recall one row. Read by hand, about 6 in 10 of

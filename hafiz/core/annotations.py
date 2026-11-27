@@ -1061,9 +1061,11 @@ async def search_annotations(
         searched = segments(query) or [query]
 
     pool: dict[str, AnnotationResult] = {}
-    # Per row, across every searched text: its closest cosine, and whether the
-    # vector search found it at all (a keyword-only hit in one text may be a
-    # vector hit in another).
+    # Per row: its cosine to the prompt as a whole (the strong-match test, see
+    # _strong_match — a single sentence of a long prompt is a looser test the
+    # threshold was not calibrated on), and whether the vector search found it
+    # in any searched text (a keyword-only hit in one may be a vector hit in
+    # another).
     closest: dict[str, float] = {}
     via_vector: set[str] = set()
     for text in searched:
@@ -1079,7 +1081,8 @@ async def search_annotations(
         ):
             if r.id not in pool or r.ranking_score > pool[r.id].ranking_score:
                 pool[r.id] = r
-            closest[r.id] = max(closest.get(r.id, 0.0), r.score)
+            if text is searched[0]:
+                closest[r.id] = r.score
             if r.found_by == "vector":
                 via_vector.add(r.id)
     for r in pool.values():
@@ -1091,8 +1094,8 @@ async def search_annotations(
         kept = [r for r in candidates if r.ranking_score >= min_score]
         rescued = _strong_match(candidates, kept, closest, load_settings().recall.strong_match)
         if rescued is not None:
-            # Report the similarity it was kept for, which on a condensed
-            # query may come from a different searched text than its rerank.
+            # Report the similarity it was kept for: to the whole prompt, which
+            # on a condensed query may differ from the text that reranked it.
             rescued.score = closest[rescued.id]
             rescued.strong_match = True
             kept.append(rescued)
@@ -1142,15 +1145,21 @@ def _strong_match(
     against a prompt that is about exactly it, and the floor then drops the
     one row that mattered. Cosine similarity is a weaker signal than the
     reranker but not a useless one: at ``threshold`` (``[recall]
-    strong_match``) it is rarely wrong on a real store. Only the single
-    closest row is considered, and only when reranking scored it — without a
-    reranker the floor already *is* the cosine.
+    strong_match``) it is rarely wrong on a real store. Only the single row
+    closest to the prompt *as a whole* is considered (``closest``: id → cosine
+    against the whole prompt; rows found only through one sentence of a
+    condensed prompt are not eligible), and only when reranking scored it —
+    without a reranker the floor already *is* the cosine.
     """
-    if not candidates:
+    if threshold >= 1.0:
+        return None  # documented "off"; a cosine of exactly 1.0 must not slip through
+    eligible = [r for r in candidates if r.id in closest]
+    if not eligible:
         return None
-    best = max(candidates, key=lambda r: closest.get(r.id, r.score))
-    similarity = closest.get(best.id, best.score)
-    if best.rerank_score is None or similarity < threshold or best in kept:
+    best = max(eligible, key=lambda r: closest[r.id])
+    if best.rerank_score is None or closest[best.id] < threshold:
+        return None
+    if any(r is best for r in kept):
         return None
     return best
 

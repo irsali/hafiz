@@ -51,37 +51,46 @@ def _row(id_: str, score: float, rerank: float | None) -> AnnotationResult:
 # ---------------------------------------------------------------------------
 
 
+def _whole(*rows: AnnotationResult) -> dict[str, float]:
+    """Each row's cosine to the whole prompt — what search_annotations passes."""
+    return {r.id: r.score for r in rows}
+
+
 def test_the_closest_row_under_the_floor_is_rescued_when_similar_enough():
     close = _row("close", 0.82, 0.001)
     other = _row("other", 0.60, 0.002)
-    assert _strong_match([other, close], [], {}, 0.70) is close
+    assert _strong_match([other, close], [], _whole(other, close), 0.70) is close
 
 
 def test_nothing_is_rescued_below_the_threshold():
-    assert _strong_match([_row("a", 0.69, 0.001)], [], {}, 0.70) is None
+    row = _row("a", 0.69, 0.001)
+    assert _strong_match([row], [], _whole(row), 0.70) is None
 
 
-def test_only_the_closest_row_is_considered():
-    """The second-closest is never rescued, even when it also clears the bar."""
+def test_no_rescue_when_the_closest_row_already_cleared_the_floor():
+    """The second-closest is never rescued in its place, even above the bar."""
     best = _row("best", 0.80, 0.9)
     second = _row("second", 0.75, 0.001)
-    # ``best`` survived the floor itself, so there is nothing to rescue.
-    assert _strong_match([best, second], [best], {}, 0.70) is None
+    assert _strong_match([best, second], [best], _whole(best, second), 0.70) is None
 
 
 def test_without_a_rerank_score_the_floor_already_is_the_cosine():
-    assert _strong_match([_row("a", 0.9, None)], [], {}, 0.70) is None
+    row = _row("a", 0.9, None)
+    assert _strong_match([row], [], _whole(row), 0.70) is None
 
 
-def test_the_closest_cosine_across_searched_texts_decides():
-    """A condensed prompt is searched as several texts; the best cosine counts."""
-    row = _row("a", 0.55, 0.001)
-    assert _strong_match([row], [], {"a": 0.74}, 0.70) is row
-    assert _strong_match([row], [], {"a": 0.66}, 0.70) is None
+def test_only_similarity_to_the_whole_prompt_counts():
+    """On a condensed prompt a row can score high against one sentence alone; the
+    threshold was calibrated on whole prompts, so that score is not used."""
+    whole = _row("whole", 0.66, 0.001)
+    by_sentence = _row("sentence", 0.81, 0.001)  # matched only one sentence
+    assert _strong_match([whole, by_sentence], [], {"whole": 0.66}, 0.70) is None
+    assert _strong_match([whole, by_sentence], [], {"whole": 0.74}, 0.70) is whole
 
 
-def test_one_point_zero_turns_it_off():
-    assert _strong_match([_row("a", 0.99, 0.001)], [], {}, 1.0) is None
+def test_one_point_zero_turns_it_off_even_for_an_identical_text():
+    row = _row("a", 1.0, 0.001)
+    assert _strong_match([row], [], _whole(row), 1.0) is None
 
 
 def test_the_default_threshold():
