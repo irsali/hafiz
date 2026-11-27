@@ -22,7 +22,7 @@
 | `hafiz distill --since 7d --json` | Promotable backlog — notes + transcript turns grouped into themes, each with a ready observe scaffold |
 | `hafiz distill --brief` | Same backlog, token-lean; prints nothing unless it clears its gate — the form to put in a session-start hook |
 | `hafiz reconcile --json` | Read-only sweep — clusters near-duplicate live annotations and emits the supersede/retire commands. `suggested_action` is `retire`/`review`/`merge`; only `retire` establishes that no wording is lost, and even that cannot rule out a reversal |
-| `hafiz import <claude-code\|cursor\|chatgpt\|codex>` | Post-hoc transcript importers (idempotent; `--dry-run` previews truthfully) |
+| `hafiz import <claude-code\|cursor\|chatgpt\|codex\|hermes>` | Post-hoc transcript importers (idempotent; `--dry-run` previews truthfully) |
 | `hafiz forget <comm-or-session-id> [--hard]` | Redact source-layer rows. Soft tombstone by default; ``--hard`` deletes content + messages |
 | `hafiz forget --all-expired` | Sweep mode — tombstone every communication past its retention_until |
 | `hafiz export --out <dir>` | Sovereignty eject — dump the wisdom layer (observations, +``--include-transcripts``) to plain ``.md`` (``--format json`` for lossless JSONL). Excludes code and forgotten/expired rows. Complements ``forget`` |

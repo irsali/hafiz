@@ -52,7 +52,7 @@ hafiz import claude-code                      # rescue what's still on disk
 hafiz agent install claude-code --hooks       # stop the drift for good
 ```
 
-**Four importers, one contract.** Same flags (`--project`, `--limit`,
+**Five importers, one contract.** Same flags (`--project`, `--limit`,
 `--since`, `--dry-run`, `--no-embed`, `--json`) and same summary shape:
 
 | Command | Source | Notes |
@@ -61,8 +61,9 @@ hafiz agent install claude-code --hooks       # stop the drift for good
 | `hafiz import cursor [path]` | Cursor's SQLite store | opened read-only |
 | `hafiz import chatgpt <path>` | a ChatGPT data export | `.zip`, dir, or `conversations.json`; path required |
 | `hafiz import codex [path]` | `$CODEX_HOME/sessions` | + `archived_sessions` |
+| `hafiz import hermes [path]` | `$HERMES_HOME/state.db` | opened read-only; skips sessions the Hermes plugin already captured and sessions past retention (`skipped_expired`) |
 
-`--dry-run` is a true preview on all four — it resolves the same
+`--dry-run` is a true preview on all five — it resolves the same
 idempotency keys a real run would, so use it before importing a store you
 have not imported before.
 

@@ -1,6 +1,6 @@
 <!-- Installed by hafiz — workspace intelligence layer -->
-<!-- SKILLS_VERSION: 21 -->
-# Hafiz — Workspace Intelligence (v21)
+<!-- SKILLS_VERSION: 22 -->
+# Hafiz — Workspace Intelligence (v22)
 
 IMPORTANT: You have access to `hafiz`, a CLI tool that is the user's
 **sovereign second brain**. It indexes docs and files for semantic search
@@ -100,7 +100,8 @@ You MUST follow these rules in every session:
   `--format json`.
 - **Exit 2 is a bug, not "no results".** Blank query, unknown `--project`
   (retry with the returned `candidates`), or `--tags ""` all exit 2.
-- **No rows under `--min-score 0.05` means "not relevant"**, not an error.
+- **No rows under `--min-score 0.05` means "not relevant"**, not an error. One
+  very close match may still come back below the floor, flagged `strong_match: true`.
 - **Exact sets come from tags, not similarity:** `query --observations --tags
   <a,b> --no-rerank --limit <above set size>`, with no `--min-score`.
 - **Code and docs are one corpus.** Plain `query` searches indexed docs and

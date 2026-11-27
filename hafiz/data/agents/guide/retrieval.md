@@ -49,6 +49,13 @@ default, and `--min-score` filters the reranked score, not the raw cosine
 result list, so a floor on it would drop a higher-ranked row and keep a
 lower-ranked one.
 
+One exception, marked so you can see it: the single closest vector match is
+kept under the floor when its cosine is very high (`[recall] strong_match`,
+default 0.70), because the reranker can underrate a plainly worded memory
+against a chatty prompt about exactly it. `--json` flags that row
+`strong_match: true`; at most one row per search carries it, after the rows
+that cleared the floor and only if `--limit` leaves room.
+
 **Why useful floors are low.** Measured on a 1,200-annotation store, three
 on-topic against three off-topic questions, comparing the best score in each
 result set:
