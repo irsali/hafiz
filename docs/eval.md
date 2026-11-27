@@ -2,8 +2,8 @@
 
 A small eval of what a coding agent actually feels from Hafiz: *does the right
 memory come back, does a retired decision stay buried, and how much does it cost
-in context window?* Anyone can rerun it on a laptop in about ten minutes on an idle machine (a run is ~230 short hafiz processes;
-it took 15 minutes on a heavily loaded 20-core box).
+in context window?* Anyone can rerun it on a laptop in under half an hour (a run
+is ~560 short hafiz processes; it took about 15 minutes on an idle 20-core box).
 
 It measures **Hafiz only**. Vendor benchmarks for agent memory (LongMemEval,
 LoCoMo, BEAM) are mostly self-run, use different setups and are not comparable
@@ -39,8 +39,8 @@ customer data is in it, so it is safe to publish.
 
 | File | Contents |
 |---|---|
-| [`eval/data/memories.jsonl`](../eval/data/memories.jsonl) | 103 memories: 32 facts, 12 warnings, 10 learnings, 8 patterns, 41 decisions. 16 supersede chains (one of three links), so 17 memories are retired and must not come back. |
-| [`eval/data/questions.jsonl`](../eval/data/questions.jsonl) | 95 questions (50 exact-string, 45 decision) and 20 off-topic prompts. |
+| [`eval/data/memories.jsonl`](../eval/data/memories.jsonl) | 177 memories: 50 facts, 24 warnings, 19 learnings, 13 patterns, 71 decisions. 25 supersede chains (two of three links), so 27 memories are retired and must not come back. 103 are short one-liners (ids `f01`…`s08`); 74 are long, multi-topic records of 720–1,800 characters (ids `L01`…`L74`). |
+| [`eval/data/questions.jsonl`](../eval/data/questions.jsonl) | 160 questions (90 exact-string, 70 decision) and 30 off-topic prompts. 46 of the decision questions are about a superseded decision and name the retired memory. |
 
 Deliberate difficulty: near-distractors share vocabulary (`MANIFESTD_RETRY_LIMIT`
 vs `SCANLINK_RETRY_LIMIT`, `E4012` vs `E4021`, `PW-1042` vs `PW-1024`, port 8443
@@ -48,6 +48,26 @@ as a fact and as a warning), questions are phrased the way a person asks rather
 than echoing the stored wording, and some off-topic prompts share words with the
 memories (`what is the time zone of Tokyo`, `what is the difference between a
 process and a thread`).
+
+The long set (`L01`…`L74`, questions `ex51`–`ex90`, `dc46`–`dc70`, `off21`–`off30`)
+is there because the short set is too easy. Real memories are written by agents:
+several topics in one record, dated, with rationale, file paths and commands, and
+the string you later ask for sits somewhere in the middle. So here the memories
+average about 1,000 characters, 34 of the 40 new exact-string questions target a
+string that appears after character 400 (past the 400 characters the reranker
+reads, and diluted in the single embedding), and the other six are kept near the
+start as a control. Near-distractors are everywhere: `SCANLINK_BATCH_FLUSH_MS` vs
+`SCANLINK_BATCH_FLUSH_BYTES`, `SL-317` vs `SL-371`, `MF_SEAL_409` vs
+`MF_SEAL_490`, `BC-88` vs `BC-808`, `E5103` vs `E5130`, ports `9150` / `9105` and
+`7401` / `7410`, `8713` vs `8731`, tickets `PW-2412` vs `PW-2421` and `OPS-518` vs
+`OPS-581`, two migrations numbered `0047`. Nine more supersede chains (one of three
+links) keep the stale-belief measure honest on long text. The new decision
+questions are written the way people actually type: 130–220 characters, chatty,
+with a side remark or a half-remembered detail ("I think we changed it after the
+battery complaints?"), about both new and old decisions. The ten new off-topic
+prompts are equally long and share words with the store (parcels, depots, a
+gateway router, ledgers, gRPC, a mutex "at a shipping depot") while asking
+nothing it answers.
 
 Both files are plain JSONL with stable ids, so a change to the dataset shows up
 as a readable diff and changes the `dataset` hashes recorded with each run.
@@ -153,15 +173,15 @@ all — the eval stores no transcripts.
 
 ## Limits — please read before quoting a number
 
-- **Small.** 95 scored questions. One question is about one point of a
-  percentage; differences of a few points are noise-level, and a single run has
-  no confidence interval.
+- **Small.** 160 scored questions (90 exact-string, 70 decision). One question
+  is one to two points of a percentage; differences of a few points are
+  noise-level, and a single run has no confidence interval.
 - **Synthetic and self-authored.** The same people who build Hafiz wrote both
   the memories and the questions, which tends to flatter the system. Real
   prompts are messier, longer and mention things that were never saved.
 - **One topic area.** A single fictional codebase in English. Nothing here tests
-  multilingual text, very long memories, thousands of memories, or recall across
-  many projects.
+  multilingual text, memories much longer than ~1,800 characters, thousands of
+  memories, or recall across many projects.
 - **Retrieval only.** It does not check whether an agent *uses* what was
   injected, or whether the right memory was ever written in the first place —
   that is usually the bigger problem.
