@@ -48,6 +48,7 @@ EXPECTED_TOOLS = {
     "hafiz_reconcile",
     "hafiz_retrievals",
     "hafiz_status",
+    "hafiz_guide",
 }
 
 #: Core functions that must never become reachable from MCP. An MCP client
@@ -266,6 +267,20 @@ async def test_unknown_arguments_are_dropped_not_forwarded():
         "hafiz_retrievals", {"since_days": 1, "limit": 1, "a_filter_from_the_future": "x"}
     )
     assert isinstance(result, dict)
+
+
+async def test_guide_lists_topics_and_reads_one():
+    index = await call_tool("hafiz_guide", {})
+    assert index["ok"] is True and "distill" in [t["name"] for t in index["topics"]]
+    topic = await call_tool("hafiz_guide", {"topic": "distill"})
+    assert topic["content"].startswith("# hafiz guide distill")
+
+
+async def test_guide_typo_returns_candidates_not_an_error():
+    """An MCP agent must be able to correct a misspelled topic from the result itself."""
+    result = await call_tool("hafiz_guide", {"topic": "distil"})
+    assert result["ok"] is False
+    assert result["candidates"][0] == "distill"
 
 
 async def test_pinned_telemetry_command_is_applied():

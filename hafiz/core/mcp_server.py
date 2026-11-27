@@ -47,6 +47,9 @@ Nothing else preserves it once the conversation ends.
 indexed content; `hafiz_recall_session` searches raw transcripts. They are \
 different corpora — pick deliberately.
 
+`hafiz_guide` explains the finer points (superseding, distilling, score \
+floors) on demand; call it with no topic to see what it covers.
+
 Destructive and administrative operations are deliberately absent from this \
 surface; they live on the `hafiz` CLI, where a human is present.\
 """

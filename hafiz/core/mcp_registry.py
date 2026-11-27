@@ -459,6 +459,22 @@ TOOLS: tuple[ToolSpec, ...] = (
             "limit": _LIMIT,
         },
     ),
+    ToolSpec(
+        name="hafiz_guide",
+        summary=(
+            "How to use hafiz well: superseding vs. retiring a record, promoting notes, "
+            "score floors, transcripts and retention. Call with no topic for the list; read "
+            "a topic when the task needs it. The text names CLI flags — each maps to the "
+            "matching parameter of these tools."
+        ),
+        target="hafiz.core.guide:read_guide",
+        params={
+            "topic": (
+                "Topic name, e.g. 'distill'. Omit to list topics. An unknown name returns "
+                "ok=false with the closest 'candidates'."
+            ),
+        },
+    ),
 )
 
 

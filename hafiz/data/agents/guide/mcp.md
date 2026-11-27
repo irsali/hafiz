@@ -21,7 +21,7 @@ kind="decision")` is `query --observations --type decision`. Every
 a task needs prior docs or decisions, and record decisions and gotchas
 as you make them.
 
-Three things worth knowing, because they are deliberate:
+Four things worth knowing, because they are deliberate:
 
 - **Read and write are both available** — `hafiz_observe` and
   `hafiz_note` are there, so the memory layer is not read-only over MCP.
@@ -33,6 +33,9 @@ Three things worth knowing, because they are deliberate:
   your client identity from the MCP handshake, so an observation with no
   explicit `--source` records `agent:<your-client>` rather than a
   uniform `agent:mcp`. You may still pass a source explicitly.
+- **This guide is a tool too.** `hafiz_guide()` lists the topics and
+  `hafiz_guide(topic="distill")` returns one, so the details the CLI
+  agents read with `hafiz guide` are yours as well.
 
 The tool list is **not duplicated here on purpose** — it is generated
 from the same core functions the CLI calls, and a hand-copied list in

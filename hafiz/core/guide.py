@@ -47,3 +47,17 @@ def load_topic(name: str) -> dict:
         raise UnknownTopicError(name, close or names)
     summary, content = _read(name)
     return {"topic": name, "summary": summary, "content": content}
+
+
+def read_guide(topic: str | None = None) -> dict:
+    """The guide as plain data: the topic index, one topic, or the closest names for a miss.
+
+    An unknown name is a result, not an exception, so an agent (over MCP or `--json`)
+    can correct a typo from the returned ``candidates``.
+    """
+    if topic is None:
+        return {"ok": True, "topics": list_topics()}
+    try:
+        return {"ok": True, **load_topic(topic)}
+    except UnknownTopicError as exc:
+        return {"ok": False, "error": str(exc), "candidates": exc.candidates}
