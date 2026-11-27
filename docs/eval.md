@@ -110,66 +110,73 @@ Each run is saved in [`eval/results/`](../eval/results/) (full per-question
 detail in the `.json`). The table below is regenerated from those files by
 `python eval/run.py --update-docs`; do not edit it by hand.
 
-**baseline** is `dev` at `421ad3c` (before every-turn hooks and the keyword
-search channel) plus this eval; `ad97fdc` adds only files under `eval/`, `docs/`
-and `tests/`, so its recall code is `421ad3c`'s. CPU embeddings, SQLite backend,
-two runs gave identical numbers and identical failures.
+All three runs use the current dataset, CPU embeddings and the SQLite backend;
+each is the recall code of the commit named, with this checkout's `eval/`:
+
+- **before-keyword** — `ad97fdc`, recall as it was before every-turn hooks and
+  the keyword channel (`ad97fdc` adds only the first eval on top of `421ad3c`).
+- **keyword-channel** — adds the keyword (full-text) search beside the vector
+  search (migration `0012`) and the every-turn hooks.
+- **strong-match** — adds the strong-match safety net under the floor
+  (`[recall] strong_match = 0.70`). Run at `8016a2e`; the follow-up `ba0bbca`
+  only changes prompts over 300 characters, which this dataset does not have.
+
+Runs on the first, short-only dataset are kept in
+[`eval/results/v1/`](../eval/results/v1/) and are not comparable with these.
 
 <!-- eval:results:start -->
-| Measure | baseline (`ad97fdc`) | after-improvements (`8031aea`) |
-|---|---|---|
-| Exact-string recall hit@1 (n=50) | 96.0% | 96.0% |
-| Exact-string recall hit@6 | 98.0% | 98.0% |
-| Exact string visible in injected text | 98.0% | 98.0% |
-| Decision recall hit@1 (n=45) | 77.8% | 77.8% |
-| Decision recall hit@6 | 77.8% | 77.8% |
-| Stale-belief leak rate (n=32) | 0.0% | 0.0% |
-| Tokens injected, on-topic prompts, mean (n=95) | 62 | 62 |
-| Tokens injected, on-topic, p95 | 117 | 117 |
-| Off-topic prompts that inject nothing (n=20) | 95.0% | 95.0% |
-| Tokens injected, off-topic prompts, mean | 3.0 | 3.0 |
+| Measure | before-keyword (`ad97fdc`) | keyword-channel (`52849e4`) | strong-match (`8016a2e`) |
+|---|---|---|---|
+| Exact-string recall hit@1 (n=90) | 74.4% | 84.4% | 84.4% |
+| Exact-string recall hit@6 | 78.9% | 91.1% | 91.1% |
+| Exact string visible in injected text | 76.7% | 88.9% | 88.9% |
+| Decision recall hit@1 (n=70) | 77.1% | 75.7% | 77.1% |
+| Decision recall hit@6 | 80.0% | 80.0% | 81.4% |
+| Stale-belief leak rate (n=46) | 0.0% | 0.0% | 0.0% |
+| Tokens injected, on-topic prompts, mean (n=160) | 140 | 167 | 169 |
+| Tokens injected, on-topic, p95 | 396 | 428 | 428 |
+| Off-topic prompts that inject nothing (n=30) | 96.7% | 96.7% | 96.7% |
+| Tokens injected, off-topic prompts, mean | 2.0 | 2.0 | 2.0 |
 <!-- eval:results:end -->
 
 ## How to read it
 
-Findings from the first (baseline) run, which any later run should be read
-against:
-
-- **Exact strings are the strong suit.** Almost every port, env var, error code
-  and ticket id comes back at rank 1, including next to near-identical
-  distractors. The misses are a retrieval-order slip (`E4021` ranked behind a
-  learning *about* `E4021`) and one outright absence (the test-database env var).
-- **Decision recall is the weak spot, and the cause is the relevance floor, not
-  the embedding.** Every decision miss is also a `hit@6` miss, and most of them
-  inject *nothing at all*. In debugging, the right memory was the top vector
-  match (cosine 0.55–0.63), but the cross-encoder reranker scored short,
-  declarative decisions near zero (0.0005–0.05), and `--min-score 0.05` cut them.
-  A silent miss is worse than a wrong answer, because the agent does not know it
-  should have been told something.
+- **Keyword search earns its place on long memories.** With the needle buried
+  past the 400 characters the reranker reads, before-keyword found the right
+  memory in the top 6 for 71 of 90 exact-string questions; the keyword channel
+  finds 82 (78.9% → 91.1%), and the exact string reaches the injected text for
+  80 instead of 69. Cost: three questions slip from rank 1 to a lower rank in
+  the top 6 (`ex83`, `ex87`, and one decision, `dc29`), and an on-topic prompt
+  injects ~27 more tokens on average, because it now brings back long memories
+  it used to miss. The first dataset could not show any of this (identical
+  numbers before and after): short memories leave the vector search nothing to
+  miss.
+- **Decisions are still the weak spot, and the cause is still the relevance
+  floor.** Nine decision questions inject nothing at all — a silent miss, worse
+  than a wrong answer because the agent does not know it should have been told
+  something. In the five examined closely (`dc10`, `dc11`, `dc24`, `dc28`,
+  `dc42`) the right memory was the top vector match (cosine 0.55–0.65), but the
+  cross-encoder scored the short declarative decision near zero against the
+  question and `--min-score 0.05` cut it.
+- **The strong-match safety net helps less here than on a real store.** It keeps
+  the closest vector match under the floor when its cosine is at least 0.70. On
+  this synthetic store it recovers one question (`dc60`), because the silent
+  misses examined sit at cosine 0.55–0.65: one-line invented memories embed less
+  closely to a question than real, dense notes do. On a real 3,270-annotation
+  store, replaying 515 real prompts that recalled nothing, it recovered 38
+  (about 6 in 10 on topic) and kept all 40 off-topic prompts silent — see
+  `[recall] strong_match` in [commands.md](commands.md). Lowering the bar to
+  reach 0.55–0.65 is not safe: real off-topic prompts reach 0.63.
 - **The stale-belief leak is 0% — by construction.** Superseded memories are
-  hidden from default recall, so a retired decision cannot come back through the
-  vector path. The number is a regression guard rather than a score: a new
-  retrieval channel (for example keyword search) that forgets to filter retired
-  memories will show up here immediately.
-- **Cost is small and mostly quiet.** An on-topic prompt injects about 60 tokens
-  on average (p95 about 120) — but that average *includes* the silent misses
-  above, so it falls as recall improves. All off-topic prompts but one inject
-  nothing; the exception (`a process and a thread`) pulled in the unrelated
-  "solver is not thread-safe" warning on a shared word.
-
-**after-improvements** adds the keyword channel (migration `0012`) and the
-every-turn hooks, and moves nothing — every number and every failure is
-identical. That is a statement about this dataset, not about the channel: the
-keyword index is built and used here (verified), but with 103 memories the
-vector path already ranks almost every exact string first, so there is no
-headroom for keyword search to win. On a 3,270-annotation real store, replaying
-40 exact-string questions, the same channel took hit@6 from 16/40 to 40/40. The
-decision misses are unchanged because their cause is the relevance floor, which
-neither change touches. Two consequences: the next lever for this eval is the
-floor on short decisions, and the dataset needs a harder exact-string set (more
-memories, needles past the reranker's 400-character window) before it can show
-keyword gains. The hook's earlier-conversation fallback is not exercised here at
-all — the eval stores no transcripts.
+  hidden from default recall, and the keyword channel applies the same filter,
+  so a retired decision cannot come back through either path. The number is a
+  regression guard rather than a score.
+- **Off-topic prompts stay quiet.** 29 of 30 inject nothing, including all ten
+  long chatty ones that share the store's vocabulary; the exception is still
+  `a process and a thread`, which pulls in the "solver is not thread-safe"
+  warning on a shared word.
+- **Not exercised here:** the hook's earlier-conversation fallback (the eval
+  stores no transcripts).
 
 ## Limits — please read before quoting a number
 
