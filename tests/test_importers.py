@@ -664,7 +664,7 @@ async def test_shared_writer_is_quiet_when_identity_is_supplied():
     assert summary.errors == []
 
 
-@pytest.mark.parametrize("agent", ["claude-code", "cursor", "chatgpt", "codex"])
+@pytest.mark.parametrize("agent", ["claude-code", "cursor", "chatgpt", "codex", "hermes"])
 def test_every_importer_has_a_cli_command(agent: str):
     result = CliRunner().invoke(app, ["import", agent, "--help"])
     assert result.exit_code == 0, result.output

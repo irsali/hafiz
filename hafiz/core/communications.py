@@ -191,6 +191,16 @@ def _default_retention(started_at: datetime) -> datetime:
     return started_at + timedelta(days=DEFAULT_RETENTION_DAYS)
 
 
+def is_past_retention(started_at: datetime, *, now: datetime | None = None) -> bool:
+    """Would a communication starting at ``started_at`` already be expired?
+
+    The same deadline :func:`upsert_communication` stamps on a new row, so an
+    importer can refuse a session the next retention sweep would immediately
+    tombstone, instead of writing chat content it is not allowed to keep.
+    """
+    return (now or datetime.now(UTC)) >= _default_retention(started_at)
+
+
 async def upsert_communication(
     *,
     agent: str,

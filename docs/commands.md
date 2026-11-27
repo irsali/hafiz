@@ -288,7 +288,9 @@ answer the questions an operator or agent actually asks of `status`:
   2026-09-04 while `status` reported `overdue: 0` throughout. **Silence is not
   health.**
 - `pending_on_disk` counts transcripts whose **session id is not in the store at
-  all**, read from each file's head rather than by parsing it (~0.2 s over 201
+  all** (for `hermes`, a session the memory plugin captured counts as stored, and
+  a session past retention or with no turns is not counted — importing it would
+  change nothing), read from each file's head rather than by parsing it (~0.2 s over 201
   files, since `status` is on the hot path). Two rejected cheaper proxies, both
   measured wrong on a real store: comparing file *mtime* against
   `last_captured_at` (which is `max(started_at)` — a session that ran for more
@@ -786,6 +788,7 @@ Hafiz can ingest agent-harness transcripts into a dedicated source layer (see [a
 | `import cursor [PATH]` | Import Cursor chat conversations from its SQLite store (**read-only**). Defaults to this platform's Cursor storage. | — | `--json` | rich table |
 | `import chatgpt <PATH>` | Import a ChatGPT data export. Accepts the `.zip`, its unzipped directory, or `conversations.json`. Path is required. | — | `--json` | rich table |
 | `import codex [PATH]` | Import Codex CLI session rollouts. Defaults to `$CODEX_HOME/sessions` **and** `archived_sessions`. | — | `--json` | rich table |
+| `import hermes [PATH]` | Import Hermes agent sessions from its SQLite `state.db` (**read-only**). Defaults to `$HERMES_HOME/state.db` (`~/.hermes/state.db`). Skips sessions the Hermes memory plugin already captured, and sessions already past the 90-day retention. | — | `--json` | rich table |
 | `recall <target>` | Ordered messages for a session (slug or uuid) or communication; or vector search via `--query` | — | `--json` | rich table |
 | `query --include-transcripts` | Add matching source-layer turns to results, tagged `layer="source"` | — | `--json` | rich panel (separate transcript section) |
 | `context --include-transcripts` | Append matching transcript turns under a `transcripts` field | — | `--json` | rich panel |
@@ -797,6 +800,13 @@ Defaults:
 - `import claude-code` source path: `~/.claude/projects/`. Idempotent by `(agent='claude-code', external_id=<jsonl session uuid>)` at the communication level, and by **`source_message_id`** (Claude Code's own per-record `uuid`) at the turn level.
 - `import claude-code` flags: `--project`, `--limit`, `--since 7d`, `--dry-run`, `--no-embed`, `--from-hook`.
 - `import claude-code [PATH]` accepts **either** a directory of session JSONL **or** a single `.jsonl` file — the latter is what `--from-hook` uses, so capture cost is proportional to the session that just ended rather than to every session ever had.
+
+**`import <agent> --json` shape** (all five importers):
+`{action, root, project, since, dry_run, embed, summary, retention_sweep}`, where
+`summary` is `{files_seen, files_skipped, skipped_expired, communications_created,
+communications_existing, messages_written, messages_embedded, sessions_created, errors}`.
+`skipped_expired` counts sessions an importer refused because they were already
+past the 90-day retention (only `hermes` sets it today; it is `0` elsewhere).
 
 **`--dry-run` is a real preview.** It resolves the same idempotency keys a real
 run would and reports what *would* be written, split into
@@ -849,7 +859,7 @@ Consequences worth knowing:
 
 #### Per-importer notes
 
-All four share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
+All five share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
 `--no-embed`, `--json`) and one summary shape, because they share one writer
 (`hafiz/core/importers/base.py`); only parsing differs.
 
@@ -859,6 +869,7 @@ All four share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
 | `cursor` | `state.vscdb` (SQLite, read-only) | `bubbleId` | workspace folder |
 | `chatgpt` | export `conversations.json` | node `id` | `--project` only |
 | `codex` | `$CODEX_HOME/sessions/**/*.jsonl` | record `id`, else `<session>:<line>` | session `cwd` |
+| `hermes` | `$HERMES_HOME/state.db` (SQLite, read-only) | `messages.id` | `git_repo_root`, else `cwd` |
 
 - **Cursor** is opened **read-only** (`file:…?mode=ro`) — it is a running
   application's database. Conversations are Cursor *composers*; turns are
@@ -885,6 +896,34 @@ All four share one options set (`--project`, `--limit`, `--since`, `--dry-run`,
   For hands-free capture Codex offers `SessionEnd` / `Stop` hooks
   (`$CODEX_HOME/hooks.json`, payload carries `session_id` and `transcript_path`);
   hafiz does not wire them yet.
+
+- **Hermes** keeps all sessions in one SQLite `state.db` (WAL mode), opened
+  **read-only**. `PATH` may be the file or the Hermes home directory;
+  `$HERMES_HOME` is honoured. Sessions are visited newest first, so `--limit N`
+  means the N newest. Optional columns are probed with `PRAGMA table_info`, so an
+  older Hermes with fewer columns still imports. Hermes soft-deletes turns with
+  two flags, and the importer follows them:
+  - `active = 0, compacted = 0` — the user rewound the turn. **Skipped.**
+  - `active = 0, compacted = 1` — archived by context compaction; the only full
+    record of the session. **Imported.**
+  - Compaction re-inserts the surviving tail as live rows, so those turns exist
+    twice (202 of 204 live rows on a real session). A live row that exactly
+    matches an archived row (role, content, tool call id, tool calls) is
+    skipped; each archived row cancels at most one live row, so a message
+    genuinely repeated after compaction is kept.
+
+  An assistant turn's tool calls become `tool_use` entries and each `tool` row a
+  `tool_result` entry (same shape as the other importers); reasoning is kept in
+  message metadata, never in `content`. Two interactions with the rest of hafiz:
+  - **The Hermes memory plugin already captures sessions** at their end via
+    `hafiz capture`, under a random `external_id`, recording the Hermes session
+    id in `metadata.session_slug` and the title `hermes:<id>`. A session found
+    there is counted in `communications_existing` and **not imported again**
+    (tombstoned captures count too, so a forgotten capture is not resurrected).
+  - **Expired sessions are not written.** A session whose `started_at` + 90 days
+    has passed is skipped and counted in `skipped_expired`, so no chat content
+    past retention is ever stored. (The other importers write first and rely on
+    the next sweep to tombstone.)
 
 **Retention enforcement.** `import` runs the expiry sweep automatically and
 reports it (`retention_sweep: {matched, tombstoned, dry_run}` in `--json`; a row

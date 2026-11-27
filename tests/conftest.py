@@ -116,6 +116,7 @@ _DB_DEPENDENT = [
     "test_forget.py",
     "test_git_axis.py",
     "test_importer_claude_code.py",
+    "test_importer_hermes.py",
     "test_index_freshness.py",
     "test_mcp.py",
     "test_migrate.py",

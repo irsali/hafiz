@@ -9,7 +9,10 @@ Each importer is a small parser-shaped module under this package:
 
 * :mod:`hafiz.core.importers.claude_code` — Claude Code session JSONL
   (under ``~/.claude/projects/.../*.jsonl``).
-* (future) cursor — Cursor history SQLite.
+* :mod:`hafiz.core.importers.cursor`, :mod:`~hafiz.core.importers.chatgpt`,
+  :mod:`~hafiz.core.importers.codex` and :mod:`~hafiz.core.importers.hermes`
+  — Cursor's SQLite store, a ChatGPT export, Codex rollouts, Hermes's
+  ``state.db``.
 * (future) slack, mail, etc.
 
 The agent harness does not change — these are post-hoc, idempotent
@@ -32,6 +35,7 @@ PENDING_PROBES: dict[str, str] = {
     "claude-code": "hafiz.core.importers.claude_code",
     "cursor": "hafiz.core.importers.cursor",
     "codex": "hafiz.core.importers.codex",
+    "hermes": "hafiz.core.importers.hermes",
 }
 
 

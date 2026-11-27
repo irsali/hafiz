@@ -117,7 +117,7 @@ def run_import_from_hook(*, output_json: bool = False) -> None:
 
 
 # Every importer takes the same options and produces the same summary, so
-# the command layer is one runner plus a per-agent binding rather than four
+# the command layer is one runner plus a per-agent binding rather than five
 # near-identical copies.
 IMPORTERS: dict[str, dict] = {
     "claude-code": {
@@ -136,6 +136,10 @@ IMPORTERS: dict[str, dict] = {
     "codex": {
         "label": "Codex CLI",
         "default_root": None,
+    },
+    "hermes": {
+        "label": "Hermes",
+        "default_root": None,  # the importer honours $HERMES_HOME
     },
 }
 
@@ -156,6 +160,10 @@ def _importer_fn(agent: str):
         from hafiz.core.importers.codex import import_codex
 
         return import_codex
+    if agent == "hermes":
+        from hafiz.core.importers.hermes import import_hermes
+
+        return import_hermes
     raise ValueError(f"unknown importer: {agent}")
 
 
@@ -251,9 +259,11 @@ def run_import(
     table.add_column("Count", justify="right")
     s = summary
     # "Files" is the wrong noun for a source that isn't file-shaped.
-    unit = "Conversations" if agent in ("cursor", "chatgpt") else "Files"
+    unit = "Conversations" if agent in ("cursor", "chatgpt", "hermes") else "Files"
     table.add_row(f"{unit} seen", str(s.files_seen))
     table.add_row(f"{unit} skipped", str(s.files_skipped))
+    if s.skipped_expired:
+        table.add_row("Skipped (past 90-day retention)", str(s.skipped_expired))
     table.add_row("Communications created", str(s.communications_created))
     table.add_row("Communications already present", str(s.communications_existing))
     table.add_row("Sessions created", str(s.sessions_created))
