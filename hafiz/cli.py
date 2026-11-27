@@ -1654,6 +1654,23 @@ def parsers_list_cmd(
     run_parsers_list(output_json=json_output)
 
 
+# ─── GUIDE ────────────────────────────────────────────────────────────
+
+
+@app.command()
+def guide(
+    topic: str | None = typer.Argument(None, help="Topic to print. Omit to list topics."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON (for agents)."),
+) -> None:
+    """Print a section of the agent guide — the detail skills.md leaves out.
+
+    Agents read a topic when a task needs it, so the always-loaded skills.md stays small.
+    """
+    from hafiz.commands.guide import run_guide
+
+    run_guide(topic, output_json=json_output)
+
+
 # ─── FORGET ───────────────────────────────────────────────────────────
 
 
